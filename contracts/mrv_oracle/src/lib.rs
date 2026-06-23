@@ -51,6 +51,7 @@ pub enum OracleError {
     InvalidProject     = 126,
     InvalidTimestamp   = 127,
     NoPendingAdmin     = 128,
+    InvalidReading     = 129,
 }
 
 #[contractevent]
@@ -209,6 +210,9 @@ impl MrvOracle {
         }
         if timestamp > env.ledger().timestamp() {
             return Err(OracleError::InvalidTimestamp);
+        }
+        if tonnes < 0 {
+            return Err(OracleError::InvalidReading);
         }
 
         // Validate project exists in registry
@@ -658,6 +662,14 @@ mod tests {
         let (env, client, _, _, _) = setup();
         let rando = Address::generate(&env);
         assert!(client.try_pause(&rando).is_err());
+    }
+
+    #[test]
+    fn test_negative_tonnes_rejected() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let nonce = client.get_nonce(&oracle);
+        assert!(client.try_update_mrv_data(&oracle, &proj, &-1, &env.ledger().timestamp(), &registry_id, &nonce).is_err());
     }
 
     #[test]
