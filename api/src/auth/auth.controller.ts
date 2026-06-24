@@ -19,16 +19,16 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Request SEP-10 auth challenge' })
   @Get('challenge')
-  getChallenge(@Query('account') account: string): {
+  async getChallenge(@Query('account') account: string): Promise<{
     transaction: string;
     network_passphrase: string;
-  } {
+  }> {
     return this.authService.generateChallenge(account);
   }
 
   @ApiOperation({ summary: 'Verify signed challenge and receive JWT' })
   @Post('token')
-  getToken(@Body() body: AuthTokenDto): { access_token: string } {
+  async getToken(@Body() body: AuthTokenDto): Promise<{ access_token: string }> {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 
