@@ -11,6 +11,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { MarketplaceService } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
+import { CreateOfferResponseDto } from './dto/create-offer-response.dto';
 import { Offer } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -22,7 +23,7 @@ export class MarketplaceController {
   /** POST /marketplace/offer — protected: requires JWT */
   @UseGuards(JwtAuthGuard)
   @Post('offer')
-  createOffer(@Body() dto: CreateOfferDto): Promise<{ offerId: string }> {
+  createOffer(@Body() dto: CreateOfferDto): Promise<CreateOfferResponseDto> {
     return this.marketplaceService.createOffer(dto);
   }
 

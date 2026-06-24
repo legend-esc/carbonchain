@@ -6,7 +6,9 @@ import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { Offer } from '../shared';
 import { CreateOfferDto } from './dto/create-offer.dto';
+import { CreateOfferResponseDto } from './dto/create-offer-response.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
+export { CreateOfferResponseDto } from './dto/create-offer-response.dto';
 
 @Injectable()
 export class MarketplaceService {
@@ -24,7 +26,7 @@ export class MarketplaceService {
     );
   }
 
-  async createOffer(dto: CreateOfferDto): Promise<{ offerId: string }> {
+  async createOffer(dto: CreateOfferDto): Promise<CreateOfferResponseDto> {
     this.logger.log(`Creating offer for credit ${dto.creditId}`);
     const args = [
       nativeToScVal(dto.sellerPublicKey, { type: 'address' }),
