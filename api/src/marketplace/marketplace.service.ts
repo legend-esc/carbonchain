@@ -5,13 +5,8 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { Offer } from '../shared';
-
-export class CreateOfferDto {
-  sellerPublicKey: string;
-  creditId: string;
-  priceXlm: string;
-  tonnes: string;
-}
+import { CreateOfferDto } from './dto/create-offer.dto';
+export { CreateOfferDto } from './dto/create-offer.dto';
 
 @Injectable()
 export class MarketplaceService {
@@ -63,6 +58,26 @@ export class MarketplaceService {
     return this.mapOffer(offerId, scValToNative(retval));
   }
 
+  /** Returns all active (open) offers from the contract. */
+  async getListings(): Promise<Offer[]> {
+    const args = [nativeToScVal(true, { type: 'bool' })];
+    try {
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_active_offers',
+        args,
+      );
+      if (!retval) return [];
+      const raw = scValToNative(retval) as Array<{
+        id: bigint;
+        [key: string]: unknown;
+      }>;
+      return raw.map((item) => this.mapOffer(Number(item.id), item));
+    } catch {
+      return [];
+    }
+  }
+
   async getOffersBySeller(seller: string): Promise<string[]> {
     const args = [nativeToScVal(seller, { type: 'address' })];
     const retval = await this.stellarService.readContract(
@@ -83,6 +98,25 @@ export class MarketplaceService {
     await this.stellarService.invokeContract(
       this.contractId,
       'cancel_offer',
+      args,
+      signer,
+    );
+  }
+
+  async buyOffer(buyerPublicKey: string, offerId: number): Promise<void> {
+    const nativeTokenId = this.configService.get<string>(
+      'NATIVE_TOKEN_CONTRACT_ID',
+      '',
+    );
+    const args = [
+      nativeToScVal(buyerPublicKey, { type: 'address' }),
+      nativeToScVal(offerId, { type: 'u64' }),
+      nativeToScVal(nativeTokenId, { type: 'address' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'buy_offer',
       args,
       signer,
     );

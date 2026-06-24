@@ -10,4 +10,12 @@ header { font-size: 0.9rem; }
 .logo { font-size: 1.1rem; font-weight: 700; margin-right: auto; }
 nav a { color: #ccc; text-decoration: none; margin-right: 1rem; }
 nav a:hover { color: #fff; }
+.theme-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  padding: 0.25rem;
+  line-height: 1;
+}
 main { padding: 1.5rem; }

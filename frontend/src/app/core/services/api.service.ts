@@ -20,6 +20,21 @@ export interface MeResponse {
   account: string;
 }
 
+export interface VerifierInfo {
+  address: string;
+}
+
+export interface AdminStats {
+  totalCredits: number;
+  totalRetirements: number;
+  activeVerifiers: number;
+}
+
+export interface VerifierConfig {
+  methodologies?: string[];
+  geographies?: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -87,6 +102,11 @@ export class ApiService {
 
   // ── Marketplace ───────────────────────────────────────────────────────────
 
+  /** GET /marketplace/listings — all active offers */
+  getListings(): Observable<Offer[]> {
+    return this.http.get<Offer[]>(`${this.baseUrl}/marketplace/listings`);
+  }
+
   /** GET /marketplace/offer/:id */
   getOffer(id: number): Observable<Offer> {
     return this.http.get<Offer>(`${this.baseUrl}/marketplace/offer/${id}`);
@@ -127,34 +147,51 @@ export class ApiService {
   // ── Verifiers ─────────────────────────────────────────────────────────────
 
   /** GET /verifiers */
-  listVerifiers(token: string): Observable<VerifierRecord[]> {
-    return this.http.get<VerifierRecord[]>(`${this.baseUrl}/verifiers`, {
+  listVerifiers(): Observable<VerifierInfo[]> {
+    return this.http.get<VerifierInfo[]>(`${this.baseUrl}/verifiers`);
+  }
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
+
+  /** GET /admin/stats */
+  getAdminStats(token: string): Observable<AdminStats> {
+    return this.http.get<AdminStats>(`${this.baseUrl}/admin/stats`, {
       headers: this.authHeaders(token),
     });
   }
 
-  /** POST /verifiers/:address/approve */
-  approveVerifier(address: string, token: string): Observable<void> {
-    return this.http.post<void>(`${this.baseUrl}/verifiers/${address}/approve`, null, {
-      headers: this.authHeaders(token),
-    });
+  /** POST /admin/verifiers/register */
+  registerVerifier(
+    address: string,
+    token: string,
+  ): Observable<{ registered: boolean; address: string }> {
+    return this.http.post<{ registered: boolean; address: string }>(
+      `${this.baseUrl}/admin/verifiers/register`,
+      { address },
+      { headers: this.authHeaders(token) },
+    );
   }
 
-  /** DELETE /verifiers/:address */
-  removeVerifier(address: string, token: string): Observable<void> {
-    return this.http.delete<void>(`${this.baseUrl}/verifiers/${address}`, {
-      headers: this.authHeaders(token),
-    });
+  /** POST /admin/verifiers/:id/suspend */
+  suspendVerifier(id: string, token: string): Observable<{ suspended: boolean }> {
+    return this.http.post<{ suspended: boolean }>(
+      `${this.baseUrl}/admin/verifiers/${id}/suspend`,
+      {},
+      { headers: this.authHeaders(token) },
+    );
   }
 
-  // ── Certificates ──────────────────────────────────────────────────────────
-
-  /** GET /certificates/:id/download — returns a Blob (PDF). */
-  downloadCertificate(id: string, token: string): Observable<Blob> {
-    return this.http.get(`${this.baseUrl}/certificates/${id}/download`, {
-      headers: this.authHeaders(token),
-      responseType: 'blob',
-    });
+  /** POST /admin/verifiers/:id/configure */
+  configureVerifier(
+    id: string,
+    config: VerifierConfig,
+    token: string,
+  ): Observable<{ configured: boolean; verifierId: string }> {
+    return this.http.post<{ configured: boolean; verifierId: string }>(
+      `${this.baseUrl}/admin/verifiers/${id}/configure`,
+      config,
+      { headers: this.authHeaders(token) },
+    );
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

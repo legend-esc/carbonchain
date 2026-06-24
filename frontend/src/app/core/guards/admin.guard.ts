@@ -6,7 +6,19 @@ export const adminGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
 
-  if (auth.isAdmin()) return true;
+  if (!auth.isAuthenticated()) {
+    return router.createUrlTree(['/connect-wallet']);
+  }
+
+  const token = auth.token();
+  if (token) {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1])) as { role?: string };
+      if (payload.role === 'admin') return true;
+    } catch {
+      // malformed token — fall through to redirect
+    }
+  }
 
   return router.createUrlTree(['/dashboard']);
 };

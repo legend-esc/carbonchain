@@ -3,21 +3,23 @@ import { Injectable, signal } from '@angular/core';
 export interface Toast {
   id: number;
   message: string;
-  type: 'info' | 'error' | 'success';
+  type: 'error' | 'info' | 'success';
 }
 
 @Injectable({ providedIn: 'root' })
 export class ToastService {
-  private _id = 0;
-  readonly toasts = signal<Toast[]>([]);
+  private _counter = 0;
+  private readonly _toasts = signal<Toast[]>([]);
 
-  show(message: string, type: Toast['type'] = 'info', durationMs = 4000): void {
-    const id = ++this._id;
-    this.toasts.update(t => [...t, { id, message, type }]);
+  readonly toasts = this._toasts.asReadonly();
+
+  show(message: string, type: Toast['type'] = 'error', durationMs = 5000): void {
+    const id = ++this._counter;
+    this._toasts.update((list) => [...list, { id, message, type }]);
     setTimeout(() => this.dismiss(id), durationMs);
   }
 
   dismiss(id: number): void {
-    this.toasts.update(t => t.filter(x => x.id !== id));
+    this._toasts.update((list) => list.filter((t) => t.id !== id));
   }
 }

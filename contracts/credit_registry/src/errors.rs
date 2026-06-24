@@ -17,7 +17,20 @@ pub enum CarbonChainError {
     InvalidTonnes = 110,
     InvalidAdmin = 111,
     ContractPaused = 112,
-    InvalidNonce = 113,
-    NoPendingAdmin = 114,
-    InvalidSplit = 115,
+    IssuerNotAllowed = 113,
+    InvalidMethodology = 114,
+    InvalidNonce = 115,
+    NoPendingAdmin = 116,
+    InvalidSplit = 117,
+    InvalidDisputeStatus = 118,
+    /// Returned when trying to remove a verifier who still has Pending credits.
+    VerifierHasPendingCredits = 119,
+    ProjectNotFound = 120,
+    DuplicateCredit = 121,
+    ProjectAlreadyExists = 122,
+    SessionNotFound = 123,
+    /// Returned when `required_approvals` is set to zero or exceeds the verifier count.
+    InvalidApprovalThreshold = 124,
+    /// Returned when a verifier tries to approve a credit they already approved.
+    AlreadyApproved = 125,
 }
