@@ -1059,6 +1059,14 @@ impl CreditRegistry {
         Ok(get_session_op_count(&env, &session_id))
     }
 
+    /// Fetch a session by its ID, including initiator and creation timestamp.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::SessionNotFound`] — no session exists for `session_id`.
+    pub fn get_session(env: Env, session_id: BytesN<32>) -> Result<Session, CarbonChainError> {
+        get_session(&env, &session_id).ok_or(CarbonChainError::SessionNotFound)
+    }
+
     /// Fetch an audit log entry by its ID.
     ///
     /// # Errors
@@ -1743,6 +1751,40 @@ mod tests {
 
         let result = client.try_get_session_operation_count(&fake_session_id);
 
+        assert_eq!(result, Err(Ok(CarbonChainError::SessionNotFound)));
+    }
+
+    #[test]
+    fn test_get_session_returns_session_data() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+        
+        let session_id = client.create_session(&admin);
+        let session = client.get_session(&session_id);
+        
+        assert_eq!(session.initiator, admin);
+        assert_eq!(session.created_at, 1735689600u64);
+        assert_eq!(session.operation_count, 0);
+    }
+
+    #[test]
+    fn test_get_session_returns_error_for_missing_session() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let fake_session_id = BytesN::from_array(&env, &[0u8; 32]);
+
+        let result = client.try_get_session(&fake_session_id);
+
+        assert!(result.is_err());
         assert_eq!(result, Err(Ok(CarbonChainError::SessionNotFound)));
     }
 
