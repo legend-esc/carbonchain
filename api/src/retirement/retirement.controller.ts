@@ -10,7 +10,7 @@ import {
   DefaultValuePipe,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { RetirementService, RetireDto } from './retirement.service';
+import { RetirementService, RetireDto, BatchRetireDto } from './retirement.service';
 import { RetirementRecord } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from '../credits/credit.repository';
@@ -39,6 +39,15 @@ export class RetirementController {
     @Body() dto: RetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
     return this.retirementService.retire(dto);
+  }
+
+  /** POST /retirement/batch — protected: requires JWT */
+  @UseGuards(JwtAuthGuard)
+  @Post('batch')
+  batchRetire(
+    @Body() dto: BatchRetireDto,
+  ): Promise<{ retirementIds: string[] }> {
+    return this.retirementService.batchRetire(dto);
   }
 
   /** GET /retirement — paginated list */
