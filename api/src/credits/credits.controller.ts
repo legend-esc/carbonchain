@@ -67,6 +67,24 @@ export class CreditsController {
     return this.creditsService.getCredit(id);
   }
 
+  /** GET /credits/:id/provenance — retrieve full lifecycle of a credit (protected: requires JWT) */
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Get credit provenance',
+    description: 'Returns the full lifecycle of a credit including all events (submit, approval, transfers, retirement)',
+  })
+  @Get(':id/provenance')
+  async getCreditProvenance(
+    @Param('id') creditId: string,
+  ): Promise<Array<{
+    action: string;
+    actor: string;
+    timestamp: number;
+    txHash: string;
+  }>> {
+    return this.creditsService.getCreditProvenance(creditId);
+  }
+
   @ApiOperation({ summary: 'List credits by project' })
   @Get('project/:projectId')
   async listByProject(
