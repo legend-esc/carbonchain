@@ -9,10 +9,11 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "26.0.1"
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+soroban-sdk = { version = "26.0.1", features = ["testutils"] }
 
 [features]
-testutils = ["soroban-sdk/testutils"]
+library = []
+testutils = ["library", "soroban-sdk/testutils"]

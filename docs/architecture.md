@@ -393,6 +393,57 @@ Project documentation packages (methodology reports, satellite imagery, audit PD
 10. Horizon event listener syncs credit to PostgreSQL read model
 ```
 
+#### Sequence diagram — happy-path credit lifecycle (submit → approve → retire)
+
+```mermaid
+sequenceDiagram
+    actor Developer
+    actor Verifier
+    actor Buyer
+    participant Frontend
+    participant API
+    participant IPFS
+    participant CreditRegistry
+    participant RetirementContract
+    participant Ledger
+
+    Developer->>Frontend: Upload project docs
+    Frontend->>IPFS: Pin documentation package
+    IPFS-->>Frontend: CID
+
+    Developer->>Frontend: Submit credit (metadata + CID)
+    Frontend->>API: POST /credits/issue
+    API->>CreditRegistry: create_session(developer)
+    API->>CreditRegistry: submit_credit_with_session(metadata)
+    CreditRegistry->>Ledger: Write CreditStatus=Pending
+    CreditRegistry-->>API: credit_id
+    API-->>Frontend: credit_id
+    Frontend->>Developer: Sign transaction (Freighter)
+    Developer->>Ledger: Submit signed tx
+
+    Verifier->>Frontend: Open verifier dashboard
+    Frontend->>API: GET /credits?status=Pending
+    API-->>Frontend: [credit_id, ...]
+    Verifier->>Frontend: Approve credit
+    Frontend->>API: POST /credits/:id/approve
+    API->>CreditRegistry: approve_and_mint_with_session(verifier, credit_id)
+    CreditRegistry->>Ledger: Verify verifier ∈ VerifierSet → mint CCR token
+    CreditRegistry->>Ledger: CreditStatus=Active, emit CreditMinted
+    Ledger-->>API: tx confirmed
+    API-->>Frontend: Active
+
+    Buyer->>Frontend: Initiate retirement
+    Frontend->>API: POST /credits/:id/retire {reason}
+    API->>RetirementContract: retire_with_session(buyer, credit_id, reason)
+    RetirementContract->>Ledger: burn CCR token
+    RetirementContract->>Ledger: write RetirementRecord (immutable)
+    RetirementContract->>Ledger: emit CreditRetired
+    Ledger-->>API: tx_hash
+    API->>API: CertificateService.generate(tx_hash)
+    API-->>Frontend: certificate_url
+    Frontend->>Buyer: Shareable certificate at /certificates/:id
+```
+
 ### Retirement flow
 
 ```
@@ -413,6 +464,83 @@ Project documentation packages (methodology reports, satellite imagery, audit PD
 3.  MRV Oracle contract receives MrvDataPoint, checks against threshold
 4.  If anomaly detected → contract calls CreditRegistry::flag_credit()
 5.  CreditStatus → Flagged, verifier notified via in-app + email
+```
+
+#### Sequence diagram — flagged credit re-review flow (submit → flag → re-review)
+
+```mermaid
+sequenceDiagram
+    actor Oracle
+    actor Verifier
+    participant API
+    participant MRVOracle
+    participant CreditRegistry
+    participant Ledger
+    participant NotificationService
+
+    Oracle->>API: POST /oracle/ingest {project_id, mrv_data}
+    API->>API: Verify oracle signature
+    API->>MRVOracle: update_mrv_data(oracle, project_id, data)
+    MRVOracle->>MRVOracle: Check sequestration vs threshold
+    alt Anomaly detected
+        MRVOracle->>CreditRegistry: flag_credit(project_id, reason)
+        CreditRegistry->>Ledger: CreditStatus=Flagged, emit CreditFlagged
+        CreditRegistry-->>API: flagged credit_ids[]
+        API->>NotificationService: Notify verifier (in-app + email)
+    else Within threshold
+        MRVOracle->>Ledger: Write MrvDataPoint, emit MRVUpdated
+    end
+
+    Verifier->>API: GET /credits?status=Flagged
+    API-->>Verifier: [flagged credits]
+    Verifier->>API: GET /projects/:id/mrv (review MRV timeline)
+    API-->>Verifier: MrvDataPoint[]
+
+    alt Verifier clears flag
+        Verifier->>API: POST /credits/:id/approve
+        API->>CreditRegistry: approve_and_mint_with_session(verifier, credit_id)
+        CreditRegistry->>Ledger: CreditStatus=Active, emit CreditMinted
+    else Verifier revokes credit
+        Verifier->>API: POST /credits/:id/revoke
+        API->>CreditRegistry: revoke_credit(verifier, credit_id)
+        CreditRegistry->>Ledger: CreditStatus=Retired (invalidated), emit CreditRevoked
+    end
+```
+
+#### Sequence diagram — marketplace buy flow
+
+```mermaid
+sequenceDiagram
+    actor Seller
+    actor Buyer
+    participant Frontend
+    participant API
+    participant MarketplaceContract
+    participant StellarDEX
+    participant Ledger
+
+    Seller->>Frontend: List credit for sale (price in XLM)
+    Frontend->>API: POST /marketplace/offer {credit_id, price_xlm}
+    API->>MarketplaceContract: create_offer(seller, credit_id, price_xlm)
+    MarketplaceContract->>StellarDEX: manage_sell_offer (CCR/XLM)
+    StellarDEX->>Ledger: Order book entry created
+    Ledger-->>API: offer_id
+    API-->>Frontend: offer_id
+
+    Buyer->>Frontend: Browse marketplace
+    Frontend->>API: GET /marketplace/listings
+    API->>MarketplaceContract: get_offers(filter)
+    MarketplaceContract-->>API: Offer[]
+    API-->>Frontend: listings
+
+    Buyer->>Frontend: Buy credit
+    Frontend->>API: POST /marketplace/offer/:id/accept
+    API->>MarketplaceContract: accept_offer(buyer, offer_id)
+    MarketplaceContract->>StellarDEX: path_payment / fill order
+    StellarDEX->>Ledger: Transfer XLM → Seller, CCR → Buyer
+    Ledger-->>API: tx confirmed
+    API-->>Frontend: Purchase complete
+    Frontend->>Buyer: CCR token in Stellar wallet
 ```
 
 ---
