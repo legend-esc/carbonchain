@@ -802,4 +802,26 @@ mod tests {
         let offer_after = client.get_offer(&offer_id);
         assert!(!offer_after.active);
     }
+
+    // ── Issue #222: CreditMetadata field order verification ──────────────────
+
+    #[test]
+    fn test_cross_contract_credit_metadata_deserialization() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, _, _, registry, credit_id) = setup_with_registry(&env);
+        
+        // Fetch the credit from registry
+        let credit = registry.get_credit(&credit_id);
+        
+        // Verify all fields are present and match expected values
+        assert_eq!(credit.project_id, String::from_str(&env, "PROJ-001"));
+        assert_eq!(credit.vintage_year, 2024u32);
+        assert_eq!(credit.methodology, String::from_str(&env, "VCS"));
+        assert_eq!(credit.geography, String::from_str(&env, "NG"));
+        assert_eq!(credit.tonnes, 1_000_000i128);
+        assert_eq!(credit.ipfs_hash, String::from_str(&env, "bafybei123"));
+        assert_eq!(credit.status, CreditStatus::Active);
+        assert!(credit.issued_at > 0);
+    }
 }
