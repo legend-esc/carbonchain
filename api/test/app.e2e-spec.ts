@@ -45,12 +45,18 @@ describe('RetirementController batch_retire (e2e)', () => {
     })
       .overrideProvider(RetirementService)
       .useValue({
-        retire: jest.fn().mockImplementation((dto: { creditId: string }) =>
-          Promise.resolve({ retirementId: `ret-${dto.creditId}` }),
-        ),
-        batchRetire: jest.fn().mockImplementation((dtos: Array<{ creditId: string }>) =>
-          Promise.resolve({ retirementIds: dtos.map((d) => `ret-${d.creditId}`) }),
-        ),
+        retire: jest
+          .fn()
+          .mockImplementation((dto: { creditId: string }) =>
+            Promise.resolve({ retirementId: `ret-${dto.creditId}` }),
+          ),
+        batchRetire: jest
+          .fn()
+          .mockImplementation((dtos: Array<{ creditId: string }>) =>
+            Promise.resolve({
+              retirementIds: dtos.map((d) => `ret-${d.creditId}`),
+            }),
+          ),
         getRetirement: jest.fn(),
         getRetirementsByAccount: jest.fn(),
       })
@@ -76,8 +82,6 @@ describe('RetirementController batch_retire (e2e)', () => {
       .expect(201);
 
     expect(res.retirementIds).toHaveLength(3);
-    expect(res.retirementIds).toEqual(
-      creditIds.map((id) => `ret-${id}`),
-    );
+    expect(res.retirementIds).toEqual(creditIds.map((id) => `ret-${id}`));
   });
 });

@@ -3,7 +3,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
 import { CreditMetadata } from '../shared';
 
-@Controller('verifiers')
+export interface VerifierReputation {
+  approvalCount: number;
+  disputeCount: number;
+}
+
+@Controller('v1/verifiers')
 export class VerifiersController {
   constructor(private readonly verifiersService: VerifiersService) {}
 
@@ -31,5 +36,12 @@ export class VerifiersController {
     @Param('id') verifierId: string,
   ): Promise<CreditMetadata[]> {
     return this.verifiersService.getApprovalHistory(verifierId);
+  }
+
+  @Get(':address/reputation')
+  async getReputation(
+    @Param('address') address: string,
+  ): Promise<VerifierReputation> {
+    return this.verifiersService.getReputation(address);
   }
 }
