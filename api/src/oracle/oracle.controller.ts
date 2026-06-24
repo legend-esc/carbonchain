@@ -29,7 +29,12 @@ export class OracleController {
     @Param('projectId') projectId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('pageSize', new DefaultValuePipe(10), ParseIntPipe) pageSize: number,
-  ): Promise<{ data: unknown[]; page: number; pageSize: number; total: number }> {
+  ): Promise<{
+    data: unknown[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }> {
     return this.oracleService.getHistory(projectId, page, pageSize);
   }
 

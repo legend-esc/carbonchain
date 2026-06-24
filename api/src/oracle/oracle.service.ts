@@ -91,7 +91,12 @@ export class OracleService {
     projectId: string,
     page: number,
     pageSize: number,
-  ): Promise<{ data: unknown[]; page: number; pageSize: number; total: number }> {
+  ): Promise<{
+    data: unknown[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }> {
     try {
       this.logger.log(
         `Fetching MRV history for project ${projectId}, page ${page}, pageSize ${pageSize}`,

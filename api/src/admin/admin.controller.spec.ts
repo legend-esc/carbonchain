@@ -4,10 +4,6 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
 import { CreditStatus } from '../shared';
-import { StellarService } from '../stellar/stellar.service';
-import { CacheService } from '../common/cache.service';
-import { ConfigService } from '@nestjs/config';
-import * as StellarSdk from '@stellar/stellar-sdk';
 
 jest.mock('@stellar/stellar-sdk', () => ({
   ...jest.requireActual('@stellar/stellar-sdk'),

@@ -32,7 +32,9 @@ export class AdminGuard implements CanActivate {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<{ user?: { account: string } }>();
+    const request = context
+      .switchToHttp()
+      .getRequest<{ user?: { account: string } }>();
 
     if (!request.user?.account) {
       throw new ForbiddenException('No authenticated user');
@@ -55,10 +57,7 @@ export class AdminGuard implements CanActivate {
   private async getAdminAddress(): Promise<string> {
     const now = Date.now();
 
-    if (
-      this.adminAddressCache &&
-      this.adminAddressCache.expiresAt > now
-    ) {
+    if (this.adminAddressCache && this.adminAddressCache.expiresAt > now) {
       return this.adminAddressCache.address;
     }
 
