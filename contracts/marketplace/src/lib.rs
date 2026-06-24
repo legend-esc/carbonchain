@@ -219,6 +219,9 @@ impl Marketplace {
         if credit.owner != seller {
             return Err(MarketplaceError::Unauthorized);
         }
+        if tonnes > credit.tonnes {
+            return Err(MarketplaceError::InvalidTonnes);
+        }
 
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
@@ -801,5 +804,26 @@ mod tests {
         client.cancel_offer(&seller, &offer_id, &registry.id, &seller_nonce2);
         let offer_after = client.get_offer(&offer_id);
         assert!(!offer_after.active);
+    }
+
+    // ── Issue #235: tonnes > credit.tonnes must be rejected ─────────────────
+
+    #[test]
+    fn test_create_offer_over_credit_tonnes_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        // credit has 1_000_000 units; try to list 2_000_000
+        let seller_nonce = client.get_nonce(&seller);
+        let result = client.try_create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &2_000_000, // more than credit.tonnes
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InvalidTonnes)));
     }
 }
