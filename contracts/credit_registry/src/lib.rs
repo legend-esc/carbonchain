@@ -775,7 +775,7 @@ impl CreditRegistry {
             return Err(CarbonChainError::Unauthorized);
         }
         let mut credit = get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)?;
-        if credit.status == CreditStatus::Retired || credit.status == CreditStatus::Expired {
+        if credit.status != CreditStatus::Active {
             return Err(CarbonChainError::InvalidStatusTransition);
         }
         credit.status = CreditStatus::Expired;
@@ -1772,5 +1772,72 @@ mod tests {
         let vnonce = client.get_nonce(&verifier);
         let result = client.try_configure_verifier_services(&verifier, &verifier, &services, &vnonce);
         assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+    }
+
+    // ── Tests for Issue #220: expire_credit lifecycle ────────────────────────
+
+    #[test]
+    fn test_expire_credit_requires_active_status() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let nonce = client.get_nonce(&admin);
+        let result = client.try_expire_credit(&admin, &id, &nonce);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_expire_credit_succeeds_for_active() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        let anonce = client.get_nonce(&admin);
+        let result = client.try_expire_credit(&admin, &id, &anonce);
+        assert!(result.is_ok());
+        let credit = client.get_credit(&id);
+        assert_eq!(credit.status, CreditStatus::Expired);
+    }
+
+    #[test]
+    fn test_expire_credit_blocks_flagged() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+        let anonce = client.get_nonce(&admin);
+        let result = client.try_expire_credit(&admin, &id, &anonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_expire_credit_blocks_retired() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        client.mark_retired(&id);
+        let anonce = client.get_nonce(&admin);
+        let result = client.try_expire_credit(&admin, &id, &anonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_expire_credit_blocks_disputed() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.dispute_credit(&verifier, &id, &String::from_str(&env, "test evidence"), &vnonce);
+        let anonce = client.get_nonce(&admin);
+        let result = client.try_expire_credit(&admin, &id, &anonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
     }
 }
