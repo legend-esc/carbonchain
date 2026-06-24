@@ -1796,4 +1796,26 @@ mod tests {
         let result = client.try_configure_verifier_services(&verifier, &verifier, &services, &vnonce);
         assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
     }
+
+    #[test]
+    fn test_nonce_cannot_be_replayed_after_ttl_reset() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+
+        // Consume nonce 0 — registers verifier successfully
+        let nonce0 = client.get_nonce(&admin);
+        assert_eq!(nonce0, 0);
+        client.register_verifier(&admin, &verifier, &nonce0);
+
+        // Nonce is now 1; attempting to reuse nonce 0 must fail
+        let result = client.try_register_verifier(&admin, &verifier, &0);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidNonce)));
+    }
 }

@@ -910,22 +910,42 @@
           "v0": {
             "topics": [
               {
-                "symbol": "submit"
-              },
-              {
-                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                "symbol": "credit_submitted"
               }
             ],
             "data": {
-              "vec": [
+              "map": [
                 {
-                  "string": "PROJ-001"
+                  "key": {
+                    "symbol": "credit_id"
+                  },
+                  "val": {
+                    "bytes": "713c2deacafd1383296da65aa120a86921e2284dd7674d2a700a424bb89a30b7"
+                  }
                 },
                 {
-                  "bytes": "713c2deacafd1383296da65aa120a86921e2284dd7674d2a700a424bb89a30b7"
+                  "key": {
+                    "symbol": "issuer"
+                  },
+                  "val": {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  }
                 },
                 {
-                  "i128": "1000000"
+                  "key": {
+                    "symbol": "project_id"
+                  },
+                  "val": {
+                    "string": "PROJ-001"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "tonnes"
+                  },
+                  "val": {
+                    "i128": "1000000"
+                  }
                 }
               ]
             }
