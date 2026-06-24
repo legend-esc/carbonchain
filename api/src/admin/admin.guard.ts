@@ -3,25 +3,27 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
-  Inject,
   Logger,
 } from '@nestjs/common';
 import { StellarService } from '../stellar/stellar.service';
+import { CacheService } from '../common/cache.service';
 import { scValToNative } from '@stellar/stellar-sdk';
 import { ConfigService } from '@nestjs/config';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
   private readonly logger = new Logger(AdminGuard.name);
   private readonly contractId: string;
-  private readonly adminCacheTtl = 60000;
+  private readonly adminCacheTtlSeconds = 60;
+  private adminAddressCache: {
+    address: string;
+    expiresAt: number;
+  } | null = null;
 
   constructor(
     private readonly stellarService: StellarService,
     private readonly configService: ConfigService,
-    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly cacheService: CacheService,
   ) {
     this.contractId = this.configService.get<string>(
       'CREDIT_REGISTRY_CONTRACT_ID',
@@ -37,14 +39,7 @@ export class AdminGuard implements CanActivate {
     }
 
     const userAccount = request.user.account;
-
-    const cachedAdmin = await this.cacheManager.get<string>('admin_address');
-    let adminAddress = cachedAdmin;
-
-    if (!adminAddress) {
-      adminAddress = await this.fetchAdminAddressFromContract();
-      await this.cacheManager.set('admin_address', adminAddress, this.adminCacheTtl);
-    }
+    const adminAddress = await this.getAdminAddress();
 
     if (userAccount !== adminAddress) {
       this.logger.warn(
@@ -55,6 +50,25 @@ export class AdminGuard implements CanActivate {
 
     this.logger.log(`Admin access granted for account ${userAccount}`);
     return true;
+  }
+
+  private async getAdminAddress(): Promise<string> {
+    const now = Date.now();
+
+    if (
+      this.adminAddressCache &&
+      this.adminAddressCache.expiresAt > now
+    ) {
+      return this.adminAddressCache.address;
+    }
+
+    const adminAddress = await this.fetchAdminAddressFromContract();
+    this.adminAddressCache = {
+      address: adminAddress,
+      expiresAt: now + this.adminCacheTtlSeconds * 1000,
+    };
+
+    return adminAddress;
   }
 
   private async fetchAdminAddressFromContract(): Promise<string> {
