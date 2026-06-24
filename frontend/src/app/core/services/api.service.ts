@@ -124,9 +124,49 @@ export class ApiService {
     });
   }
 
+  // ── Verifiers ─────────────────────────────────────────────────────────────
+
+  /** GET /verifiers */
+  listVerifiers(token: string): Observable<VerifierRecord[]> {
+    return this.http.get<VerifierRecord[]>(`${this.baseUrl}/verifiers`, {
+      headers: this.authHeaders(token),
+    });
+  }
+
+  /** POST /verifiers/:address/approve */
+  approveVerifier(address: string, token: string): Observable<void> {
+    return this.http.post<void>(`${this.baseUrl}/verifiers/${address}/approve`, null, {
+      headers: this.authHeaders(token),
+    });
+  }
+
+  /** DELETE /verifiers/:address */
+  removeVerifier(address: string, token: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/verifiers/${address}`, {
+      headers: this.authHeaders(token),
+    });
+  }
+
+  // ── Certificates ──────────────────────────────────────────────────────────
+
+  /** GET /certificates/:id/download — returns a Blob (PDF). */
+  downloadCertificate(id: string, token: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/certificates/${id}/download`, {
+      headers: this.authHeaders(token),
+      responseType: 'blob',
+    });
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private authHeaders(token: string): HttpHeaders {
     return new HttpHeaders({ Authorization: `Bearer ${token}` });
   }
+}
+
+export interface VerifierRecord {
+  address: string;
+  name: string;
+  status: 'pending' | 'approved' | 'removed';
+  registered_at: number;
 }
