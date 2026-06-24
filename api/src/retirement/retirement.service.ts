@@ -87,6 +87,11 @@ export class RetirementService {
     };
   }
 
+  async batchRetire(dtos: RetireDto[]): Promise<{ retirementIds: string[] }> {
+    const results = await Promise.all(dtos.map((dto) => this.retire(dto)));
+    return { retirementIds: results.map((r) => r.retirementId) };
+  }
+
   async getRetirementsByAccount(account: string): Promise<string[]> {
     const args = [nativeToScVal(account, { type: 'address' })];
     const retval = await this.stellarService.readContract(

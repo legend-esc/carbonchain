@@ -12,6 +12,12 @@ export class RetirementController {
     return this.retirementService.retire(dto);
   }
 
+  /** POST /retirement/batch — retire multiple credits in one call */
+  @Post('batch')
+  batchRetire(@Body() dtos: RetireDto[]): Promise<{ retirementIds: string[] }> {
+    return this.retirementService.batchRetire(dtos);
+  }
+
   /** GET /retirement/:id — fetch a retirement record */
   @Get(':id')
   getRetirement(@Param('id') id: string): Promise<RetirementRecord> {
