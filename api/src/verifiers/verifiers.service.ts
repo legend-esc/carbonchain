@@ -8,6 +8,11 @@ export interface VerifierInfo {
   address: string;
 }
 
+export interface VerifierReputation {
+  approvalCount: number;
+  disputeCount: number;
+}
+
 @Injectable()
 export class VerifiersService {
   private readonly logger = new Logger(VerifiersService.name);
@@ -130,6 +135,42 @@ export class VerifiersService {
         `Failed to fetch approval history for verifier ${verifierId}: ${(error as Error).message}`,
       );
       return [];
+    }
+  }
+
+  async getReputation(address: string): Promise<VerifierReputation> {
+    try {
+      await this.getVerifier(address);
+
+      this.logger.log(`Fetching reputation for verifier: ${address}`);
+      const args = [nativeToScVal(address, { type: 'address' })];
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_verifier_reputation',
+        args,
+      );
+
+      if (!retval) {
+        return { approvalCount: 0, disputeCount: 0 };
+      }
+
+      const native = scValToNative(retval) as {
+        approval_count: bigint;
+        dispute_count: bigint;
+      };
+
+      return {
+        approvalCount: Number(native.approval_count),
+        disputeCount: Number(native.dispute_count),
+      };
+    } catch (error: unknown) {
+      if ((error as any).status === 404) {
+        throw error;
+      }
+      this.logger.error(
+        `Failed to fetch reputation for verifier ${address}: ${(error as Error).message}`,
+      );
+      return { approvalCount: 0, disputeCount: 0 };
     }
   }
 }
