@@ -140,7 +140,7 @@ impl Retirement {
         }
 
         if tonnes <= 0 {
-            panic!("tonnes must be greater than zero");
+            return Err(RetirementError::InvalidTonnes);
         }
         let mut preimage = credit_id.clone().to_xdr(&env);
         preimage.append(&reason.clone().to_xdr(&env));
@@ -518,7 +518,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_retire_zero_tonnes_fails() {
         let env = Env::default();
         env.mock_all_auths();
@@ -527,14 +526,18 @@ mod tests {
         let client = RetirementClient::new(&env, &contract_id);
         let nonce = client.get_nonce(&credit_owner);
 
-        client.retire(
-            &credit_owner,
-            &credit_id,
-            &0,
-            &String::from_str(&env, "offset"),
-            &registry.id,
-            &nonce,
-        );
+        let err = client
+            .try_retire(
+                &credit_owner,
+                &credit_id,
+                &0,
+                &String::from_str(&env, "offset"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidTonnes);
     }
 
     // ── Pause tests ──────────────────────────────────────────────────────────
