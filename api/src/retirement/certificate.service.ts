@@ -52,6 +52,17 @@ export class CertificateService {
     return ipfsHash;
   }
 
+  /**
+   * Generates a certificate PDF for a retirement without pinning to IPFS.
+   * Used for direct download endpoint.
+   */
+  async generatePdf(data: CertificateData): Promise<Buffer> {
+    this.logger.log(
+      `Generating PDF for certificate download - retirement ${data.retirementId}`,
+    );
+    return this.buildPdf(data);
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private buildPdf(data: CertificateData): Promise<Buffer> {
