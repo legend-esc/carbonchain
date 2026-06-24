@@ -285,6 +285,41 @@ export class CreditsService {
     }
   }
 
+  async transferCredit(
+    creditId: string,
+    toAddress: string,
+    fromAddress: string,
+  ): Promise<CreditMetadata> {
+    this.logger.log(
+      `Transferring credit ${creditId} from ${fromAddress} to ${toAddress}`,
+    );
+
+    // Fetch current credit to verify ownership
+    const credit = await this.getCredit(creditId);
+    if (credit.issuer !== fromAddress) {
+      throw new BadRequestException(
+        'Only the credit issuer can transfer this credit',
+      );
+    }
+
+    // Build and submit the contract transaction
+    const args = [
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(toAddress, { type: 'address' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'transfer_credit',
+      args,
+      signer,
+    );
+
+    // Invalidate cache and fetch updated metadata
+    await this.invalidateCreditCache(creditId);
+    return this.getCredit(creditId);
+  }
+
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {
     return {
       id,
