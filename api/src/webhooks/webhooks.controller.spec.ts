@@ -1,6 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
+
+const mockConfigService = {
+  get: jest.fn((key: string, def?: string) => {
+    if (key === 'WEBHOOK_SIGNATURE_HEADER') return 'x-mrv-signature';
+    if (key === 'WEBHOOK_SIGNATURE_ALGO') return 'sha256';
+    return def;
+  }),
+};
 
 describe('WebhooksController', () => {
   let controller: WebhooksController;
@@ -9,7 +18,10 @@ describe('WebhooksController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WebhooksController],
-      providers: [WebhooksService],
+      providers: [
+        WebhooksService,
+        { provide: ConfigService, useValue: mockConfigService },
+      ],
     }).compile();
 
     controller = module.get<WebhooksController>(WebhooksController);
