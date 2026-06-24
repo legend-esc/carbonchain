@@ -920,6 +920,10 @@ impl CreditRegistry {
             total_tonnes = total_tonnes.checked_add(credit.tonnes).ok_or(CarbonChainError::Overflow)?;
         }
 
+        if total_tonnes % MIN_CREDIT_UNIT != 0 {
+            return Err(CarbonChainError::InvalidTonnes);
+        }
+
         let nonce: u64 = env.storage().instance().get(&DataKey::CreditNonce).unwrap_or(0u64);
         env.storage().instance().set(&DataKey::CreditNonce, &(nonce + 1));
         let mut preimage = project_id.clone().unwrap().to_xdr(&env);
@@ -1716,6 +1720,62 @@ mod tests {
         let nonce = client.get_nonce(&issuer);
         let result = client.try_split_credit(&issuer, &id, &1_000_000, &nonce);
         assert!(result.is_err());
+    }
+
+    // ── Tests for Issue #223: merge_credits validation ───────────────────────
+
+    #[test]
+    fn test_merge_credits_validates_total_is_multiple() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id1 = {
+            let anonce = client.get_nonce(&admin);
+            client.register_issuer(&admin, &issuer, &anonce);
+            let anonce_meth = client.get_nonce(&admin);
+            client.register_methodology(
+                &admin,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "Verified Carbon Standard"),
+                &anonce_meth,
+            );
+            client.register_project(
+                &admin,
+                &String::from_str(&env, "PROJ-001"),
+                &String::from_str(&env, "Test"),
+                &String::from_str(&env, "Desc"),
+                &String::from_str(&env, "NG"),
+            );
+            let inonce = client.get_nonce(&issuer);
+            client.submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &2024,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &150_000,
+                &String::from_str(&env, "bafybei123"),
+                &inonce,
+            )
+        };
+        let id2 = {
+            let inonce2 = client.get_nonce(&issuer);
+            client.submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &2025,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &250_000,
+                &String::from_str(&env, "bafybei456"),
+                &inonce2,
+            )
+        };
+        let mut credit_ids = soroban_sdk::Vec::new(&env);
+        credit_ids.push_back(id1);
+        credit_ids.push_back(id2);
+        let mnonce = client.get_nonce(&issuer);
+        let result = client.try_merge_credits(&issuer, &credit_ids, &mnonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidTonnes)));
     }
 
     #[test]
