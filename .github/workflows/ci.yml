@@ -18,7 +18,7 @@ jobs:
           targets: wasm32v1-none
       # #47 — cache cargo registry and build artifacts for all four contracts
       - name: Cache cargo dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
