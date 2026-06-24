@@ -91,7 +91,7 @@ jobs:
         run: cd api && npm run test:cov
       # #249 — upload coverage artifacts
       - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-coverage-report
           path: api/coverage
@@ -128,7 +128,7 @@ jobs:
           ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
         run: ./scripts/smoke-test.sh
       - name: Upload contract IDs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contract-ids-testnet
           path: scripts/contract-ids.testnet.json
