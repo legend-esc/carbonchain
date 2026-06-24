@@ -1,4 +1,9 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { StellarService } from '../stellar/stellar.service';
@@ -80,5 +85,84 @@ export class OracleService {
       : false;
 
     return { anomaly };
+  }
+
+  async getHistory(
+    projectId: string,
+    page: number,
+    pageSize: number,
+  ): Promise<{ data: unknown[]; page: number; pageSize: number; total: number }> {
+    try {
+      this.logger.log(
+        `Fetching MRV history for project ${projectId}, page ${page}, pageSize ${pageSize}`,
+      );
+
+      const args = [nativeToScVal(projectId, { type: 'string' })];
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_history',
+        args,
+      );
+
+      if (!retval) {
+        return { data: [], page, pageSize, total: 0 };
+      }
+
+      const history = scValToNative(retval) as unknown[];
+      const total = history.length;
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize;
+      const data = history.slice(start, end);
+
+      return { data, page, pageSize, total };
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to fetch MRV history for project ${projectId}: ${(error as Error).message}`,
+      );
+      return { data: [], page, pageSize, total: 0 };
+    }
+  }
+
+  async getAggregate(
+    projectId: string,
+    from: number,
+    to: number,
+  ): Promise<{ sum: number; average: number }> {
+    if (from >= to) {
+      throw new BadRequestException('from must be less than to');
+    }
+
+    try {
+      this.logger.log(
+        `Fetching MRV aggregate for project ${projectId}, from ${from}, to ${to}`,
+      );
+
+      const args = [
+        nativeToScVal(projectId, { type: 'string' }),
+        nativeToScVal(BigInt(from), { type: 'u64' }),
+        nativeToScVal(BigInt(to), { type: 'u64' }),
+      ];
+
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_mrv_aggregate',
+        args,
+      );
+
+      if (!retval) {
+        return { sum: 0, average: 0 };
+      }
+
+      const result = scValToNative(retval) as { sum: bigint; avg: bigint };
+      return {
+        sum: Number(result.sum),
+        average: Number(result.avg),
+      };
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to fetch MRV aggregate for project ${projectId}: ${(error as Error).message}`,
+      );
+      return { sum: 0, average: 0 };
+    }
   }
 }
