@@ -4,9 +4,10 @@ import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
 import { CreditsModule } from '../credits/credits.module';
 import { VerifiersModule } from '../verifiers/verifiers.module';
+import { StellarModule } from '../stellar/stellar.module';
 
 @Module({
-  imports: [CreditsModule, VerifiersModule],
+  imports: [CreditsModule, VerifiersModule, StellarModule],
   controllers: [AdminController],
   providers: [AdminService, AdminGuard],
 })
