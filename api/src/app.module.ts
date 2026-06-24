@@ -30,6 +30,10 @@ import { WebhooksModule } from './webhooks/webhooks.module';
         STELLAR_HORIZON_URL: Joi.string().uri().required(),
         STELLAR_SOROBAN_RPC: Joi.string().uri().required(),
         PORT: Joi.number().default(3000),
+        WEBHOOK_SIGNATURE_HEADER: Joi.string().default('x-mrv-signature'),
+        WEBHOOK_SIGNATURE_ALGO: Joi.string()
+          .valid('sha256', 'sha512', 'sha1', 'md5')
+          .default('sha256'),
       }),
       validationOptions: {
         abortEarly: true,
