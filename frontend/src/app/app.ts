@@ -9,7 +9,14 @@ import { ToastComponent } from './shared/components/toast.component';
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, ConnectWalletComponent, LocaleSwitcherComponent, TranslatePipe, ToastComponent],
+  imports: [
+    RouterOutlet,
+    RouterLink,
+    ConnectWalletComponent,
+    LocaleSwitcherComponent,
+    TranslatePipe,
+    ToastComponent,
+  ],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })

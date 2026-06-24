@@ -15,7 +15,11 @@
           [disabled]="wallet.state() === 'connecting'"
           aria-label="Connect Freighter wallet"
         >
-          {{ wallet.state() === 'connecting' ? ('wallet.connecting' | translate) : ('wallet.connect' | translate) }}
+          {{
+            wallet.state() === 'connecting'
+              ? ('wallet.connecting' | translate)
+              : ('wallet.connect' | translate)
+          }}
         </button>
       }
     </div>
@@ -122,7 +126,9 @@
               </span>
             </dd>
           </dl>
-          <button class="btn btn--ghost" (click)="selectCredit(store.selectedId()!)">{{ 'dashboard.close' | translate }}</button>
+          <button class="btn btn--ghost" (click)="selectCredit(store.selectedId()!)">
+            {{ 'dashboard.close' | translate }}
+          </button>
         </aside>
       }
     }
@@ -152,12 +158,12 @@
           <tbody>
             @for (r of retirements(); track r.id) {
               <tr class="credits-table__row">
-                <td class="monospace">{{ r.id | slice:0:8 }}…</td>
-                <td class="monospace">{{ r.credit_id | slice:0:8 }}…</td>
+                <td class="monospace">{{ r.id | slice: 0 : 8 }}…</td>
+                <td class="monospace">{{ r.credit_id | slice: 0 : 8 }}…</td>
                 <td>{{ formatTonnes(r.tonnes_retired) }}</td>
                 <td>{{ r.reason }}</td>
                 <td>{{ formatDate(r.retired_at) }}</td>
-                <td class="monospace">{{ r.tx_hash | slice:0:12 }}…</td>
+                <td class="monospace">{{ r.tx_hash | slice: 0 : 12 }}…</td>
               </tr>
             }
           </tbody>

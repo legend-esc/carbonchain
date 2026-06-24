@@ -9,9 +9,7 @@ const ALL_LOCALES: Locale[] = ['en', 'es', 'fr'];
 export class TranslationService {
   private cache = new Map<Locale, Record<string, string>>();
   private translations: Record<string, string> = {};
-  private readonly _locale = signal<Locale>(
-    (localStorage.getItem(STORAGE_KEY) as Locale) ?? 'en',
-  );
+  private readonly _locale = signal<Locale>((localStorage.getItem(STORAGE_KEY) as Locale) ?? 'en');
 
   readonly locale = this._locale.asReadonly();
   readonly locales: { code: Locale; label: string }[] = [

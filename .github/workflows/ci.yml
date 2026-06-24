@@ -66,8 +66,11 @@ jobs:
           cache-dependency-path: api/package-lock.json
       - name: Install Dependencies
         run: cd api && npm ci --legacy-peer-deps
+      # #194 — enforce lint and format without auto-fixing
       - name: Lint
         run: cd api && npm run lint
+      - name: Check Formatting
+        run: cd api && npm run format:check
       - name: Build
         run: cd api && npm run build
       # #48 — run unit tests
@@ -145,6 +148,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install Dependencies
         run: cd frontend && npm ci --legacy-peer-deps
+      # #194 — enforce lint and format
+      - name: Lint
+        run: cd frontend && npm run lint
+      - name: Check Formatting
+        run: cd frontend && npm run format:check
       - name: Build
         run: cd frontend && npm run build
       - name: Run Tests

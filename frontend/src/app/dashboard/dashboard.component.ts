@@ -43,7 +43,10 @@ export class DashboardComponent implements OnInit {
   }
 
   formatTonnes(raw: string): string {
-    return (Number(BigInt(raw)) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
+    return (
+      (Number(BigInt(raw)) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) +
+      ' t'
+    );
   }
 
   formatDate(ts: number): string {

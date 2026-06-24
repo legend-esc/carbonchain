@@ -23,32 +23,83 @@ import { Offer } from '@shared';
         <dt>Price</dt>
         <dd>{{ formatXlm(offer().price_xlm) }}</dd>
         <dt>Status</dt>
-        <dd><span class="badge badge-open">{{ offer().status }}</span></dd>
+        <dd>
+          <span class="badge badge-open">{{ offer().status }}</span>
+        </dd>
       </dl>
 
       <div class="offer-detail__actions">
-        <button class="btn btn-primary" (click)="buy.emit(offer())">
-          Buy Credit
-        </button>
+        <button class="btn btn-primary" (click)="buy.emit(offer())">Buy Credit</button>
         <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
       </div>
     </div>
   `,
-  styles: [`
-    .offer-detail { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.5rem; max-width: 480px; }
-    .offer-detail__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-    h2 { margin: 0; }
-    .detail-list { display: grid; grid-template-columns: 140px 1fr; gap: 0.4rem 1rem; margin-bottom: 1.5rem; }
-    dt { font-weight: 600; color: #555; }
-    dd { margin: 0; }
-    .mono { font-family: monospace; word-break: break-all; }
-    .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase; }
-    .badge-open { background: #e8f5e9; color: #2e7d32; }
-    .offer-detail__actions { display: flex; gap: 0.75rem; }
-    .btn { padding: 0.5rem 1.2rem; border-radius: 6px; cursor: pointer; border: none; font-size: 0.9rem; }
-    .btn-primary { background: #4caf50; color: #fff; }
-    .btn-ghost { background: transparent; border: 1px solid #ccc; }
-  `],
+  styles: [
+    `
+      .offer-detail {
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1.5rem;
+        max-width: 480px;
+      }
+      .offer-detail__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0;
+      }
+      .detail-list {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 0.4rem 1rem;
+        margin-bottom: 1.5rem;
+      }
+      dt {
+        font-weight: 600;
+        color: #555;
+      }
+      dd {
+        margin: 0;
+      }
+      .mono {
+        font-family: monospace;
+        word-break: break-all;
+      }
+      .badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+      }
+      .badge-open {
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+      .offer-detail__actions {
+        display: flex;
+        gap: 0.75rem;
+      }
+      .btn {
+        padding: 0.5rem 1.2rem;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-size: 0.9rem;
+      }
+      .btn-primary {
+        background: #4caf50;
+        color: #fff;
+      }
+      .btn-ghost {
+        background: transparent;
+        border: 1px solid #ccc;
+      }
+    `,
+  ],
 })
 export class OfferDetailComponent {
   readonly offer = input.required<Offer>();
@@ -60,6 +111,9 @@ export class OfferDetailComponent {
   }
 
   formatXlm(stroops: string): string {
-    return (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' XLM';
+    return (
+      (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
+      ' XLM'
+    );
   }
 }

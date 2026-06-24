@@ -7,7 +7,11 @@
     <a routerLink="/admin">Admin</a>
   </nav>
   <app-locale-switcher />
-  <button class="theme-toggle" (click)="theme.toggle()" [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'">
+  <button
+    class="theme-toggle"
+    (click)="theme.toggle()"
+    [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'"
+  >
     {{ theme.icon() }}
   </button>
   <app-connect-wallet [compact]="true" />

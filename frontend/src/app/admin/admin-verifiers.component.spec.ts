@@ -111,7 +111,9 @@ describe('AdminVerifiersComponent', () => {
     btn.click();
     fixture.detectChanges();
 
-    const modal = fixture.nativeElement.querySelector('[aria-labelledby="register-title"]') as HTMLElement;
+    const modal = fixture.nativeElement.querySelector(
+      '[aria-labelledby="register-title"]',
+    ) as HTMLElement;
     expect(modal).toBeTruthy();
   });
 
@@ -178,7 +180,9 @@ describe('AdminVerifiersComponent', () => {
     component.openConfigure(mockVerifier.address);
     fixture.detectChanges();
 
-    const modal = fixture.nativeElement.querySelector('[aria-labelledby="configure-title"]') as HTMLElement;
+    const modal = fixture.nativeElement.querySelector(
+      '[aria-labelledby="configure-title"]',
+    ) as HTMLElement;
     expect(modal).toBeTruthy();
     expect(modal.textContent).toContain(mockVerifier.address);
   });
@@ -202,7 +206,9 @@ describe('AdminVerifiersComponent', () => {
   });
 
   it('calls configureVerifier on submit and shows success toast', async () => {
-    apiSpy.configureVerifier.mockReturnValue(of({ configured: true, verifierId: mockVerifier.address }));
+    apiSpy.configureVerifier.mockReturnValue(
+      of({ configured: true, verifierId: mockVerifier.address }),
+    );
     component.openConfigure(mockVerifier.address);
     component.toggleMethodology('Verra VCS');
     component.toggleGeography('Africa');
@@ -246,7 +252,9 @@ describe('AdminVerifiersComponent', () => {
     component.openSuspend(mockVerifier.address);
     fixture.detectChanges();
 
-    const modal = fixture.nativeElement.querySelector('[aria-labelledby="suspend-title"]') as HTMLElement;
+    const modal = fixture.nativeElement.querySelector(
+      '[aria-labelledby="suspend-title"]',
+    ) as HTMLElement;
     expect(modal).toBeTruthy();
     expect(modal.textContent).toContain(mockVerifier.address);
   });

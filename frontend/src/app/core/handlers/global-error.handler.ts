@@ -16,8 +16,7 @@ export class GlobalErrorHandler implements ErrorHandler {
     this.reporter.report(error);
 
     // Show toast inside Angular zone so signal updates are detected
-    const message =
-      error instanceof Error ? error.message : 'An unexpected error occurred.';
+    const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
 
     this.zone.run(() => {
       this.toast.show(message, 'error');

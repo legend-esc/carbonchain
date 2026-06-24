@@ -18,7 +18,9 @@ export class ThemeService {
 
   private loadPreference(): boolean {
     const stored = localStorage.getItem(STORAGE_KEY);
-    const dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = stored
+      ? stored === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.classList.toggle('dark', dark);
     return dark;
   }

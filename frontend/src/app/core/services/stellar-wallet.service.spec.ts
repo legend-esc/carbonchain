@@ -72,9 +72,7 @@ describe('StellarWalletService', () => {
   });
 
   it('signTransaction() throws when wallet is not connected', async () => {
-    await expect(service.signTransaction('xdr-string')).rejects.toThrow(
-      'Wallet is not connected',
-    );
+    await expect(service.signTransaction('xdr-string')).rejects.toThrow('Wallet is not connected');
   });
 
   it('signTransaction() returns signed XDR when connected', async () => {

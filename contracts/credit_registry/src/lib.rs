@@ -346,6 +346,9 @@ impl CreditRegistry {
         if tonnes <= 0 {
             return Err(CarbonChainError::InvalidTonnes);
         }
+        if tonnes % MIN_CREDIT_UNIT != 0 {
+            return Err(CarbonChainError::InvalidTonnes);
+        }
         // 1 billion tonnes upper bound (1_000_000_000 * TONNES_SCALE = 1e15)
         if tonnes > 1_000_000_000_000_000 {
             return Err(CarbonChainError::InvalidTonnes);
@@ -1273,6 +1276,26 @@ mod tests {
             &nonce,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_credit_non_multiple_of_min_unit_fails() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let _ = submit_test_credit(&env, &client, &admin, &issuer);
+        let nonce = client.get_nonce(&issuer);
+        // 150_001 is not a multiple of MIN_CREDIT_UNIT (100_000)
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2025,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &150_001,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidTonnes)));
     }
 
     #[test]

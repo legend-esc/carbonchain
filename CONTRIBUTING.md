@@ -274,11 +274,20 @@ cargo clippy -- -D warnings
 
 ### NestJS (TypeScript)
 
-Lint:
+Lint and format are enforced by CI. Run these before every commit:
 
 ```bash
 cd api
-npm run lint
+npm run lint          # ESLint check (no auto-fix)
+npm run format:check  # Prettier check (no auto-fix)
+```
+
+To auto-fix locally:
+
+```bash
+cd api
+npm run lint:fix  # ESLint with --fix
+npm run format    # Prettier with --write
 ```
 
 Type check:
@@ -288,13 +297,6 @@ cd api
 npm run type-check
 ```
 
-Format:
-
-```bash
-cd api
-npm run format
-```
-
 - Use NestJS decorators consistently — no raw Express patterns
 - All Stellar interactions go through `StellarService` — never call the SDK directly from controllers
 - Inject dependencies via constructor injection, not property injection
@@ -302,11 +304,19 @@ npm run format
 
 ### Angular (TypeScript)
 
-Lint:
+Lint and format are enforced by CI. Run these before every commit:
 
 ```bash
 cd frontend
-ng lint
+npm run lint          # Angular ESLint via ng lint (eslint.config.mjs)
+npm run format:check  # Prettier check (no auto-fix)
+```
+
+To auto-fix locally:
+
+```bash
+cd frontend
+npx prettier --write "src/**/*.ts" "src/**/*.html" "src/*.html"
 ```
 
 Type check:
@@ -499,8 +509,8 @@ When creating a PR, please include:
 - [ ] Tests added or updated
 - [ ] Documentation updated
 - [ ] Rust: `cargo fmt` and `cargo clippy` pass
-- [ ] API: `npm run lint` and `npm run test` pass
-- [ ] Frontend: `ng lint` and `ng test` pass
+- [ ] API: `npm run lint`, `npm run format:check`, and `npm run test` pass
+- [ ] Frontend: `npm run lint`, `npm run format:check`, and `ng test` pass
 - [ ] No secrets or private keys committed
 - [ ] `CHANGELOG.md` updated if this is a user-facing change
 

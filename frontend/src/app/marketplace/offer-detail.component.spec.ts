@@ -44,7 +44,9 @@ describe('OfferDetailComponent', () => {
     let emitted = false;
     component.closed.subscribe(() => (emitted = true));
 
-    const closeBtn = fixture.nativeElement.querySelector('[aria-label="Close"]') as HTMLButtonElement;
+    const closeBtn = fixture.nativeElement.querySelector(
+      '[aria-label="Close"]',
+    ) as HTMLButtonElement;
     closeBtn.click();
 
     expect(emitted).toBe(true);
