@@ -320,6 +320,83 @@ export class CreditsService {
     return this.getCredit(creditId);
   }
 
+  async splitCredit(
+    creditId: string,
+    splitTonnes: number,
+    fromAddress: string,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    this.logger.log(
+      `Splitting credit ${creditId} by ${splitTonnes} tonnes for ${fromAddress}`,
+    );
+
+    // Fetch current credit to verify ownership
+    const credit = await this.getCredit(creditId);
+    if (credit.issuer !== fromAddress) {
+      throw new BadRequestException(
+        'Only the credit issuer can split this credit',
+      );
+    }
+
+    // Validate that splitTonnes is a positive multiple of 100,000 (MIN_CREDIT_UNIT)
+    if (splitTonnes <= 0) {
+      throw new BadRequestException('splitTonnes must be positive');
+    }
+    if (splitTonnes % 100_000 !== 0) {
+      throw new BadRequestException(
+        'splitTonnes must be a multiple of 100,000 (0.1 tonne)',
+      );
+    }
+
+    // Validate that splitTonnes is not greater than the credit's tonnes
+    const creditTonnes = BigInt(credit.tonnes);
+    const splitTonnesBigInt = BigInt(splitTonnes);
+    if (splitTonnesBigInt >= creditTonnes) {
+      throw new BadRequestException(
+        'splitTonnes must be less than the total credit tonnes',
+      );
+    }
+
+    // Build and submit the contract transaction
+    const args = [
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(splitTonnesBigInt, { type: 'i128' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    const response = await this.stellarService.invokeContract(
+      this.contractId,
+      'split_credit',
+      args,
+      signer,
+    );
+
+    // Extract the two child credit IDs from the return value
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    if (!rv) {
+      throw new BadRequestException('Failed to split credit: no return value');
+    }
+
+    const nativeResult = scValToNative(rv as Parameters<typeof scValToNative>[0]) as unknown;
+    const resultArray = nativeResult as Uint8Array[];
+
+    if (!Array.isArray(resultArray) || resultArray.length !== 2) {
+      throw new BadRequestException(
+        'Failed to split credit: invalid return value structure',
+      );
+    }
+
+    const childCredit1 = Buffer.from(resultArray[0] as Uint8Array).toString(
+      'hex',
+    );
+    const childCredit2 = Buffer.from(resultArray[1] as Uint8Array).toString(
+      'hex',
+    );
+
+    // Invalidate cache for the parent credit
+    await this.invalidateCreditCache(creditId);
+
+    return { childCredit1, childCredit2 };
+  }
+
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {
     return {
       id,

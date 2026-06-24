@@ -88,4 +88,15 @@ export class CreditsController {
   ): Promise<CreditMetadata> {
     return this.creditsService.transferCredit(creditId, dto.to, req.user.account);
   }
+
+  @ApiOperation({ summary: 'Split a credit into two child credits' })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/split')
+  async splitCredit(
+    @Param('id') creditId: string,
+    @Body() dto: { splitTonnes: number },
+    @Request() req: any,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    return this.creditsService.splitCredit(creditId, dto.splitTonnes, req.user.account);
+  }
 }
