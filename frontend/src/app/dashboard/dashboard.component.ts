@@ -17,6 +17,7 @@ export class DashboardComponent implements OnInit {
 
   // Expose enum to template
   protected readonly CreditStatus = CreditStatus;
+  protected readonly skeletonRows = Array(5);
 
   ngOnInit(): void {
     // If a wallet is already connected, load credits for that account

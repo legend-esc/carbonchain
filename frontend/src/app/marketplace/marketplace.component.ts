@@ -53,6 +53,11 @@ import { ConnectWalletComponent } from '../core/components/connect-wallet.compon
               }
             </tbody>
           </table>
+          <div class="pagination">
+            <button class="btn btn-outline" (click)="store.prevPage()" [disabled]="store.page() === 0">← Prev</button>
+            <span class="page-info">Page {{ store.page() + 1 }} of {{ store.totalPages() }} · {{ store.totalActiveOffers() }} listings</span>
+            <button class="btn btn-outline" (click)="store.nextPage()" [disabled]="store.page() >= store.totalPages() - 1">Next →</button>
+          </div>
         }
       }
     </div>
@@ -73,6 +78,10 @@ import { ConnectWalletComponent } from '../core/components/connect-wallet.compon
     .badge-open { background: #e8f5e9; color: #2e7d32; }
     .btn { padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; border: none; font-size: 0.85rem; }
     .btn-primary { background: #4caf50; color: #fff; }
+    .btn-outline { background: transparent; border: 1px solid #ccc; }
+    .btn-outline:disabled { opacity: 0.4; cursor: not-allowed; }
+    .pagination { display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; justify-content: flex-end; }
+    .page-info { font-size: 0.85rem; color: #666; }
   `],
 })
 export class MarketplaceComponent implements OnInit {

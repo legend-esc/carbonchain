@@ -49,7 +49,17 @@
 
     <!-- Loading / error states -->
     @if (store.isLoading()) {
-      <p class="status-msg" aria-live="polite">Loading credits…</p>
+      <div class="skeleton-grid" aria-busy="true" aria-label="Loading credits">
+        <div class="skeleton skeleton--stat"></div>
+        <div class="skeleton skeleton--stat"></div>
+        <div class="skeleton skeleton--stat"></div>
+        <div class="skeleton skeleton--stat"></div>
+      </div>
+      <div class="skeleton-table" aria-hidden="true">
+        @for (_ of skeletonRows; track $index) {
+          <div class="skeleton skeleton--row"></div>
+        }
+      </div>
     } @else if (store.error()) {
       <p class="alert alert--error" role="alert">{{ store.error() }}</p>
     } @else if (store.credits().length === 0) {
