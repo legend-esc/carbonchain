@@ -44,6 +44,7 @@ use crate::storage::{
     get_credit_approvals, set_credit_approvals, remove_credit_approvals,
     set_session, get_session, get_session_op_count, increment_session_op_count,
     append_audit_log, get_audit_log,
+    add_credit_to_owner, list_credits_by_owner,
 };
 use crate::types::{
     CreditMetadata, CreditStatus, DataKey, ServiceType, VerifierReputation, Methodology,
@@ -390,6 +391,7 @@ impl CreditRegistry {
         set_credit(&env, &id, &metadata);
         set_credit_by_project_vintage(&env, &project_id, vintage_year, &id);
         add_credit_to_project(&env, &project_id, &id);
+        add_credit_to_owner(&env, &issuer, &id);
 
         // Issue 1: track pending credits per verifier so remove_verifier can block removal.
         // We distribute the pending credit across ALL registered verifiers so each one's
@@ -536,6 +538,7 @@ impl CreditRegistry {
         }
         credit.owner = to.clone();
         set_credit(&env, &credit_id, &credit);
+        add_credit_to_owner(&env, &to, &credit_id);
         CreditTransferred { from, to, credit_id }.publish(&env);
         Ok(())
     }
@@ -582,12 +585,14 @@ impl CreditRegistry {
         child1.owner = caller.clone();
         set_credit(&env, &child1_id, &child1);
         add_credit_to_project(&env, &original.project_id, &child1_id);
+        add_credit_to_owner(&env, &caller, &child1_id);
 
         let mut child2 = original.clone();
         child2.tonnes = remaining_tonnes;
         child2.owner = caller.clone();
         set_credit(&env, &child2_id, &child2);
         add_credit_to_project(&env, &original.project_id, &child2_id);
+        add_credit_to_owner(&env, &caller, &child2_id);
 
         // Retire original credit
         original.status = CreditStatus::Retired;
@@ -610,6 +615,12 @@ impl CreditRegistry {
     /// Returns all credit IDs registered under `project_id`.
     pub fn list_credits_by_project(env: Env, project_id: String) -> Vec<BytesN<32>> {
         get_credits_by_project(&env, &project_id)
+    }
+
+    /// Returns all credit IDs owned by `owner`, paginated.
+    /// `page` is 0-indexed; `page_size` must be 1–50.
+    pub fn list_credits_by_owner(env: Env, owner: Address, page: u32, page_size: u32) -> Vec<BytesN<32>> {
+        list_credits_by_owner(&env, &owner, page, page_size)
     }
 
     /// Returns the current replay-protection nonce for `address`.
@@ -944,6 +955,7 @@ impl CreditRegistry {
 
         set_credit(&env, &merged_id, &merged_credit);
         add_credit_to_project(&env, &merged_credit.project_id, &merged_id);
+        add_credit_to_owner(&env, &caller, &merged_id);
 
         for id in credit_ids.iter() {
             let mut credit = get_credit(&env, &id).ok_or(CarbonChainError::CreditNotFound)?;
@@ -1513,6 +1525,108 @@ mod tests {
         submit_test_credit(&env, &client, &admin, &issuer);
         let ids = client.list_credits_by_project(&String::from_str(&env, "PROJ-001"));
         assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn test_list_credits_by_owner() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id1 = submit_test_credit(&env, &client, &admin, &issuer);
+        
+        // Submit another credit for the same issuer
+        let anonce_meth2 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "CDM"),
+            &String::from_str(&env, "Clean Development Mechanism"),
+            &anonce_meth2,
+        );
+        let anonce_proj2 = client.get_nonce(&admin);
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-002"),
+            &String::from_str(&env, "Project 2"),
+            &String::from_str(&env, "Desc 2"),
+            &String::from_str(&env, "KE"),
+        );
+        let nonce2 = client.get_nonce(&issuer);
+        let id2 = client.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-002"),
+            &2024,
+            &String::from_str(&env, "CDM"),
+            &String::from_str(&env, "KE"),
+            &2_000_000,
+            &String::from_str(&env, "bafybei456"),
+            &nonce2,
+        );
+        
+        let ids = client.list_credits_by_owner(&issuer, &0, &50);
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids.get(0).unwrap(), &id1);
+        assert_eq!(ids.get(1).unwrap(), &id2);
+    }
+
+    #[test]
+    fn test_list_credits_by_owner_paginated() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        
+        // Submit 3 credits
+        submit_test_credit(&env, &client, &admin, &issuer);
+        
+        for proj_num in 2..=3u32 {
+            let anonce_meth = client.get_nonce(&admin);
+            client.register_methodology(
+                &admin,
+                &String::from_str(&env, &format!("METH-{}", proj_num)),
+                &String::from_str(&env, &format!("Methodology {}", proj_num)),
+                &anonce_meth,
+            );
+            let anonce_proj = client.get_nonce(&admin);
+            client.register_project(
+                &admin,
+                &String::from_str(&env, &format!("PROJ-{}", proj_num)),
+                &String::from_str(&env, &format!("Project {}", proj_num)),
+                &String::from_str(&env, &format!("Desc {}", proj_num)),
+                &String::from_str(&env, "NG"),
+            );
+            let nonce = client.get_nonce(&issuer);
+            client.submit_credit(
+                &issuer,
+                &String::from_str(&env, &format!("PROJ-{}", proj_num)),
+                &2024,
+                &String::from_str(&env, &format!("METH-{}", proj_num)),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, &format!("bafybei{}", proj_num)),
+                &nonce,
+            );
+        }
+        
+        let page0 = client.list_credits_by_owner(&issuer, &0, &2);
+        assert_eq!(page0.len(), 2);
+        
+        let page1 = client.list_credits_by_owner(&issuer, &1, &2);
+        assert_eq!(page1.len(), 1);
+    }
+
+    #[test]
+    fn test_transfer_credit_updates_owner_index() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let recipient = Address::generate(&env);
+        
+        let issuer_credits = client.list_credits_by_owner(&issuer, &0, &50);
+        assert_eq!(issuer_credits.len(), 1);
+        
+        let nonce = client.get_nonce(&issuer);
+        client.transfer_credit(&issuer, &recipient, &id, &nonce);
+        
+        let recipient_credits = client.list_credits_by_owner(&recipient, &0, &50);
+        assert_eq!(recipient_credits.len(), 1);
+        assert_eq!(recipient_credits.get(0).unwrap(), &id);
     }
 
     #[test]

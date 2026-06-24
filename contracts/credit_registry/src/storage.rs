@@ -314,3 +314,31 @@ pub fn get_audit_log(env: &Env, log_id: &BytesN<32>) -> Option<AuditLogEntry> {
         .persistent()
         .get(&DataKey::AuditLog(log_id.clone()))
 }
+
+// ── Owner index ───────────────────────────────────────────────────────────────
+
+/// Append a credit ID to the per-owner index.
+pub fn add_credit_to_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::OwnerCredits(owner.clone());
+    let mut list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    list.push_back(credit_id.clone());
+    env.storage().persistent().set(&key, &list);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+/// Get all credit IDs owned by a given address, paginated.
+pub fn list_credits_by_owner(env: &Env, owner: &Address, page: u32, page_size: u32) -> Vec<BytesN<32>> {
+    let page_size = if page_size == 0 || page_size > 50 { 50 } else { page_size };
+    let all: Vec<BytesN<32>> = env.storage()
+        .persistent()
+        .get(&DataKey::OwnerCredits(owner.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    let start = page * page_size;
+    let mut out: Vec<BytesN<32>> = Vec::new(env);
+    let mut i = start;
+    while i < start + page_size && i < all.len() {
+        out.push_back(all.get(i).unwrap());
+        i += 1;
+    }
+    out
+}
