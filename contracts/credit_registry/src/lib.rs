@@ -609,6 +609,23 @@ impl CreditRegistry {
         get_credits_by_project(&env, &project_id)
     }
 
+    /// Returns a paginated list of credits for a project.
+    /// - `page`: 0-indexed page number
+    /// - `page_size`: number of credits per page (capped at 50)
+    pub fn list_credits_by_project_paginated(env: Env, project_id: String, page: u32, page_size: u32) -> Vec<BytesN<32>> {
+        let max_page_size: u32 = 50;
+        let size = if page_size > max_page_size { max_page_size } else { page_size };
+        let all_credits = get_credits_by_project(&env, &project_id);
+        let start = (page as usize).saturating_mul(size as usize);
+        let end = start.saturating_add(size as usize);
+        
+        let mut result = Vec::new(&env);
+        for i in start..core::cmp::min(end, all_credits.len()) {
+            result.push_back(all_credits.get(i as u32).unwrap());
+        }
+        result
+    }
+
     /// Returns the current replay-protection nonce for `address`.
     /// Pass this value as the `nonce` argument to the next state-mutating call.
     pub fn get_nonce(env: Env, address: Address) -> u64 {
@@ -1790,6 +1807,158 @@ mod tests {
         let result = client.try_get_session_operation_count(&fake_session_id);
 
         assert_eq!(result, Err(Ok(CarbonChainError::SessionNotFound)));
+    }
+
+    // ── Tests for Issue #221: list_credits_by_project_paginated ──────────────
+
+    #[test]
+    fn test_list_credits_paginated_first_page() {
+        let (env, client, admin, _) = setup();
+        let anonce = client.get_nonce(&admin);
+        let issuer = Address::generate(&env);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce_meth = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce_meth,
+        );
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-001"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "Desc"),
+            &String::from_str(&env, "NG"),
+        );
+        for i in 0..3 {
+            let inonce = client.get_nonce(&issuer);
+            let _ = client.submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &(2024 + i),
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "bafybei123"),
+                &inonce,
+            );
+        }
+        let page1 = client.list_credits_by_project_paginated(
+            &String::from_str(&env, "PROJ-001"),
+            &0,
+            &2,
+        );
+        assert_eq!(page1.len(), 2);
+    }
+
+    #[test]
+    fn test_list_credits_paginated_second_page() {
+        let (env, client, admin, _) = setup();
+        let anonce = client.get_nonce(&admin);
+        let issuer = Address::generate(&env);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce_meth = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce_meth,
+        );
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-001"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "Desc"),
+            &String::from_str(&env, "NG"),
+        );
+        for i in 0..3 {
+            let inonce = client.get_nonce(&issuer);
+            let _ = client.submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &(2024 + i),
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "bafybei123"),
+                &inonce,
+            );
+        }
+        let page2 = client.list_credits_by_project_paginated(
+            &String::from_str(&env, "PROJ-001"),
+            &1,
+            &2,
+        );
+        assert_eq!(page2.len(), 1);
+    }
+
+    #[test]
+    fn test_list_credits_paginated_empty_results() {
+        let (env, client, admin, _) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &Address::generate(&env), &anonce);
+        let anonce_meth = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce_meth,
+        );
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-002"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "Desc"),
+            &String::from_str(&env, "NG"),
+        );
+        let page = client.list_credits_by_project_paginated(
+            &String::from_str(&env, "PROJ-002"),
+            &0,
+            &10,
+        );
+        assert_eq!(page.len(), 0);
+    }
+
+    #[test]
+    fn test_list_credits_paginated_page_size_capped_at_50() {
+        let (env, client, admin, _) = setup();
+        let anonce = client.get_nonce(&admin);
+        let issuer = Address::generate(&env);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce_meth = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce_meth,
+        );
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-001"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "Desc"),
+            &String::from_str(&env, "NG"),
+        );
+        for i in 0..60 {
+            let inonce = client.get_nonce(&issuer);
+            let _ = client.submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &(2024 + i),
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "bafybei123"),
+                &inonce,
+            );
+        }
+        let page = client.list_credits_by_project_paginated(
+            &String::from_str(&env, "PROJ-001"),
+            &0,
+            &100,
+        );
+        assert_eq!(page.len(), 50);
     }
 
     // ── Tests for Issue #164: configure_verifier_services auth ───────────────
