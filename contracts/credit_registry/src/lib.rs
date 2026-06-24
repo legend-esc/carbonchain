@@ -557,6 +557,9 @@ impl CreditRegistry {
         if split_tonnes <= 0 || split_tonnes >= original.tonnes {
             return Err(CarbonChainError::InvalidSplit);
         }
+        if split_tonnes % MIN_CREDIT_UNIT != 0 {
+            return Err(CarbonChainError::InvalidTonnes);
+        }
 
         let remaining_tonnes = original.tonnes - split_tonnes;
         
@@ -1715,6 +1718,17 @@ mod tests {
         let id = submit_test_credit(&env, &client, &admin, &issuer);
         let nonce = client.get_nonce(&issuer);
         let result = client.try_split_credit(&issuer, &id, &1_000_000, &nonce);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_split_credit_invalid_tonnes_not_divisible() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let nonce = client.get_nonce(&issuer);
+        // Try to split with a value not divisible by MIN_CREDIT_UNIT (100_000)
+        let result = client.try_split_credit(&issuer, &id, &150_001, &nonce);
         assert!(result.is_err());
     }
 
