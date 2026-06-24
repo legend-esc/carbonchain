@@ -4,6 +4,15 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
 import { CreditStatus } from '../shared';
+import { StellarService } from '../stellar/stellar.service';
+import { CacheService } from '../common/cache.service';
+import { ConfigService } from '@nestjs/config';
+import * as StellarSdk from '@stellar/stellar-sdk';
+
+jest.mock('@stellar/stellar-sdk', () => ({
+  ...jest.requireActual('@stellar/stellar-sdk'),
+  scValToNative: jest.fn((val: any) => val),
+}));
 
 describe('AdminController', () => {
   let controller: AdminController;
@@ -64,35 +73,54 @@ describe('AdminController', () => {
 
 describe('AdminGuard', () => {
   let guard: AdminGuard;
+  let mockStellarService: any;
+  let mockConfigService: any;
+  let mockCacheService: any;
 
   beforeEach(() => {
-    guard = new AdminGuard();
+    jest.clearAllMocks();
+    mockStellarService = {
+      readContract: jest.fn().mockResolvedValue('GADMIN'),
+    };
+    mockCacheService = {};
+    mockConfigService = {
+      get: jest.fn((key: string) => {
+        if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return 'CCONTRACT';
+        return '';
+      }),
+    };
+    guard = new AdminGuard(
+      mockStellarService,
+      mockConfigService,
+      mockCacheService,
+    );
   });
 
-  it('should allow admin users', () => {
+  it('should allow admin users', async () => {
     const ctx = {
       switchToHttp: () => ({
-        getRequest: () => ({ user: { account: 'GADMIN', role: 'admin' } }),
+        getRequest: () => ({ user: { account: 'GADMIN' } }),
       }),
     } as any;
-    expect(guard.canActivate(ctx)).toBe(true);
+    const result = await guard.canActivate(ctx);
+    expect(result).toBe(true);
   });
 
-  it('should throw ForbiddenException for non-admin users', () => {
+  it('should throw ForbiddenException for non-admin users', async () => {
     const ctx = {
       switchToHttp: () => ({
-        getRequest: () => ({ user: { account: 'GUSER', role: 'user' } }),
+        getRequest: () => ({ user: { account: 'GUSER' } }),
       }),
     } as any;
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
   });
 
-  it('should throw ForbiddenException when no user', () => {
+  it('should throw ForbiddenException when no user', async () => {
     const ctx = {
       switchToHttp: () => ({
         getRequest: () => ({}),
       }),
     } as any;
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
   });
 });
