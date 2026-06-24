@@ -296,6 +296,22 @@ impl Retirement {
         Ok(retirement_ids)
     }
 
+    /// Returns the sum of all `tonnes_retired` across all retirement records for `account`.
+    pub fn get_total_retired_by_account(env: Env, account: Address) -> i128 {
+        let ids: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccountRetirements(account))
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut total: i128 = 0;
+        for id in ids.iter() {
+            if let Some(record) = env.storage().persistent().get::<_, RetirementRecord>(&DataKey::Retirement(id)) {
+                total += record.tonnes_retired;
+            }
+        }
+        total
+    }
+
     pub fn get_nonce(env: Env, address: Address) -> u64 {
         get_nonce(&env, &address)
     }
@@ -789,6 +805,43 @@ mod tests {
         // No retirements should have been written for buyer
         let ids = client.get_retirements_by_account(&buyer);
         assert_eq!(ids.len(), 0);
+    }
+
+    // ── Issue #233: get_total_retired_by_account ──────────────────────────────
+
+    #[test]
+    fn test_get_total_retired_by_account_sums_multiple() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        // Create a second credit and retire both independently
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "s1");
+
+        let n1 = client.get_nonce(&issuer);
+        client.retire(
+            &issuer,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset 1"),
+            &registry.id,
+            &n1,
+        );
+
+        let n2 = client.get_nonce(&issuer);
+        client.retire(
+            &issuer,
+            &cid2,
+            &1_000_000,
+            &String::from_str(&env, "offset 2"),
+            &registry.id,
+            &n2,
+        );
+
+        let total = client.get_total_retired_by_account(&issuer);
+        assert_eq!(total, 2_000_000);
     }
 }
 
