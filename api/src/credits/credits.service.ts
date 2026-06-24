@@ -1,10 +1,25 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
 import { CreditMetadata, CreditStatus } from '../shared';
+import { CreditEntity } from './credit.entity';
+import type { ICreditRepository, PageResult } from './credit.repository';
+import { CREDIT_REPOSITORY } from './credit.repository';
+import { CacheService } from '../common/cache.service';
+
+// Cache key helpers
+const CREDIT_KEY = (id: string) => `credits:${id}`;
+const LIST_CREDITS_KEY = (filter: string) => `credits:list:${filter}`;
+const CREDIT_TTL = 120; // seconds
 
 export class IssueCreditDto {
   issuerPublicKey: string;
@@ -16,15 +31,29 @@ export class IssueCreditDto {
   ipfsHash: string;
 }
 
+interface ListCreditsFilter {
+  methodology?: string;
+  geography?: string;
+  vintageYear?: number;
+  status?: string;
+  minTonnes?: string;
+  maxTonnes?: string;
+  page: number;
+  limit: number;
+}
+
 @Injectable()
 export class CreditsService {
   private readonly logger = new Logger(CreditsService.name);
   private readonly contractId: string;
+  private creditsCache: Map<string, CreditMetadata> = new Map();
 
   constructor(
     private stellarService: StellarService,
     private configService: ConfigService,
     private keypairService: StellarKeypairService,
+    @Inject(CREDIT_REPOSITORY) private readonly creditRepo: ICreditRepository,
+    private readonly cache: CacheService,
   ) {
     this.contractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
@@ -56,10 +85,41 @@ export class CreditsService {
           ) as Uint8Array,
         ).toString('hex')
       : 'unknown';
+
+    // Persist to off-chain index
+    const entity = new CreditEntity();
+    entity.id = creditId;
+    entity.projectId = dto.projectId;
+    entity.issuer = dto.issuerPublicKey;
+    entity.vintageYear = dto.vintageYear;
+    entity.methodology = dto.methodology;
+    entity.geography = dto.geography;
+    entity.tonnes = dto.tonnes;
+    entity.ipfsHash = dto.ipfsHash;
+    entity.status = CreditStatus.Pending;
+    entity.issuedAt = Math.floor(Date.now() / 1000);
+    await this.creditRepo.save(entity);
+
     return { creditId };
   }
 
   async getCredit(creditId: string): Promise<CreditMetadata> {
+    // 1. Try Redis cache
+    const cached = await this.cache.get<CreditMetadata>(CREDIT_KEY(creditId));
+    if (cached) {
+      this.logger.debug(`Cache HIT for credit ${creditId}`);
+      return cached;
+    }
+
+    // 2. Try off-chain index
+    const indexed = await this.creditRepo.findById(creditId);
+    if (indexed) {
+      const metadata = this.entityToMetadata(indexed);
+      await this.cache.set(CREDIT_KEY(creditId), metadata, CREDIT_TTL);
+      return metadata;
+    }
+
+    // 3. Fall back to on-chain read
     try {
       this.logger.log(`Fetching credit metadata for ID: ${creditId}`);
       const args = [
@@ -75,13 +135,134 @@ export class CreditsService {
           `Credit with ID ${creditId} not found on-chain`,
         );
       const native = scValToNative(retval);
-      return this.mapToCreditMetadata(creditId, native);
+      const metadata = this.mapToCreditMetadata(creditId, native);
+      await this.cache.set(CREDIT_KEY(creditId), metadata, CREDIT_TTL);
+      return metadata;
     } catch (error: unknown) {
       this.logger.error(
         `Failed to fetch credit ${creditId}: ${(error as Error).message}`,
       );
       throw error;
     }
+  }
+
+  async getBulkCredits(creditIds: string[]): Promise<CreditMetadata[]> {
+    if (!creditIds || creditIds.length === 0) {
+      throw new BadRequestException('Credit IDs array cannot be empty');
+    }
+    if (creditIds.length > 100) {
+      throw new BadRequestException('Maximum 100 credits per bulk request');
+    }
+
+    this.logger.log(`Fetching ${creditIds.length} credits in bulk`);
+    const results: CreditMetadata[] = [];
+
+    for (const creditId of creditIds) {
+      try {
+        const credit = await this.getCredit(creditId);
+        results.push(credit);
+      } catch (error: unknown) {
+        this.logger.warn(
+          `Failed to fetch credit ${creditId}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    return results;
+  }
+
+  async listCredits(filter: ListCreditsFilter): Promise<{
+    data: CreditMetadata[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    // Default to Active-only when no status is requested, so Retired and Flagged
+    // credits are never included unless the caller explicitly opts in.
+    const effectiveStatus: string = filter.status ?? CreditStatus.Active;
+    const effectiveFilter = { ...filter, status: effectiveStatus };
+
+    // Default to Active when client does not provide a status filter
+    if (!filter.status) {
+      filter.status = CreditStatus.Active;
+    }
+
+    const cacheKey = LIST_CREDITS_KEY(JSON.stringify(filter));
+    const cachedResult = await this.cache.get<{
+      data: CreditMetadata[];
+      total: number;
+      page: number;
+      limit: number;
+    }>(cacheKey);
+    if (cachedResult) {
+      this.logger.debug(`Cache HIT for list credits`);
+      return cachedResult;
+    }
+
+    // Fetch all credits from the off-chain repository and map to metadata.
+    // Use a large limit to retrieve the full index for server-side filtering.
+    let allCredits: CreditMetadata[] = [];
+    try {
+      const repoResult = await this.creditRepo.findAll(1, 1000000);
+      allCredits = repoResult.data.map((e) => this.entityToMetadata(e));
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch credits from repo: ${(err as Error).message}`,
+      );
+      allCredits = [];
+    }
+
+    // Apply secondary filters
+    let filtered = allCredits;
+
+    if (filter.status) {
+      filtered = filtered.filter((c) => c.status === filter.status);
+    }
+
+    if (filter.methodology) {
+      filtered = filtered.filter(
+        (c) =>
+          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
+      );
+    }
+
+    if (filter.geography) {
+      filtered = filtered.filter(
+        (c) => c.geography.toLowerCase() === filter.geography!.toLowerCase(),
+      );
+    }
+
+    if (filter.vintageYear) {
+      filtered = filtered.filter((c) => c.vintage_year === filter.vintageYear);
+    }
+
+    if (filter.minTonnes) {
+      const minVal = BigInt(filter.minTonnes);
+      filtered = filtered.filter((c) => BigInt(c.tonnes) >= minVal);
+    }
+
+    if (filter.maxTonnes) {
+      const maxVal = BigInt(filter.maxTonnes);
+      filtered = filtered.filter((c) => BigInt(c.tonnes) <= maxVal);
+    }
+
+    const total = filtered.length;
+    const start = (filter.page - 1) * filter.limit;
+    const data = filtered.slice(start, start + filter.limit);
+
+    const result = { data, total, page: filter.page, limit: filter.limit };
+    await this.cache.set(cacheKey, result, CREDIT_TTL);
+    return result;
+  }
+
+  /**
+   * Invalidate all cached entries for a specific credit and the list cache.
+   * Call this whenever a credit's status changes (approve, retire, flag).
+   */
+  async invalidateCreditCache(creditId: string): Promise<void> {
+    await this.cache.del(CREDIT_KEY(creditId));
+    await this.cache.delPattern('credits:list:*');
+    this.logger.debug(`Cache invalidated for credit ${creditId}`);
   }
 
   async listCreditsByProject(projectId: string): Promise<string[]> {
@@ -116,6 +297,21 @@ export class CreditsService {
       ipfs_hash: String(native.ipfs_hash),
       status: native.status as CreditStatus,
       issued_at: Number(native.issued_at),
+    };
+  }
+
+  private entityToMetadata(entity: CreditEntity): CreditMetadata {
+    return {
+      id: entity.id,
+      project_id: entity.projectId,
+      issuer: entity.issuer,
+      vintage_year: entity.vintageYear,
+      methodology: entity.methodology,
+      geography: entity.geography,
+      tonnes: entity.tonnes,
+      ipfs_hash: entity.ipfsHash,
+      status: entity.status,
+      issued_at: entity.issuedAt,
     };
   }
 }

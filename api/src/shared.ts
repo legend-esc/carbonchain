@@ -1,3 +1,6 @@
+/** Unit convention: 1 tonne = TONNES_SCALE units (0.1 tonne resolution = 100_000 units). */
+export const TONNES_SCALE = 1_000_000n;
+
 export enum CreditStatus {
   Pending = 'Pending',
   Active = 'Active',
@@ -12,7 +15,7 @@ export interface CreditMetadata {
   vintage_year: number;
   methodology: string;
   geography: string;
-  tonnes: string; // BigInt as string for precision
+  tonnes: string; // BigInt as string; 1 tonne = TONNES_SCALE (1_000_000) units
   ipfs_hash: string;
   status: CreditStatus;
   issued_at: number;

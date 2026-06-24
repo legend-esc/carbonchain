@@ -7,14 +7,17 @@ import {
   UseGuards,
   Request,
 } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
+import { AuthService } from './auth.service';
+import { AuthTokenDto } from './dto/auth-token.dto';
 
+@ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  /** GET /auth/challenge?account=G... */
+  @ApiOperation({ summary: 'Request SEP-10 auth challenge' })
   @Get('challenge')
   getChallenge(@Query('account') account: string): {
     transaction: string;
@@ -23,13 +26,13 @@ export class AuthController {
     return this.authService.generateChallenge(account);
   }
 
-  /** POST /auth/token — verifies signed challenge, returns JWT */
+  @ApiOperation({ summary: 'Verify signed challenge and receive JWT' })
   @Post('token')
-  getToken(@Body() body: { transaction: string }): { access_token: string } {
+  getToken(@Body() body: AuthTokenDto): { access_token: string } {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 
-  /** GET /auth/me — protected route, returns authenticated account */
+  @ApiOperation({ summary: 'Get authenticated account info' })
   @UseGuards(AuthGuard('jwt'))
   @Get('me')
   getMe(@Request() req: { user: { account: string } }): { account: string } {

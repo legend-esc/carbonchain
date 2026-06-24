@@ -1,41 +1,29 @@
-import {
-  Controller,
-  Post,
-  Body,
-  Headers,
-  UnauthorizedException,
-  RawBodyRequest,
-  Req,
-} from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'crypto';
-import type { Request } from 'express';
+import { Controller, Post, Get, Delete, Body, Param } from '@nestjs/common';
+import type { Webhook } from './webhooks.service';
+import { WebhooksService } from './webhooks.service';
 
 @Controller('webhooks')
 export class WebhooksController {
-  private readonly secret = process.env['WEBHOOK_SECRET'] ?? '';
+  constructor(private webhooksService: WebhooksService) {}
 
-  @Post('mrv')
-  receiveMrv(
-    @Req() req: RawBodyRequest<Request>,
-    @Headers('x-webhook-signature') signature: string | undefined,
-    @Body() body: unknown,
-  ): { received: boolean } {
-    if (!signature) throw new UnauthorizedException('Missing signature header');
+  @Post()
+  registerWebhook(@Body() body: { url: string; events: string[] }): Webhook {
+    return this.webhooksService.registerWebhook(body.url, body.events);
+  }
 
-    const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(body));
-    const expected = createHmac('sha256', this.secret)
-      .update(rawBody)
-      .digest('hex');
+  @Get()
+  getWebhooks(): Webhook[] {
+    return this.webhooksService.getWebhooks();
+  }
 
-    let valid: boolean;
-    try {
-      valid = timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-    } catch {
-      valid = false;
-    }
+  @Get(':id')
+  getWebhook(@Param('id') id: string): Webhook | undefined {
+    return this.webhooksService.getWebhook(id);
+  }
 
-    if (!valid) throw new UnauthorizedException('Invalid HMAC signature');
-
-    return { received: true };
+  @Delete(':id')
+  deleteWebhook(@Param('id') id: string): { success: boolean } {
+    const success = this.webhooksService.deleteWebhook(id);
+    return { success };
   }
 }

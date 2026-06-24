@@ -221,4 +221,28 @@ export class StellarService implements OnModuleInit {
   getNetworkPassphrase(): string {
     return this.networkPassphrase;
   }
+
+  async getContractEvents(
+    contractId: string,
+    startLedger = 0,
+  ): Promise<rpc.Api.EventResponse[]> {
+    try {
+      const response = await this.sorobanRpcServer.getEvents({
+        filters: [
+          {
+            type: 'contract',
+            contractIds: [contractId],
+          },
+        ],
+        startLedger,
+        limit: 100,
+      });
+      return response.events || [];
+    } catch (error) {
+      this.logger.error(
+        `Failed to fetch events for contract ${contractId}: ${(error as Error).message}`,
+      );
+      return [];
+    }
+  }
 }
