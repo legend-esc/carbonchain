@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { CreditMetadata, CreditStatus } from '@shared';
-import { ApiService } from '../core/services/api.service';
+import { ApiService, ProvenanceEvent } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
@@ -44,13 +44,26 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         <section class="card">
           <h2>Provenance Chain</h2>
-          <ol class="provenance">
-            <li>Issued by <span class="mono">{{ credit()!.issuer | slice:0:12 }}…</span> on {{ credit()!.issued_at | date:'mediumDate' }}</li>
-            <li>Methodology: {{ credit()!.methodology }} — Geography: {{ credit()!.geography }}</li>
-            @if (credit()!.status === 'Retired') {
-              <li class="retired">Retired ✓</li>
-            }
-          </ol>
+          @if (provenanceLoading()) {
+            <p class="status">Loading provenance…</p>
+          } @else if (provenanceError()) {
+            <p class="error">{{ provenanceError() }}</p>
+          } @else if (provenance().length === 0) {
+            <p class="status">No provenance events recorded.</p>
+          } @else {
+            <ol class="timeline">
+              @for (event of provenance(); track event.timestamp) {
+                <li class="timeline-item">
+                  <span class="timeline-event">{{ event.event }}</span>
+                  <span class="mono timeline-actor">{{ event.actor | slice:0:16 }}…</span>
+                  <span class="timeline-date">{{ event.timestamp * 1000 | date:'medium' }}</span>
+                  @if (event.detail) {
+                    <span class="timeline-detail">{{ event.detail }}</span>
+                  }
+                </li>
+              }
+            </ol>
+          }
         </section>
 
         <section class="card">
@@ -98,6 +111,13 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
     .mono { font-family: monospace; word-break: break-all; }
     .provenance { padding-left: 1.25rem; font-size: 0.9rem; line-height: 1.8; }
     .retired { color: #2e7d32; font-weight: 600; }
+    .timeline { list-style: none; padding: 0; margin: 0; font-size: 0.9rem; }
+    .timeline-item { display: grid; grid-template-columns: 140px 1fr 1fr; gap: 0.25rem 1rem; padding: 0.5rem 0; border-bottom: 1px solid #eee; align-items: baseline; }
+    .timeline-item:last-child { border-bottom: none; }
+    .timeline-event { font-weight: 600; color: #1976d2; text-transform: capitalize; }
+    .timeline-actor { color: #555; }
+    .timeline-date { color: #888; font-size: 0.82rem; }
+    .timeline-detail { grid-column: 1 / -1; color: #666; font-style: italic; font-size: 0.85rem; }
     .mrv-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
     .mrv-table th, .mrv-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
     .mrv-table th { background: #f0f0f0; font-weight: 600; }
@@ -126,6 +146,9 @@ export class CreditDetailComponent implements OnInit {
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly mrvHistory = signal<import('@shared').MrvDataPoint[]>([]);
+  readonly provenance = signal<ProvenanceEvent[]>([]);
+  readonly provenanceLoading = signal(false);
+  readonly provenanceError = signal<string | null>(null);
 
   readonly isOwner = () => {
     const c = this.credit();
@@ -142,6 +165,20 @@ export class CreditDetailComponent implements OnInit {
       this.error.set(err instanceof Error ? err.message : 'Failed to load credit.');
     } finally {
       this.loading.set(false);
+    }
+    this.loadProvenance(id);
+  }
+
+  private async loadProvenance(id: string): Promise<void> {
+    this.provenanceLoading.set(true);
+    this.provenanceError.set(null);
+    try {
+      const events = await firstValueFrom(this.api.getCreditProvenance(id));
+      this.provenance.set(events);
+    } catch (err) {
+      this.provenanceError.set(err instanceof Error ? err.message : 'Failed to load provenance.');
+    } finally {
+      this.provenanceLoading.set(false);
     }
   }
 

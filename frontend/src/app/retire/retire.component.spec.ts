@@ -5,6 +5,7 @@ import { RetireComponent } from './retire.component';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
+import { CreditStore } from '../core/store/credit.store';
 import { signal } from '@angular/core';
 import { of } from 'rxjs';
 
@@ -12,6 +13,7 @@ describe('RetireComponent', () => {
   let authServiceMock: Partial<AuthService>;
   let walletServiceMock: Partial<StellarWalletService>;
   let apiServiceMock: Partial<ApiService>;
+  let creditStoreMock: Partial<CreditStore>;
 
   beforeEach(() => {
     authServiceMock = {
@@ -32,6 +34,10 @@ describe('RetireComponent', () => {
       retireCredit: () => of({ retirementId: 'abc123' }),
     };
 
+    creditStoreMock = {
+      loadOne: vi.fn().mockResolvedValue(undefined),
+    };
+
     TestBed.configureTestingModule({
       imports: [RetireComponent],
       providers: [
@@ -40,6 +46,7 @@ describe('RetireComponent', () => {
         { provide: AuthService, useValue: authServiceMock },
         { provide: StellarWalletService, useValue: walletServiceMock },
         { provide: ApiService, useValue: apiServiceMock },
+        { provide: CreditStore, useValue: creditStoreMock },
       ],
     });
   });
@@ -82,6 +89,7 @@ describe('RetireComponent', () => {
     await comp.submit();
     expect(comp.step()).toBe('success');
     expect(comp.retirementId()).toBe('abc123');
+    expect(creditStoreMock.loadOne).toHaveBeenCalledWith('037176a1');
   });
 
   it('submit() sets error step on API failure', async () => {
@@ -96,6 +104,7 @@ describe('RetireComponent', () => {
     comp.goConfirm();
     await comp.submit();
     expect(comp.step()).toBe('error');
+    expect(creditStoreMock.loadOne).not.toHaveBeenCalled();
   });
 
   it('formatTonnes converts units correctly', () => {

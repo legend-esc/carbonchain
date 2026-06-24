@@ -21,22 +21,29 @@ const MOCK_CREDIT = {
   issued_at: 1700000000,
 };
 
+const MOCK_PROVENANCE = [
+  { event: 'submitted', actor: 'GABC', timestamp: 1700000001 },
+  { event: 'approved', actor: 'GVER', timestamp: 1700000100, detail: 'VCS review passed' },
+];
+
 describe('CreditDetailComponent', () => {
   let fixture: ComponentFixture<CreditDetailComponent>;
   let component: CreditDetailComponent;
   let getCredit: ReturnType<typeof vi.fn>;
+  let getCreditProvenance: ReturnType<typeof vi.fn>;
   let navigate: ReturnType<typeof vi.fn>;
   let publicKey: ReturnType<typeof signal<string | null>>;
 
   beforeEach(async () => {
     getCredit = vi.fn().mockReturnValue(of(MOCK_CREDIT));
+    getCreditProvenance = vi.fn().mockReturnValue(of(MOCK_PROVENANCE));
     navigate = vi.fn();
     publicKey = signal<string | null>('GABC');
 
     await TestBed.configureTestingModule({
       imports: [CreditDetailComponent],
       providers: [
-        { provide: ApiService, useValue: { getCredit } },
+        { provide: ApiService, useValue: { getCredit, getCreditProvenance } },
         { provide: Router, useValue: { navigate } },
         { provide: ActivatedRoute, useValue: { snapshot: { paramMap: { get: () => 'abc123' } } } },
         { provide: AuthService, useValue: { isAuthenticated: signal(true), token: signal('tok') } },
@@ -55,6 +62,21 @@ describe('CreditDetailComponent', () => {
     expect(component.credit()).toEqual(MOCK_CREDIT);
     expect(component.loading()).toBe(false);
     expect(component.error()).toBeNull();
+  });
+
+  it('should load provenance events', () => {
+    expect(getCreditProvenance).toHaveBeenCalledWith('abc123');
+    expect(component.provenance()).toEqual(MOCK_PROVENANCE);
+    expect(component.provenanceLoading()).toBe(false);
+    expect(component.provenanceError()).toBeNull();
+  });
+
+  it('should set provenanceError on provenance API failure', async () => {
+    getCreditProvenance.mockReturnValue(throwError(() => new Error('provenance unavailable')));
+    component['provenance'].set([]);
+    component['provenanceError'].set(null);
+    await component['loadProvenance']('abc123');
+    expect(component.provenanceError()).toBe('provenance unavailable');
   });
 
   it('should show retire and sell buttons for owner', () => {

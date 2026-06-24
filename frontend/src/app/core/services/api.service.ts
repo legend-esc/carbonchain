@@ -35,6 +35,14 @@ export interface VerifierConfig {
   geographies?: string[];
 }
 
+export interface ProvenanceEvent {
+  event: string;
+  actor: string;
+  timestamp: number;
+  tx_hash?: string;
+  detail?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -93,6 +101,11 @@ export class ApiService {
   /** GET /credits/:id */
   getCredit(id: string): Observable<CreditMetadata> {
     return this.http.get<CreditMetadata>(`${this.baseUrl}/credits/${id}`);
+  }
+
+  /** GET /credits/:id/provenance */
+  getCreditProvenance(id: string): Observable<ProvenanceEvent[]> {
+    return this.http.get<ProvenanceEvent[]>(`${this.baseUrl}/credits/${id}/provenance`);
   }
 
   /** GET /credits/project/:projectId */

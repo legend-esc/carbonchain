@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
+import { CreditStore } from '../core/store/credit.store';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
 
@@ -111,6 +112,7 @@ export class RetireComponent {
   protected readonly auth = inject(AuthService);
   protected readonly wallet = inject(StellarWalletService);
   private readonly api = inject(ApiService);
+  private readonly store = inject(CreditStore);
 
   creditId = '';
   tonnes = 1_000_000;
@@ -141,6 +143,8 @@ export class RetireComponent {
         ),
       );
       this.retirementId.set(retirementId);
+      // Refresh the credit entry in the store so any cached data is updated.
+      this.store.loadOne(this.creditId).catch(() => {});
       this.step.set('success');
     } catch (err) {
       this.errorMsg.set(err instanceof Error ? err.message : 'Unknown error.');
