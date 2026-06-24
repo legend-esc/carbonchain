@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Inject,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
@@ -14,6 +20,13 @@ export class RetireDto {
   creditId: string;
   tonnes: string;
   reason: string;
+}
+
+export class BatchRetireDto {
+  creditIds: string[];
+  tonnes: string[];
+  reason: string;
+  buyerPublicKey: string;
 }
 
 export interface CertificateVerification {
@@ -146,6 +159,99 @@ export class RetirementService {
     this.eventEmitter.emit('CreditRetired', event);
 
     return { retirementId, certificateIpfsHash: '' };
+  }
+
+  /**
+   * Batch retire multiple carbon credits in a single transaction.
+   * Validates that creditIds and tonnes arrays have equal length and positive values.
+   * Returns array of retirement IDs.
+   */
+  async batchRetire(
+    dto: BatchRetireDto,
+  ): Promise<{ retirementIds: string[] }> {
+    this.logger.log(
+      `Batch retiring ${dto.creditIds.length} credits for ${dto.buyerPublicKey}`,
+    );
+
+    if (dto.creditIds.length !== dto.tonnes.length) {
+      throw new BadRequestException(
+        'creditIds and tonnes arrays must have equal length',
+      );
+    }
+
+    if (dto.creditIds.length === 0) {
+      throw new BadRequestException('At least one credit must be provided');
+    }
+
+    const MIN_CREDIT_UNIT = 100_000;
+    for (let i = 0; i < dto.tonnes.length; i++) {
+      const tonnes = BigInt(dto.tonnes[i]);
+      if (tonnes <= 0n) {
+        throw new BadRequestException(
+          `tonnes[${i}] must be positive, got ${dto.tonnes[i]}`,
+        );
+      }
+      if (tonnes % BigInt(MIN_CREDIT_UNIT) !== 0n) {
+        throw new BadRequestException(
+          `tonnes[${i}] must be divisible by ${MIN_CREDIT_UNIT}, got ${dto.tonnes[i]}`,
+        );
+      }
+    }
+
+    const args = [
+      nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
+      nativeToScVal(
+        dto.creditIds.map((cid) => Buffer.from(cid, 'hex')),
+        { type: 'vec<bytes>' },
+      ),
+      nativeToScVal(
+        dto.tonnes.map((t) => BigInt(t)),
+        { type: 'vec<i128>' },
+      ),
+      nativeToScVal(dto.reason, { type: 'string' }),
+      nativeToScVal(this.registryContractId, { type: 'address' }),
+    ];
+
+    const signer = this.keypairService.getAdminKeypair();
+    const response = await this.stellarService.invokeContract(
+      this.retirementContractId,
+      'batch_retire',
+      args,
+      signer,
+    );
+
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const retirementIds = rv
+      ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as Uint8Array[]).map(
+          (buf) => Buffer.from(buf).toString('hex'),
+        )
+      : [];
+
+    await Promise.all(
+      retirementIds.map((retirementId, index) => {
+        const entity = new RetirementEntity();
+        entity.id = retirementId;
+        entity.creditId = dto.creditIds[index];
+        entity.buyer = dto.buyerPublicKey;
+        entity.tonnesRetired = dto.tonnes[index];
+        entity.reason = dto.reason;
+        entity.retiredAt = Math.floor(Date.now() / 1000);
+        entity.txHash = '';
+        return this.retirementRepo.save(entity);
+      }),
+    );
+
+    const event: CreditRetiredEvent[] = retirementIds.map((retirementId, index) => ({
+      retirementId,
+      creditId: dto.creditIds[index],
+      buyer: dto.buyerPublicKey,
+      tonnesRetired: dto.tonnes[index],
+      retiredAt: Math.floor(Date.now() / 1000),
+    }));
+
+    event.forEach((e) => this.eventEmitter.emit('CreditRetired', e));
+
+    return { retirementIds };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {

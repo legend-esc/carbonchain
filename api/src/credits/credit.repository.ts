@@ -27,6 +27,20 @@ export interface ICreditRepository {
     page: number,
     limit: number,
   ): Promise<PageResult<CreditEntity>>;
+  /**
+   * Filter credits by multiple criteria using parameterized queries.
+   * Uses TypeORM's where object syntax to prevent SQL injection.
+   */
+  findByFilter(
+    filter: {
+      methodology?: string;
+      geography?: string;
+      vintageYear?: number;
+      status?: CreditStatus;
+    },
+    page: number,
+    limit: number,
+  ): Promise<PageResult<CreditEntity>>;
 }
 
 export const CREDIT_REPOSITORY = 'CREDIT_REPOSITORY';
@@ -74,6 +88,43 @@ export class InMemoryCreditRepository implements ICreditRepository {
     const all = Array.from(this.store.values()).filter(
       (c) => c.status === status,
     );
+    return this.paginate(all, page, limit);
+  }
+
+  async findByFilter(
+    filter: {
+      methodology?: string;
+      geography?: string;
+      vintageYear?: number;
+      status?: CreditStatus;
+    },
+    page: number,
+    limit: number,
+  ): Promise<PageResult<CreditEntity>> {
+    let all = Array.from(this.store.values());
+
+    if (filter.methodology) {
+      all = all.filter(
+        (c) =>
+          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
+      );
+    }
+
+    if (filter.geography) {
+      all = all.filter(
+        (c) =>
+          c.geography.toLowerCase() === filter.geography!.toLowerCase(),
+      );
+    }
+
+    if (filter.vintageYear !== undefined) {
+      all = all.filter((c) => c.vintageYear === filter.vintageYear);
+    }
+
+    if (filter.status) {
+      all = all.filter((c) => c.status === filter.status);
+    }
+
     return this.paginate(all, page, limit);
   }
 
