@@ -12,4 +12,5 @@ pub enum RetirementError {
     InvalidNonce       = 115,
     NoPendingAdmin     = 116,
     InvalidTonnes      = 117,
+    InvalidInput       = 118,
 }

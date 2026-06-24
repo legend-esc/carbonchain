@@ -213,7 +213,7 @@ impl Retirement {
         }
 
         if credit_ids.len() != tonnes.len() {
-            panic!("credit_ids and tonnes must have same length");
+            return Err(RetirementError::InvalidInput);
         }
 
         let mut retirement_ids: Vec<BytesN<32>> = Vec::new(&env);
@@ -229,7 +229,7 @@ impl Retirement {
             let tonne_amount = tonnes.get(i).unwrap();
 
             if tonne_amount <= 0 {
-                panic!("tonnes must be greater than zero");
+                return Err(RetirementError::InvalidTonnes);
             }
 
             // Derive a deterministic retirement ID
@@ -538,6 +538,34 @@ mod tests {
             .unwrap_err()
             .unwrap();
         assert_eq!(err, RetirementError::InvalidTonnes);
+    }
+
+    #[test]
+    fn test_batch_retire_mismatched_lengths_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        credit_ids.push_back(credit_id);
+        // tonnes vec intentionally empty — length mismatch
+        let tonnes: Vec<i128> = Vec::new(&env);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let err = client
+            .try_batch_retire(
+                &credit_owner,
+                &credit_ids,
+                &tonnes,
+                &String::from_str(&env, "offset"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidInput);
     }
 
     // ── Pause tests ──────────────────────────────────────────────────────────
