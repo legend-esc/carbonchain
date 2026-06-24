@@ -28,7 +28,9 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Verify signed challenge and receive JWT' })
   @Post('token')
-  async getToken(@Body() body: AuthTokenDto): Promise<{ access_token: string }> {
+  async getToken(
+    @Body() body: AuthTokenDto,
+  ): Promise<{ access_token: string }> {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 

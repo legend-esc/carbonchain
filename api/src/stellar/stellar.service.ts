@@ -196,7 +196,7 @@ export class StellarService implements OnModuleInit {
         lastError = error instanceof Error ? error : new Error(String(error));
 
         // Extract status code from error response
-        const statusCode = (error as any)?.response?.status;
+        const statusCode = error?.response?.status;
 
         // Fail immediately on non-retryable errors
         if (statusCode === 400 || statusCode === 404) {
