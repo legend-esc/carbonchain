@@ -56,6 +56,9 @@ impl Retirement {
     /// # Errors
     /// - [`RetirementError::AlreadyInitialized`] — contract has already been initialised.
     pub fn initialize(env: Env, admin: Address) -> Result<(), RetirementError> {
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(RetirementError::AlreadyInitialized);
+        }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         Ok(())
@@ -705,5 +708,19 @@ mod tests {
 
         let ids = client.get_retirements_by_account(&buyer);
         assert_eq!(ids.len(), 3);
+    }
+
+    // ── Issue #234: double initialize guard ──────────────────────────────────
+
+    #[test]
+    fn test_double_initialize_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, _, _, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        // setup already called initialize once; a second call must fail
+        let result = client.try_initialize(&retirement_admin);
+        assert_eq!(result, Err(Ok(RetirementError::AlreadyInitialized)));
     }
 }
