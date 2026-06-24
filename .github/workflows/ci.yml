@@ -113,12 +113,17 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev libudev-dev libssl-dev pkg-config
       - name: Install Stellar CLI
         run: cargo install --locked stellar-cli@26.1.0
-      - name: Deploy contracts & run smoke tests
+      - name: Deploy contracts
         env:
           ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
         run: |
           chmod +x scripts/deploy-testnet.sh scripts/smoke-test.sh
           ./scripts/deploy-testnet.sh
+      # #250 — run smoke tests after deployment
+      - name: Run Smoke Tests
+        env:
+          ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
+        run: ./scripts/smoke-test.sh
       - name: Upload contract IDs
         uses: actions/upload-artifact@v4
         with:
