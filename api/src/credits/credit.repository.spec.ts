@@ -138,4 +138,110 @@ describe('InMemoryCreditRepository', () => {
     expect(page2.total).toBe(5);
     expect(page2.page).toBe(2);
   });
+
+  // ── findByFilter — parameterized queries to prevent SQL injection ────────
+
+  it('filters by methodology safely (SQL injection resistant)', async () => {
+    const c1 = makeCredit('id1');
+    c1.methodology = 'VCS';
+    await repo.save(c1);
+
+    const c2 = makeCredit('id2');
+    c2.methodology = 'Gold';
+    await repo.save(c2);
+
+    const result = await repo.findByFilter(
+      { methodology: 'VCS' },
+      1,
+      10,
+    );
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].methodology).toBe('VCS');
+  });
+
+  it('rejects malicious methodology values (SQL injection attempt)', async () => {
+    const c1 = makeCredit('id1');
+    c1.methodology = 'VCS';
+    await repo.save(c1);
+
+    const c2 = makeCredit('id2');
+    c2.methodology = 'Gold';
+    await repo.save(c2);
+
+    const maliciousMethodology = "' OR '1'='1";
+    const result = await repo.findByFilter(
+      { methodology: maliciousMethodology },
+      1,
+      10,
+    );
+    expect(result.data).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('filters by multiple criteria in findByFilter', async () => {
+    const c1 = makeCredit('id1');
+    c1.methodology = 'VCS';
+    c1.geography = 'NG';
+    c1.status = CreditStatus.Active;
+    await repo.save(c1);
+
+    const c2 = makeCredit('id2');
+    c2.methodology = 'VCS';
+    c2.geography = 'KE';
+    c2.status = CreditStatus.Active;
+    await repo.save(c2);
+
+    const c3 = makeCredit('id3');
+    c3.methodology = 'Gold';
+    c3.geography = 'NG';
+    c3.status = CreditStatus.Active;
+    await repo.save(c3);
+
+    const result = await repo.findByFilter(
+      { methodology: 'VCS', geography: 'NG', status: CreditStatus.Active },
+      1,
+      10,
+    );
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].id).toBe('id1');
+  });
+
+  it('findByFilter case-insensitive for methodology and geography', async () => {
+    const c1 = makeCredit('id1');
+    c1.methodology = 'VCS';
+    c1.geography = 'NG';
+    await repo.save(c1);
+
+    const result = await repo.findByFilter(
+      { methodology: 'vcs', geography: 'ng' },
+      1,
+      10,
+    );
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].id).toBe('id1');
+  });
+
+  it('findByFilter paginates correctly', async () => {
+    for (let i = 0; i < 5; i++) {
+      const c = makeCredit(`id${i}`);
+      c.methodology = 'VCS';
+      c.status = CreditStatus.Active;
+      await repo.save(c);
+    }
+
+    const page1 = await repo.findByFilter(
+      { methodology: 'VCS', status: CreditStatus.Active },
+      1,
+      3,
+    );
+    expect(page1.data).toHaveLength(3);
+    expect(page1.total).toBe(5);
+
+    const page2 = await repo.findByFilter(
+      { methodology: 'VCS', status: CreditStatus.Active },
+      2,
+      3,
+    );
+    expect(page2.data).toHaveLength(2);
+  });
 });
