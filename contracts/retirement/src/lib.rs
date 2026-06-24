@@ -219,6 +219,29 @@ impl Retirement {
             panic!("credit_ids and tonnes must have same length");
         }
 
+        // Pre-validation pass: check ownership, active status, and positive tonnes
+        // for ALL credits before writing anything (prevents partial state on failure).
+        for i in 0..credit_ids.len() {
+            let credit_id = credit_ids.get(i).unwrap();
+            let tonne_amount = tonnes.get(i).unwrap();
+
+            if tonne_amount <= 0 {
+                panic!("tonnes must be greater than zero");
+            }
+
+            let credit: CreditMetadata = env.invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "get_credit"),
+                (credit_id.clone(),).into_val(&env),
+            );
+            if credit.status != CreditStatus::Active {
+                return Err(RetirementError::CreditNotActive);
+            }
+            if credit.owner != buyer {
+                return Err(RetirementError::Unauthorized);
+            }
+        }
+
         let mut retirement_ids: Vec<BytesN<32>> = Vec::new(&env);
         let acct_key = DataKey::AccountRetirements(buyer.clone());
         let mut list: Vec<BytesN<32>> = env
@@ -230,10 +253,6 @@ impl Retirement {
         for i in 0..credit_ids.len() {
             let credit_id = credit_ids.get(i).unwrap();
             let tonne_amount = tonnes.get(i).unwrap();
-
-            if tonne_amount <= 0 {
-                panic!("tonnes must be greater than zero");
-            }
 
             // Derive a deterministic retirement ID
             let mut preimage = credit_id.clone().to_xdr(&env);
@@ -723,4 +742,53 @@ mod tests {
         let result = client.try_initialize(&retirement_admin);
         assert_eq!(result, Err(Ok(RetirementError::AlreadyInitialized)));
     }
+
+    // ── Issue #232: batch_retire no partial state on failure ─────────────────
+
+    #[test]
+    fn test_batch_retire_no_partial_state_on_invalid_credit() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        // Two valid credits
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "p1");
+        let cid3 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2026, "p2");
+
+        // Transfer only the first two to buyer; cid3 stays with issuer → ownership check fails
+        let n1 = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &buyer, &credit_id, n1);
+        let n2 = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &buyer, &cid2, n2);
+        // cid3 intentionally NOT transferred — buyer does not own it
+
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut tonnes_vec: Vec<i128> = Vec::new(&env);
+        credit_ids.push_back(credit_id.clone());
+        tonnes_vec.push_back(1_000_000);
+        credit_ids.push_back(cid2.clone());
+        tonnes_vec.push_back(1_000_000);
+        credit_ids.push_back(cid3.clone()); // invalid: buyer doesn't own this
+        tonnes_vec.push_back(1_000_000);
+
+        let nonce = client.get_nonce(&buyer);
+        let result = client.try_batch_retire(
+            &buyer,
+            &credit_ids,
+            &tonnes_vec,
+            &String::from_str(&env, "batch offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        // The whole batch must fail
+        assert!(result.is_err());
+        // No retirements should have been written for buyer
+        let ids = client.get_retirements_by_account(&buyer);
+        assert_eq!(ids.len(), 0);
+    }
 }
+
