@@ -470,6 +470,49 @@ git push origin feature/your-feature-name
 
 ---
 
+## Branch Protection Rules
+
+The `main` branch is protected to ensure code quality and project stability. All pull requests must comply with the following requirements before they can be merged.
+
+### Required Status Checks
+
+All of the following CI checks must pass before a PR can be merged:
+
+| Check | Purpose |
+|---|---|
+| `contracts-test` | Rust contract test suite (runs `cargo test` on all Soroban contracts) |
+| `api-lint` | TypeScript linting for the NestJS API (runs `npm run lint`) |
+| `api-test` | NestJS unit and integration tests (runs `npm run test` and `npm run test:e2e`) |
+| `api-type-check` | TypeScript type checking for the NestJS API (runs `npm run type-check`) |
+| `frontend-lint` | Angular linting (runs `ng lint`) |
+| `frontend-test` | Angular unit tests (runs `ng test --watch=false`) |
+
+Failing checks indicate bugs, style violations, or missing tests. Address all failures before requesting review.
+
+### Direct Pushes to `main` Are Blocked
+
+All changes to `main` **must** go through a pull request. Direct pushes to `main` are blocked at the repository level. This ensures:
+
+- Every change is reviewed and tested
+- CI checks run on all code before merge
+- A clear record of all changes exists in PR history
+
+### Minimum Review Requirement
+
+Each PR requires **at least one approval** from a maintainer or code owner before merge. Reviewers will check:
+
+- Code quality and adherence to style guidelines
+- Test coverage for new functionality
+- Documentation updates
+- Compliance with security best practices
+- Alignment with project architecture and patterns
+
+### Bypassing Protections
+
+Maintainers can force-merge a PR in exceptional cases (e.g., critical security fixes, broken main branch recovery). These bypasses are logged and should be extremely rare.
+
+---
+
 ## Issue and PR Templates
 
 ### Issue Template
