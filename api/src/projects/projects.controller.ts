@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  ParseIntPipe,
+  DefaultValuePipe,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -17,13 +26,30 @@ export class ProjectsController {
 
   @ApiOperation({ summary: 'Get project by ID' })
   @Get(':id')
-  getOne(@Param('id') id: string): ProjectProfile {
+  async getOne(@Param('id') id: string): Promise<ProjectProfile> {
     return this.projectsService.getProject(id);
   }
 
   @ApiOperation({ summary: 'List all projects' })
   @Get()
-  list(): ProjectProfile[] {
+  async list(): Promise<ProjectProfile[]> {
     return this.projectsService.listProjects();
+  }
+
+  @ApiOperation({
+    summary:
+      'List projects with pending status (reconciliation endpoint). These are projects where IPFS upload succeeded but contract call may have failed.',
+  })
+  @Get('reconciliation/pending')
+  async getPending(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ): Promise<{
+    data: ProjectProfile[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    return this.projectsService.getPendingProjects(page, limit);
   }
 }
