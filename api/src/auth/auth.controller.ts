@@ -11,6 +11,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthTokenDto } from './dto/auth-token.dto';
+import { Throttle, ThrottlerGuard } from '../common/throttler.guard';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -18,6 +19,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @ApiOperation({ summary: 'Request SEP-10 auth challenge' })
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ limit: 10, ttl: 60_000 })
   @Get('challenge')
   getChallenge(@Query('account') account: string): {
     transaction: string;
