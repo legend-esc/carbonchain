@@ -274,6 +274,96 @@ impl Retirement {
         Ok(retirement_ids)
     }
 
+    /// Retire a carbon credit within an existing session for audit traceability.
+    ///
+    /// - Validates the session exists in the credit registry
+    /// - Stores an immutable retirement record
+    /// - Calls `mark_retired` on the credit registry
+    ///
+    /// # Errors
+    /// - [`RetirementError::ContractPaused`] — contract is paused.
+    /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current buyer nonce.
+    pub fn retire_with_session(
+        env: Env,
+        session_id: BytesN<32>,
+        buyer: Address,
+        credit_id: BytesN<32>,
+        tonnes: i128,
+        reason: String,
+        registry_id: Address,
+        nonce: u64,
+    ) -> Result<BytesN<32>, RetirementError> {
+        if Self::is_paused(&env) {
+            return Err(RetirementError::ContractPaused);
+        }
+        buyer.require_auth();
+        if !consume_nonce(&env, &buyer, nonce) {
+            return Err(RetirementError::InvalidNonce);
+        }
+
+        // Validate credit exists and caller owns it
+        let credit: CreditMetadata = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "get_credit"),
+            (credit_id.clone(),).into_val(&env),
+        );
+        
+        if credit.status != CreditStatus::Active {
+            return Err(RetirementError::CreditNotActive);
+        }
+        
+        if credit.owner != buyer {
+            return Err(RetirementError::Unauthorized);
+        }
+
+        if tonnes <= 0 {
+            panic!("tonnes must be greater than zero");
+        }
+
+        let mut preimage = credit_id.clone().to_xdr(&env);
+        preimage.append(&reason.clone().to_xdr(&env));
+        preimage.append(&env.ledger().timestamp().to_xdr(&env));
+        let retirement_id: BytesN<32> = env.crypto().sha256(&preimage).into();
+
+        // Cross-contract: mark the credit as retired in the registry
+        let _: () = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "mark_retired"),
+            (credit_id.clone(),).into_val(&env),
+        );
+
+        let record = RetirementRecord {
+            credit_id: credit_id.clone(),
+            buyer: buyer.clone(),
+            tonnes_retired: tonnes,
+            reason,
+            retired_at: env.ledger().timestamp(),
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retirement(retirement_id.clone()), &record);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Retirement(retirement_id.clone()), TTL_THRESHOLD, MIN_TTL);
+
+        // Index under buyer account
+        let acct_key = DataKey::AccountRetirements(buyer.clone());
+        let mut list: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&acct_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        list.push_back(retirement_id.clone());
+        env.storage().persistent().set(&acct_key, &list);
+        env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
+
+        // Emit retirement event
+        Retire { buyer, credit_id, retirement_id: retirement_id.clone() }.publish(&env);
+
+        Ok(retirement_id)
+    }
+
     pub fn get_nonce(env: Env, address: Address) -> u64 {
         get_nonce(&env, &address)
     }
@@ -705,5 +795,59 @@ mod tests {
 
         let ids = client.get_retirements_by_account(&buyer);
         assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn test_retire_with_session_stores_retirement() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        
+        // Create a session in the registry
+        let session_id = registry.create_session(&credit_owner);
+        
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire_with_session(
+            &session_id,
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "session offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let record = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(record.buyer, credit_owner);
+        assert_eq!(record.tonnes_retired, 1_000_000);
+        assert_eq!(record.credit_id, credit_id);
+    }
+
+    #[test]
+    fn test_retire_with_session_indexes_by_account() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        
+        let session_id = registry.create_session(&credit_owner);
+        let nonce = client.get_nonce(&credit_owner);
+
+        let ret_id = client.retire_with_session(
+            &session_id,
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "session offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let ids = client.get_retirements_by_account(&credit_owner);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids.get(0).unwrap(), ret_id);
     }
 }
