@@ -83,6 +83,15 @@ jobs:
           STELLAR_NETWORK: testnet
           STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
           STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+      # #249 — generate test coverage report
+      - name: Generate Coverage Report
+        run: cd api && npm run test:cov
+      # #249 — upload coverage artifacts
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage-report
+          path: api/coverage
 
   deploy:
     name: Testnet Deploy + Smoke Tests
