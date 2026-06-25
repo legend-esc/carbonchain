@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ServiceUnavailableException, Inject } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException, BadRequestException, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
@@ -9,10 +9,19 @@ import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
 import { PageResult } from '../credits/credit.repository';
 
+export const MAX_BATCH_SIZE = 20;
+
 export class RetireDto {
   buyerPublicKey: string;
   creditId: string;
   tonnes: string;
+  reason: string;
+}
+
+export class BatchRetireDto {
+  buyerPublicKey: string;
+  creditIds: string[];
+  tonnes: string[];
   reason: string;
 }
 
@@ -158,6 +167,69 @@ export class RetirementService {
     this.eventEmitter.emit('CreditRetired', event);
 
     return { retirementId, certificateIpfsHash: '' };
+  }
+
+  /**
+   * Retire multiple credits in a single on-chain call.
+   * Enforces MAX_BATCH_SIZE before invoking the contract.
+   */
+  async batchRetire(
+    dto: BatchRetireDto,
+  ): Promise<{ retirementIds: string[] }> {
+    if (dto.creditIds.length > MAX_BATCH_SIZE) {
+      throw new BadRequestException(
+        `Batch size ${dto.creditIds.length} exceeds maximum allowed (${MAX_BATCH_SIZE})`,
+      );
+    }
+    if (dto.creditIds.length !== dto.tonnes.length) {
+      throw new BadRequestException('creditIds and tonnes arrays must have the same length');
+    }
+
+    this.logger.log(
+      `Batch retiring ${dto.creditIds.length} credits for ${dto.buyerPublicKey}`,
+    );
+
+    const creditIdsVal = nativeToScVal(
+      dto.creditIds.map((id) => Buffer.from(id, 'hex')),
+      { type: 'vec' },
+    );
+    const tonnesVal = nativeToScVal(
+      dto.tonnes.map((t) => BigInt(t)),
+      { type: 'vec' },
+    );
+    const args = [
+      nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
+      creditIdsVal,
+      tonnesVal,
+      nativeToScVal(dto.reason, { type: 'string' }),
+      nativeToScVal(this.registryContractId, { type: 'address' }),
+    ];
+
+    const signer = this.keypairService.getAdminKeypair();
+    let response;
+    try {
+      response = await this.stellarService.invokeContract(
+        this.retirementContractId,
+        'batch_retire',
+        args,
+        signer,
+      );
+    } catch (error: unknown) {
+      const msg = (error as Error).message || '';
+      if (msg.includes('123') || msg.includes('paused')) {
+        throw new ServiceUnavailableException({ error: 'Contract is currently paused' });
+      }
+      throw error;
+    }
+
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const retirementIds: string[] = rv
+      ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as Uint8Array[]).map(
+          (b) => Buffer.from(b).toString('hex'),
+        )
+      : [];
+
+    return { retirementIds };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {

@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-// pdfkit ships as a CommonJS module; use require to avoid ESM issues.
-
-const PDFDocument = require('pdfkit') as typeof import('pdfkit');
+import { Worker } from 'worker_threads';
+import { join } from 'path';
 
 export interface CertificateData {
   retirementId: string;
@@ -65,66 +64,19 @@ export class CertificateService {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
+  /**
+   * Runs pdfkit in a worker thread so the event loop is never blocked.
+   */
   private buildPdf(data: CertificateData): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 60, size: 'A4' });
-      const chunks: Buffer[] = [];
-
-      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      const retiredAt = new Date(data.timestamp * 1000).toUTCString();
-      const tonnesDisplay = (Number(data.tonnes) / 1_000_000).toFixed(1);
-
-      // ── Header ──────────────────────────────────────────────────────────────
-      doc
-        .fontSize(24)
-        .font('Helvetica-Bold')
-        .text('Carbon Credit Retirement Certificate', { align: 'center' });
-
-      doc.moveDown(0.5);
-      doc
-        .fontSize(12)
-        .font('Helvetica')
-        .fillColor('#555555')
-        .text('Issued by CarbonChain on the Stellar Network', {
-          align: 'center',
-        });
-
-      doc.moveDown(1.5);
-      doc.moveTo(60, doc.y).lineTo(535, doc.y).strokeColor('#cccccc').stroke();
-      doc.moveDown(1);
-
-      // ── Body ────────────────────────────────────────────────────────────────
-      doc.fillColor('#000000').fontSize(12).font('Helvetica-Bold');
-
-      const field = (label: string, value: string) => {
-        doc.font('Helvetica-Bold').text(`${label}:`, { continued: true });
-        doc.font('Helvetica').text(`  ${value}`);
-        doc.moveDown(0.4);
-      };
-
-      field('Retirement ID', data.retirementId);
-      field('Credit ID', data.creditId);
-      field('Buyer', data.buyer);
-      field('Tonnes Retired', `${tonnesDisplay} tonne(s)`);
-      field('Reason', data.reason);
-      field('Retired At', retiredAt);
-
-      // ── Footer ──────────────────────────────────────────────────────────────
-      doc.moveDown(2);
-      doc.moveTo(60, doc.y).lineTo(535, doc.y).strokeColor('#cccccc').stroke();
-      doc.moveDown(0.5);
-      doc
-        .fontSize(9)
-        .fillColor('#888888')
-        .text(
-          'This certificate is permanently recorded on the Stellar blockchain and cannot be altered.',
-          { align: 'center' },
-        );
-
-      doc.end();
+      const worker = new Worker(join(__dirname, 'pdf.worker.js'), {
+        workerData: data,
+      });
+      worker.once('message', (buf: Buffer) => resolve(buf));
+      worker.once('error', reject);
+      worker.once('exit', (code) => {
+        if (code !== 0) reject(new Error(`PDF worker exited with code ${code}`));
+      });
     });
   }
 
