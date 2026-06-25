@@ -38,6 +38,10 @@ yarn-error.log
 testem.log
 /typings
 __screenshots__/
+__snapshots__/
+*.snap
+karma-test-results.xml
+.vitest-cache/
 
 # System files
 .DS_Store
