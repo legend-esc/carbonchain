@@ -1,7 +1,17 @@
-import { Controller, Post, Get, Delete, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+} from '@nestjs/common';
 import type { Webhook } from './webhooks.service';
 import { WebhooksService } from './webhooks.service';
+import { WebhookIpGuard } from './webhook-ip.guard';
 
+@UseGuards(WebhookIpGuard)
 @Controller('webhooks')
 export class WebhooksController {
   constructor(private webhooksService: WebhooksService) {}
