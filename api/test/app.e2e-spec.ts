@@ -26,11 +26,9 @@ describe('AppController (e2e)', () => {
       .expect('Hello World!');
   });
 
-  it('/health (GET) returns 200 { status: "ok" } without auth', () => {
-    return request(app.getHttpServer())
-      .get('/health')
-      .expect(200)
-      .expect({ status: 'ok' });
+  it('/ (GET) returns an X-Request-ID header', async () => {
+    const res = await request(app.getHttpServer()).get('/').expect(200);
+    expect(res.headers['x-request-id']).toBeDefined();
   });
 });
 

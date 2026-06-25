@@ -5,6 +5,7 @@ import { LocaleSwitcherComponent } from './core/components/locale-switcher.compo
 import { ThemeService } from './core/services/theme.service';
 import { TranslatePipe } from './core/pipes/translate.pipe';
 import { ToastComponent } from './shared/components/toast.component';
+import { OnlineStatusService } from './core/services/online-status.service';
 
 @Component({
   selector: 'app-root',
@@ -22,4 +23,5 @@ import { ToastComponent } from './shared/components/toast.component';
 })
 export class App {
   readonly theme = inject(ThemeService);
+  readonly onlineStatus = inject(OnlineStatusService);
 }
