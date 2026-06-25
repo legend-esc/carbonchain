@@ -13,6 +13,7 @@ import {
   rpc,
 } from '@stellar/stellar-sdk';
 import { SequenceNumberManager } from './sequence-number-manager.service';
+import { RequestContextStore } from '../common/request-context';
 
 @Injectable()
 export class StellarService implements OnModuleInit {
@@ -274,7 +275,7 @@ export class StellarService implements OnModuleInit {
         const delayMs = exponentialDelay + jitter;
 
         this.logger.warn(
-          `Transaction submission failed with ${statusCode}, retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})`,
+          `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] Transaction submission failed with ${statusCode}, retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})`,
         );
 
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -351,7 +352,7 @@ export class StellarService implements OnModuleInit {
       return response.events || [];
     } catch (error) {
       this.logger.error(
-        `Failed to fetch events for contract ${contractId}: ${(error as Error).message}`,
+        `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] Failed to fetch events for contract ${contractId}: ${(error as Error).message}`,
       );
       return [];
     }

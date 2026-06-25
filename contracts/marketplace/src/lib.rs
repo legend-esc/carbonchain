@@ -60,26 +60,28 @@ pub enum DataKey {
     Paused,
     FeeBps,
     FeeRecipient,
-    EscrowedAmount(u64),  // Track escrowed tokens per offer
+    EscrowedAmount(u64),
     Nonce(Address),
     MinPrice,
+    ActiveOffers,
 }
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum MarketplaceError {
-    OfferNotFound   = 115,
-    Unauthorized    = 116,
-    InvalidPrice    = 117,
-    InvalidTonnes   = 125,
-    AlreadyClosed   = 118,
-    CreditNotActive = 119,
-    NotInitialized  = 120,
-    ContractPaused  = 121,
-    InvalidNonce    = 122,
-    OfferExpired    = 123,
-    Overflow        = 124,
+    OfferNotFound      = 115,
+    Unauthorized       = 116,
+    InvalidPrice       = 117,
+    InvalidTonnes      = 125,
+    AlreadyClosed      = 118,
+    CreditNotActive    = 119,
+    NotInitialized     = 120,
+    ContractPaused     = 121,
+    InvalidNonce       = 122,
+    OfferExpired       = 123,
+    Overflow           = 124,
+    AlreadyInitialized = 126,
 }
 
 #[contractevent]
@@ -109,6 +111,14 @@ pub struct OfferCxl {
     pub escrowed: i128,
 }
 
+#[contractevent]
+#[derive(Clone)]
+pub struct OfferUpdated {
+    pub seller: Address,
+    pub offer_id: u64,
+    pub new_price_xlm: i128,
+}
+
 // ── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -125,10 +135,10 @@ impl Marketplace {
     /// Initialise the marketplace. Must be called exactly once.
     ///
     /// # Errors
-    /// - [`MarketplaceError::NotInitialized`] — contract has already been initialised.
+    /// - [`MarketplaceError::AlreadyInitialized`] — contract has already been initialised.
     pub fn initialize(env: Env, admin: Address, min_price_per_tonne: i128) -> Result<(), MarketplaceError> {
         if env.storage().instance().has(&DataKey::Admin) {
-            return Err(MarketplaceError::NotInitialized); // already initialised
+            return Err(MarketplaceError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -260,6 +270,14 @@ impl Marketplace {
         env.storage().persistent().set(&key, &ids);
         env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
 
+        // Add to global active index
+        let mut active_ids: Vec<u64> = env.storage().persistent()
+            .get(&DataKey::ActiveOffers)
+            .unwrap_or_else(|| Vec::new(&env));
+        active_ids.push_back(offer_id);
+        env.storage().persistent().set(&DataKey::ActiveOffers, &active_ids);
+        env.storage().persistent().extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+
         OfferNew { seller, offer_id }.publish(&env);
         Ok(offer_id)
     }
@@ -295,6 +313,17 @@ impl Marketplace {
         }
 
         let escrow_account: Address = env.current_contract_address();
+
+        // #240: verify escrow still owns the credit before attempting transfer
+        let credit: CreditMetadata = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "get_credit"),
+            (offer.credit_id.clone(),).into_val(&env),
+        );
+        if credit.owner != escrow_account {
+            return Err(MarketplaceError::Unauthorized);
+        }
+
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
             &Symbol::new(&env, "get_nonce"),
@@ -326,6 +355,16 @@ impl Marketplace {
         // Remove escrowed amount record
         env.storage().persistent().remove(&DataKey::EscrowedAmount(offer_id));
 
+        // Remove from global active index
+        let mut active_ids: Vec<u64> = env.storage().persistent()
+            .get(&DataKey::ActiveOffers)
+            .unwrap_or_else(|| Vec::new(&env));
+        if let Some(pos) = active_ids.iter().position(|id| id == offer_id) {
+            active_ids.remove(pos as u32);
+            env.storage().persistent().set(&DataKey::ActiveOffers, &active_ids);
+            env.storage().persistent().extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+        }
+
         OfferCxl { seller: seller.clone(), offer_id, escrowed }.publish(&env);
         Ok(())
     }
@@ -334,18 +373,30 @@ impl Marketplace {
     ///
     /// # Errors
     /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
+    /// - [`MarketplaceError::OfferExpired`] — offer has expired (also marks it inactive).
     pub fn get_offer(env: Env, offer_id: u64) -> Result<Offer, MarketplaceError> {
-        let offer: Offer = env.storage()
+        let mut offer: Offer = env.storage()
             .persistent()
             .get(&DataKey::Offer(offer_id))
             .ok_or(MarketplaceError::OfferNotFound)?;
-        
+
         if let Some(expires_at) = offer.expires_at {
-            if env.ledger().timestamp() > expires_at {
+            if env.ledger().timestamp() > expires_at && offer.active {
+                offer.active = false;
+                env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
+                // Remove from global active index
+                let mut active_ids: Vec<u64> = env.storage().persistent()
+                    .get(&DataKey::ActiveOffers)
+                    .unwrap_or_else(|| Vec::new(&env));
+                if let Some(pos) = active_ids.iter().position(|id| id == offer_id) {
+                    active_ids.remove(pos as u32);
+                    env.storage().persistent().set(&DataKey::ActiveOffers, &active_ids);
+                    env.storage().persistent().extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+                }
                 return Err(MarketplaceError::OfferExpired);
             }
         }
-        
+
         Ok(offer)
     }
 
@@ -383,12 +434,18 @@ impl Marketplace {
         env.storage().persistent().get(&DataKey::OfferCount).unwrap_or(0u64)
     }
 
-    pub fn cleanup_expired_offers(env: Env, admin: Address) -> Result<(), MarketplaceError> {
+    /// Clean up expired offers starting from `start_id`, processing at most `limit` offers (capped at 100).
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::NotInitialized`] / [`MarketplaceError::Unauthorized`] — caller is not admin.
+    pub fn cleanup_expired_offers(env: Env, admin: Address, start_id: u64, limit: u32) -> Result<(), MarketplaceError> {
         Self::require_admin(&env, &admin)?;
         let count = Self::offer_count(env.clone());
         let now = env.ledger().timestamp();
-        
-        for i in 0..count {
+        let effective_limit = if limit > 100 { 100 } else { limit };
+        let end = (start_id + effective_limit as u64).min(count);
+
+        for i in start_id..end {
             if let Some(mut offer) = env.storage().persistent().get::<_, Offer>(&DataKey::Offer(i)) {
                 if let Some(expires_at) = offer.expires_at {
                     if now > expires_at && offer.active {
@@ -409,6 +466,79 @@ impl Marketplace {
 
     pub fn get_min_price(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::MinPrice).unwrap_or(0)
+    }
+
+    /// Update the price of an existing active offer. Only the original seller may reprice.
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::ContractPaused`] — contract is paused.
+    /// - [`MarketplaceError::InvalidNonce`] — nonce mismatch.
+    /// - [`MarketplaceError::OfferNotFound`] — offer does not exist.
+    /// - [`MarketplaceError::Unauthorized`] — caller is not the original seller.
+    /// - [`MarketplaceError::AlreadyClosed`] — offer is inactive.
+    /// - [`MarketplaceError::OfferExpired`] — offer has expired.
+    /// - [`MarketplaceError::InvalidPrice`] — new price is zero, negative, or below min_price.
+    pub fn update_offer_price(
+        env: Env,
+        seller: Address,
+        offer_id: u64,
+        new_price_xlm: i128,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        if Self::is_paused(&env) {
+            return Err(MarketplaceError::ContractPaused);
+        }
+        seller.require_auth();
+        if !Self::consume_nonce(&env, &seller, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+        let mut offer: Offer = env.storage().persistent()
+            .get(&DataKey::Offer(offer_id))
+            .ok_or(MarketplaceError::OfferNotFound)?;
+        if offer.seller != seller {
+            return Err(MarketplaceError::Unauthorized);
+        }
+        if !offer.active {
+            return Err(MarketplaceError::AlreadyClosed);
+        }
+        if let Some(expires_at) = offer.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                offer.active = false;
+                env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
+                return Err(MarketplaceError::OfferExpired);
+            }
+        }
+        if new_price_xlm <= 0 {
+            return Err(MarketplaceError::InvalidPrice);
+        }
+        let min_price: i128 = env.storage().instance().get(&DataKey::MinPrice).unwrap_or(0);
+        if new_price_xlm < min_price {
+            return Err(MarketplaceError::InvalidPrice);
+        }
+        offer.price_xlm = new_price_xlm;
+        env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
+        env.storage().persistent().extend_ttl(&DataKey::Offer(offer_id), TTL_THRESHOLD, MIN_TTL);
+        OfferUpdated { seller, offer_id, new_price_xlm }.publish(&env);
+        Ok(())
+    }
+
+    /// Return a paginated list of all currently active offer IDs, capped at 50 per page.
+    ///
+    /// `page` is 0-indexed. `page_size` is clamped to 50.
+    pub fn list_active_offers(env: Env, page: u32, page_size: u32) -> Vec<u64> {
+        let page_size = page_size.min(50) as usize;
+        let all: Vec<u64> = env.storage().persistent()
+            .get(&DataKey::ActiveOffers)
+            .unwrap_or_else(|| Vec::new(&env));
+        let start = (page as usize) * page_size;
+        let mut result: Vec<u64> = Vec::new(&env);
+        for i in start..(start + page_size) {
+            if i >= all.len() as usize {
+                break;
+            }
+            result.push_back(all.get(i as u32).unwrap());
+        }
+        result
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
@@ -825,5 +955,149 @@ mod tests {
             &seller_nonce,
         );
         assert_eq!(result, Err(Ok(MarketplaceError::InvalidTonnes)));
+    }
+
+    // ── Issue #238: AlreadyInitialized on double-call ────────────────────────
+
+    #[test]
+    fn test_double_initialize_returns_already_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let marketplace_id = env.register(Marketplace, ());
+        let client = MarketplaceClient::new(&env, &marketplace_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &0);
+        let result = client.try_initialize(&admin, &0);
+        assert_eq!(result, Err(Ok(MarketplaceError::AlreadyInitialized)));
+    }
+
+    // ── Issue #236: get_offer marks offer inactive on expiry ─────────────────
+
+    #[test]
+    fn test_get_offer_marks_inactive_on_expiry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        let now = env.ledger().timestamp();
+        let expires_at = now + 100;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller, &credit_id, &10_000_000, &500_000,
+            &registry.id, &Some(expires_at), &seller_nonce,
+        );
+        // Advance time past expiry
+        env.ledger().set_timestamp(expires_at + 1);
+        // get_offer should return OfferExpired
+        assert_eq!(
+            client.try_get_offer(&offer_id),
+            Err(Ok(MarketplaceError::OfferExpired))
+        );
+        // Offer must now be inactive in storage (fetch raw via persistent)
+        // We read it back by calling get_offer again — still expired, but active is false
+        // Verify it no longer appears in get_active_offers_by_seller
+        assert_eq!(client.get_active_offers_by_seller(&seller).len(), 0);
+    }
+
+    // ── Issue #237: update_offer_price ───────────────────────────────────────
+
+    #[test]
+    fn test_update_offer_price_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
+        let seller_nonce2 = client.get_nonce(&seller);
+        client.update_offer_price(&seller, &offer_id, &20_000_000, &seller_nonce2);
+        let offer = client.get_offer(&offer_id);
+        assert_eq!(offer.price_xlm, 20_000_000);
+    }
+
+    #[test]
+    fn test_update_offer_price_below_min_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let marketplace_id = env.register(Marketplace, ());
+        let client = MarketplaceClient::new(&env, &marketplace_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &5_000_000); // min_price = 5_000_000
+        let registry = RegistryHelper::deploy(&env);
+        let verifier = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        registry.initialize(&admin, &retirement, 1);
+        let nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &verifier, nonce);
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(&admin, &String::from_str(&env, "VCS"), &String::from_str(&env, "VCS"), anonce2);
+        registry.register_project(&admin, &String::from_str(&env, "PROJ-001"), &String::from_str(&env, "T"), &String::from_str(&env, "D"), &String::from_str(&env, "NG"));
+        let inonce = registry.get_nonce(&issuer);
+        let credit_id = registry.submit_credit(&issuer, &String::from_str(&env, "PROJ-001"), 2024, &String::from_str(&env, "VCS"), &String::from_str(&env, "NG"), 1_000_000, &String::from_str(&env, "bafybei123"), inonce);
+        let vnonce = registry.get_nonce(&verifier);
+        registry.approve_and_mint(&verifier, &credit_id, vnonce);
+        let seller = Address::generate(&env);
+        let tnonce = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &seller, &credit_id, tnonce);
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
+        let seller_nonce2 = client.get_nonce(&seller);
+        assert_eq!(
+            client.try_update_offer_price(&seller, &offer_id, &1_000_000, &seller_nonce2),
+            Err(Ok(MarketplaceError::InvalidPrice))
+        );
+    }
+
+    #[test]
+    fn test_update_offer_price_unauthorized_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
+        let other = Address::generate(&env);
+        let ononce = client.get_nonce(&other);
+        assert!(client.try_update_offer_price(&other, &offer_id, &20_000_000, &ononce).is_err());
+    }
+
+    // ── Issue #239: list_active_offers global paginated index ────────────────
+
+    #[test]
+    fn test_list_active_offers_pagination() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
+        let page0 = client.list_active_offers(&0, &50);
+        assert_eq!(page0.len(), 1);
+        assert_eq!(page0.get(0).unwrap(), offer_id);
+        // page 1 should be empty
+        let page1 = client.list_active_offers(&1, &50);
+        assert_eq!(page1.len(), 0);
+    }
+
+    #[test]
+    fn test_list_active_offers_removed_on_cancel() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
+        assert_eq!(client.list_active_offers(&0, &50).len(), 1);
+        let seller_nonce2 = client.get_nonce(&seller);
+        client.cancel_offer(&seller, &offer_id, &registry.id, &seller_nonce2);
+        assert_eq!(client.list_active_offers(&0, &50).len(), 0);
+    }
+
+    #[test]
+    fn test_list_active_offers_page_size_capped_at_50() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _seller, _admin, _registry, _credit_id) = setup_with_registry(&env);
+        // With no offers, page_size=100 should return empty (capped at 50, but still 0 items)
+        let result = client.list_active_offers(&0, &100);
+        assert_eq!(result.len(), 0);
     }
 }

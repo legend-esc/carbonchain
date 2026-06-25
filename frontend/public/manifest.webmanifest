@@ -1,0 +1,16 @@
+{
+  "name": "CarbonChain",
+  "short_name": "CarbonChain",
+  "theme_color": "#4caf50",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "scope": "/",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

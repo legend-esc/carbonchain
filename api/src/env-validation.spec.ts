@@ -59,4 +59,16 @@ describe('Environment Variable Validation (#46, #255)', () => {
     const { value } = envValidationSchema.validate(rest);
     expect(value.STELLAR_NETWORK).toBe('testnet');
   });
+
+  it('applies default LOG_LEVEL of info when not set', () => {
+    const { value } = envValidationSchema.validate(validEnv);
+    expect(value.LOG_LEVEL).toBe('info');
+  });
+
+  it('fails when LOG_LEVEL is not a recognized pino level', () => {
+    const invalidEnv = { ...validEnv, LOG_LEVEL: 'verbose' };
+    const { error } = envValidationSchema.validate(invalidEnv);
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('LOG_LEVEL');
+  });
 });

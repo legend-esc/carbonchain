@@ -45,11 +45,16 @@ test-results/
 .nyc_output/
 lcov.info
 *.lcov
+# Soroban test snapshots (auto-generated, not source)
+test_snapshots/
 
 # Build artifacts
 *.js.map
 *.d.ts.map
 build/
+# Rust/Soroban compiled output
+*.wasm
+Cargo.lock
 
 # Package manager
 .npm/

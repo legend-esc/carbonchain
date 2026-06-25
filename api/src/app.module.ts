@@ -1,10 +1,13 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { envValidationSchema } from './env-validation';
 import { CacheModule } from './common/cache.module';
+import { RequestIdMiddleware } from './common/request-id.middleware';
+import { RequestLoggingMiddleware } from './common/request-logging.middleware';
+import { HealthModule } from './health/health.module';
 import { StellarModule } from './stellar/stellar.module';
 import { CreditsModule } from './credits/credits.module';
 import { ProjectsModule } from './projects/projects.module';
@@ -27,6 +30,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     }),
     ScheduleModule.forRoot(),
     CacheModule,
+    HealthModule,
     StellarModule,
     CreditsModule,
     ProjectsModule,
@@ -40,4 +44,10 @@ import { WebhooksModule } from './webhooks/webhooks.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer
+      .apply(RequestIdMiddleware, RequestLoggingMiddleware)
+      .forRoutes('*');
+  }
+}

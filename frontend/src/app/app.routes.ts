@@ -6,12 +6,14 @@ import { CreditDetailComponent } from './credits/credit-detail.component';
 import { ProjectDetailComponent } from './projects/project-detail.component';
 import { ConnectWalletComponent } from './core/components/connect-wallet.component';
 import { AdminVerifiersComponent } from './admin/admin-verifiers.component';
+import { OfflineComponent } from './offline/offline.component';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
 
 export const routes: Routes = [
   { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
   { path: 'connect-wallet', component: ConnectWalletComponent },
+  { path: 'offline', component: OfflineComponent },
   { path: 'dashboard', component: DashboardComponent, canActivate: [authGuard] },
   { path: 'marketplace', component: MarketplaceComponent, canActivate: [authGuard] },
   { path: 'retire', component: RetireComponent, canActivate: [authGuard] },
