@@ -1,5 +1,5 @@
+import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
@@ -74,7 +74,9 @@ describe('AdminGuard', () => {
       switchToHttp: () => ({
         getRequest: () => ({ user: { account: 'GADMIN', role: 'admin' } }),
       }),
-    } as any;
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
     expect(guard.canActivate(ctx)).toBe(true);
   });
 
@@ -83,7 +85,9 @@ describe('AdminGuard', () => {
       switchToHttp: () => ({
         getRequest: () => ({ user: { account: 'GUSER', role: 'user' } }),
       }),
-    } as any;
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
     expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
   });
 
@@ -92,7 +96,9 @@ describe('AdminGuard', () => {
       switchToHttp: () => ({
         getRequest: () => ({}),
       }),
-    } as any;
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
     expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
   });
 });

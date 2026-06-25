@@ -176,6 +176,83 @@ describe('IssueCreditDto', () => {
     });
   });
 
+  describe('tonnes field validation', () => {
+    it('should accept tonnes that is a multiple of 100,000', async () => {
+      const validTonnes = ['100000', '1000000', '5000000', '100000000'];
+
+      for (const tonnes of validTonnes) {
+        const dto = plainToClass(IssueCreditDto, {
+          issuerPublicKey: 'GABC123',
+          projectId: 'PROJ-001',
+          vintageYear: 2024,
+          methodology: 'VCS',
+          geography: 'NG',
+          tonnes,
+          ipfsHash: 'bafybei123',
+        });
+
+        const errors = await validate(dto);
+        const tonnesErrors = errors.filter((e) => e.property === 'tonnes');
+        expect(tonnesErrors).toHaveLength(0);
+      }
+    });
+
+    it('should reject tonnes that is not a multiple of 100,000', async () => {
+      const invalidTonnes = ['1', '50000', '150000', '1000001', '999999'];
+
+      for (const tonnes of invalidTonnes) {
+        const dto = plainToClass(IssueCreditDto, {
+          issuerPublicKey: 'GABC123',
+          projectId: 'PROJ-001',
+          vintageYear: 2024,
+          methodology: 'VCS',
+          geography: 'NG',
+          tonnes,
+          ipfsHash: 'bafybei123',
+        });
+
+        const errors = await validate(dto);
+        const tonnesErrors = errors.filter((e) => e.property === 'tonnes');
+        expect(tonnesErrors.length).toBeGreaterThan(0);
+        expect(tonnesErrors[0].constraints?.isTonnesMultiple).toContain(
+          'must be a multiple of 100,000',
+        );
+      }
+    });
+
+    it('should reject negative tonnes', async () => {
+      const dto = plainToClass(IssueCreditDto, {
+        issuerPublicKey: 'GABC123',
+        projectId: 'PROJ-001',
+        vintageYear: 2024,
+        methodology: 'VCS',
+        geography: 'NG',
+        tonnes: '-100000',
+        ipfsHash: 'bafybei123',
+      });
+
+      const errors = await validate(dto);
+      const tonnesErrors = errors.filter((e) => e.property === 'tonnes');
+      expect(tonnesErrors.length).toBeGreaterThan(0);
+    });
+
+    it('should reject non-numeric tonnes', async () => {
+      const dto = plainToClass(IssueCreditDto, {
+        issuerPublicKey: 'GABC123',
+        projectId: 'PROJ-001',
+        vintageYear: 2024,
+        methodology: 'VCS',
+        geography: 'NG',
+        tonnes: 'abc',
+        ipfsHash: 'bafybei123',
+      });
+
+      const errors = await validate(dto);
+      const tonnesErrors = errors.filter((e) => e.property === 'tonnes');
+      expect(tonnesErrors.length).toBeGreaterThan(0);
+    });
+  });
+
   describe('complete DTO validation', () => {
     it('should validate complete valid DTO', async () => {
       const dto = plainToClass(IssueCreditDto, {

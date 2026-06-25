@@ -49,6 +49,7 @@ export interface Offer {
   tonnes_available: string;
   created_at: number;
   status: 'open' | 'filled' | 'cancelled';
+  methodology?: string;
 }
 
 export interface MrvDataPoint {

@@ -8,6 +8,7 @@ import {
   UseGuards,
   DefaultValuePipe,
   ParseIntPipe,
+  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { CreditsService, IssueCreditDto } from './credits.service';
@@ -67,6 +68,24 @@ export class CreditsController {
     return this.creditsService.getCredit(id);
   }
 
+  /** GET /credits/:id/provenance — retrieve full lifecycle of a credit (protected: requires JWT) */
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Get credit provenance',
+    description: 'Returns the full lifecycle of a credit including all events (submit, approval, transfers, retirement)',
+  })
+  @Get(':id/provenance')
+  async getCreditProvenance(
+    @Param('id') creditId: string,
+  ): Promise<Array<{
+    action: string;
+    actor: string;
+    timestamp: number;
+    txHash: string;
+  }>> {
+    return this.creditsService.getCreditProvenance(creditId);
+  }
+
   @ApiOperation({ summary: 'List credits by project' })
   @Get('project/:projectId')
   async listByProject(
@@ -75,5 +94,27 @@ export class CreditsController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) _limit: number,
   ): Promise<string[]> {
     return this.creditsService.listCreditsByProject(projectId);
+  }
+
+  @ApiOperation({ summary: 'Transfer a credit to another address' })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/transfer')
+  async transferCredit(
+    @Param('id') creditId: string,
+    @Body() dto: { to: string },
+    @Request() req: any,
+  ): Promise<CreditMetadata> {
+    return this.creditsService.transferCredit(creditId, dto.to, req.user.account);
+  }
+
+  @ApiOperation({ summary: 'Split a credit into two child credits' })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/split')
+  async splitCredit(
+    @Param('id') creditId: string,
+    @Body() dto: { splitTonnes: number },
+    @Request() req: any,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    return this.creditsService.splitCredit(creditId, dto.splitTonnes, req.user.account);
   }
 }

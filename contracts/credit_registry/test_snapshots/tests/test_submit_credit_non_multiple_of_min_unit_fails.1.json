@@ -102,10 +102,10 @@
                   "string": "PROJ-001"
                 },
                 {
-                  "string": "Test"
+                  "string": "Test Project"
                 },
                 {
-                  "string": "Desc"
+                  "string": "A test project"
                 },
                 {
                   "string": "NG"
@@ -143,7 +143,7 @@
                   "string": "NG"
                 },
                 {
-                  "i128": "1000000000000000"
+                  "i128": "1000000"
                 },
                 {
                   "string": "bafybei123"
@@ -157,7 +157,9 @@
           "sub_invocations": []
         }
       ]
-    ]
+    ],
+    [],
+    []
   ],
   "ledger": {
     "protocol_version": 26,
@@ -258,7 +260,7 @@
                       "symbol": "tonnes"
                     },
                     "val": {
-                      "i128": "1000000000000000"
+                      "i128": "1000000"
                     }
                   },
                   {
@@ -394,7 +396,7 @@
                       "symbol": "description"
                     },
                     "val": {
-                      "string": "Desc"
+                      "string": "A test project"
                     }
                   },
                   {
@@ -410,7 +412,7 @@
                       "symbol": "name"
                     },
                     "val": {
-                      "string": "Test"
+                      "string": "Test Project"
                     }
                   },
                   {
@@ -697,59 +699,5 @@
       }
     ]
   },
-  "events": [
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "credit_submitted"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "credit_id"
-                  },
-                  "val": {
-                    "bytes": "68ddc8506e3c56d88ef3d56b3acd4c0af1152889a02d325ed099f3daf1fe3ce1"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "issuer"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "project_id"
-                  },
-                  "val": {
-                    "string": "PROJ-001"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "tonnes"
-                  },
-                  "val": {
-                    "i128": "1000000000000000"
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    }
-  ]
+  "events": []
 }

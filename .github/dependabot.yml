@@ -35,3 +35,15 @@ updates:
     labels:
       - "dependencies"
       - "infrastructure"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    reviewers:
+      - "carbonchain/maintainers"
+    labels:
+      - "dependencies"
+      - "infrastructure"

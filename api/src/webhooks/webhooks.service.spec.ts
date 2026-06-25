@@ -1,12 +1,24 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { WebhooksService } from './webhooks.service';
+
+const mockConfigService = {
+  get: jest.fn((key: string, def?: string) => {
+    if (key === 'WEBHOOK_SIGNATURE_HEADER') return 'x-mrv-signature';
+    if (key === 'WEBHOOK_SIGNATURE_ALGO') return 'sha256';
+    return def;
+  }),
+};
 
 describe('WebhooksService', () => {
   let service: WebhooksService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [WebhooksService],
+      providers: [
+        WebhooksService,
+        { provide: ConfigService, useValue: mockConfigService },
+      ],
     }).compile();
 
     service = module.get<WebhooksService>(WebhooksService);
@@ -77,6 +89,37 @@ describe('WebhooksService', () => {
 
       const deliveries = service.getDeliveries(webhook.id);
       expect(deliveries.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('signature configuration', () => {
+    it('should generate signature with configured algorithm', () => {
+      const payload = 'test-payload';
+      const secret = 'test-secret';
+      const signature = service.generateSignature(payload, secret);
+
+      expect(signature).toBeDefined();
+      expect(typeof signature).toBe('string');
+      expect(signature.length).toBeGreaterThan(0);
+    });
+
+    it('should return configured signature header name', () => {
+      const headerName = service.getSignatureHeaderName();
+      expect(headerName).toBe('x-mrv-signature');
+    });
+
+    it('should return configured signature algorithm', () => {
+      const algorithm = service.getSignatureAlgorithm();
+      expect(algorithm).toBe('sha256');
+    });
+
+    it('should generate consistent signatures', () => {
+      const payload = 'test-payload';
+      const secret = 'test-secret';
+      const sig1 = service.generateSignature(payload, secret);
+      const sig2 = service.generateSignature(payload, secret);
+
+      expect(sig1).toBe(sig2);
     });
   });
 });

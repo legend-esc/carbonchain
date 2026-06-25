@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { OracleService, MrvWebhookDto } from './oracle.service';
@@ -77,5 +77,29 @@ describe('OracleService', () => {
       expect.anything(),
     );
     expect(result).toEqual({ anomaly: false });
+  });
+
+  it('rejects negative tonnes', async () => {
+    const dto: MrvWebhookDto = {
+      oraclePublicKey: VALID_ORACLE_KEY,
+      projectId: 'PROJ-001',
+      tonnesSequestered: '-1000000',
+      signature: makeSignature('PROJ-001', '-1000000'),
+    };
+    await expect(service.ingestMrvData(dto)).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('rejects zero tonnes', async () => {
+    const dto: MrvWebhookDto = {
+      oraclePublicKey: VALID_ORACLE_KEY,
+      projectId: 'PROJ-001',
+      tonnesSequestered: '0',
+      signature: makeSignature('PROJ-001', '0'),
+    };
+    await expect(service.ingestMrvData(dto)).rejects.toThrow(
+      BadRequestException,
+    );
   });
 });

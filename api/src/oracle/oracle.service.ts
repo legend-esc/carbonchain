@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { StellarService } from '../stellar/stellar.service';
@@ -54,6 +54,13 @@ export class OracleService {
 
   async ingestMrvData(dto: MrvWebhookDto): Promise<{ anomaly: boolean }> {
     this.validateSignature(dto);
+
+    const tonnes = BigInt(dto.tonnesSequestered);
+    if (tonnes <= 0n) {
+      throw new BadRequestException(
+        'tonnes must be positive (greater than 0)',
+      );
+    }
 
     this.logger.log(
       `MRV update for project ${dto.projectId} from oracle ${dto.oraclePublicKey}`,
