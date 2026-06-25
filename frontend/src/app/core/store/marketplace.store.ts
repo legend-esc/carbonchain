@@ -1,5 +1,6 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
+
 import { Offer } from '@shared';
 import { ApiService } from '../services/api.service';
 
@@ -14,17 +15,24 @@ export class MarketplaceStore {
   private readonly _offers = signal<Offer[]>([]);
   private readonly _state = signal<LoadingState>('idle');
   private readonly _error = signal<string | null>(null);
+
   private readonly _page = signal(0);
 
   readonly offers = this._offers.asReadonly();
   readonly state = this._state.asReadonly();
   readonly error = this._error.asReadonly();
+  readonly error$: Observable<string | null> = this._error.asObservable();
+
   readonly page = this._page.asReadonly();
   readonly isLoading = computed(() => this._state() === 'loading');
 
-  private readonly _allActiveOffers = computed(() => this._offers().filter((o) => o.status === 'open'));
+  private readonly _allActiveOffers = computed(() =>
+    this._offers().filter((o) => o.status === 'open'),
+  );
   readonly totalActiveOffers = computed(() => this._allActiveOffers().length);
-  readonly totalPages = computed(() => Math.max(1, Math.ceil(this.totalActiveOffers() / this.pageSize)));
+  readonly totalPages = computed(() =>
+    Math.max(1, Math.ceil(this.totalActiveOffers() / this.pageSize)),
+  );
   readonly activeOffers = computed(() => {
     const start = this._page() * this.pageSize;
     return this._allActiveOffers().slice(start, start + this.pageSize);
