@@ -45,8 +45,8 @@ test-results/
 .nyc_output/
 lcov.info
 *.lcov
-*.insta.yaml
-insta.yaml
+# Soroban test snapshots (auto-generated, not source)
+test_snapshots/
 
 # Build artifacts
 *.js.map

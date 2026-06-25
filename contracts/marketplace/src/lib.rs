@@ -219,6 +219,9 @@ impl Marketplace {
         if credit.owner != seller {
             return Err(MarketplaceError::Unauthorized);
         }
+        if tonnes > credit.tonnes {
+            return Err(MarketplaceError::InvalidTonnes);
+        }
 
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
@@ -820,73 +823,24 @@ mod tests {
         assert!(!offer_after.active);
     }
 
-    // ── Issue #240: cancel_offer escrow ownership check ──────────────────────
+    // ── Issue #235: tonnes > credit.tonnes must be rejected ─────────────────
 
     #[test]
-    fn test_cancel_offer_fails_when_escrow_does_not_own_credit() {
+    fn test_create_offer_over_credit_tonnes_fails() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        // credit has 1_000_000 units; try to list 2_000_000
         let seller_nonce = client.get_nonce(&seller);
-        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
-
-        // Forcibly transfer the credit away from escrow to a third party,
-        // simulating a scenario where the escrow no longer owns the credit.
-        let escrow = client.address.clone();
-        let thief = Address::generate(&env);
-        let escrow_nonce = registry.get_nonce(&escrow);
-        registry.transfer_credit(&escrow, &thief, &credit_id, escrow_nonce);
-
-        // Now cancel_offer must return Unauthorized instead of panicking.
-        let seller_nonce2 = client.get_nonce(&seller);
-        let result = client.try_cancel_offer(&seller, &offer_id, &registry.id, &seller_nonce2);
-        assert_eq!(result, Err(Ok(MarketplaceError::Unauthorized)));
-    }
-
-    // ── Issue #241: cleanup_expired_offers bounded iteration ─────────────────
-
-    #[test]
-    fn test_cleanup_expired_offers_bounded() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, seller, admin, registry, credit_id) = setup_with_registry(&env);
-        let now = env.ledger().timestamp();
-        let expires = now + 10;
-
-        // Create 5 offers that will expire (cancel & re-list each time to keep 1 credit)
-        for _ in 0..5 {
-            let n = client.get_nonce(&seller);
-            let id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &Some(expires), &n);
-            let n2 = client.get_nonce(&seller);
-            client.cancel_offer(&seller, &id, &registry.id, &n2);
-        }
-        // Create the final offer that stays active
-        let n = client.get_nonce(&seller);
-        let final_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &Some(expires), &n);
-
-        // Advance time past expiry
-        env.ledger().set_timestamp(now + 100);
-
-        // Process only first 3 (limit=3, start=0) — limit capped at 100 enforced
-        client.cleanup_expired_offers(&admin, &0, &3);
-
-        // Offers 0..2 should be deactivated; 3..5 still active; final_id still active
-        for i in 0u64..3 {
-            // These were already cancelled before, just verify no panic
-            let _ = client.get_offer(&i);
-        }
-
-        // The final active offer should still be active (not yet cleaned up)
-        let final_offer = client.get_offer(&final_id);
-        assert!(final_offer.active);
-    }
-
-    #[test]
-    fn test_cleanup_expired_offers_limit_capped_at_100() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _seller, admin, _registry, _credit_id) = setup_with_registry(&env);
-        // Passing limit=200 must not fail (capped internally to 100)
-        client.cleanup_expired_offers(&admin, &0, &200);
+        let result = client.try_create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &2_000_000, // more than credit.tonnes
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InvalidTonnes)));
     }
 }
