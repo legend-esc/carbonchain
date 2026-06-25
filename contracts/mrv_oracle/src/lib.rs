@@ -177,6 +177,30 @@ impl MrvOracle {
         Ok(true)
     }
 
+    /// Returns the total number of registered oracles.
+    pub fn get_oracle_count(env: Env) -> u32 {
+        let set: Vec<Address> = env
+            .storage().instance()
+            .get(&DataKey::OracleSet)
+            .unwrap_or_else(|| Vec::new(&env));
+        set.len()
+    }
+
+    /// Returns a page of registered oracles. `page_size` is capped at 50.
+    pub fn list_oracles(env: Env, page: u32, page_size: u32) -> Vec<Address> {
+        let effective_size = if page_size > 50 { 50 } else { page_size };
+        let set: Vec<Address> = env
+            .storage().instance()
+            .get(&DataKey::OracleSet)
+            .unwrap_or_else(|| Vec::new(&env));
+        let start = (page * effective_size) as usize;
+        let mut result: Vec<Address> = Vec::new(&env);
+        for i in start..(start + effective_size as usize).min(set.len() as usize) {
+            result.push_back(set.get(i as u32).unwrap());
+        }
+        result
+    }
+
     /// Submit a new MRV reading for a project. Returns `true` if an anomaly was detected.
     ///
     /// An anomaly is flagged when the new reading deviates more than 20% from the previous one.
@@ -322,6 +346,21 @@ impl MrvOracle {
             .persistent()
             .get(&DataKey::History(project_id))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Returns individual MRV data points for `project_id` where `from_ts <= recorded_at <= to_ts`.
+    pub fn get_history_range(env: Env, project_id: String, from_ts: u64, to_ts: u64) -> Vec<MrvDataPoint> {
+        let history: Vec<MrvDataPoint> = env.storage()
+            .persistent()
+            .get(&DataKey::History(project_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut result: Vec<MrvDataPoint> = Vec::new(&env);
+        for point in history.iter() {
+            if point.recorded_at >= from_ts && point.recorded_at <= to_ts {
+                result.push_back(point);
+            }
+        }
+        result
     }
 
     /// Aggregate MRV readings over a time range.
@@ -705,5 +744,90 @@ mod tests {
         let (sum, avg) = client.get_mrv_aggregate(&proj, &0, &1);
         assert_eq!(sum, 0);
         assert_eq!(avg, 0);
+    }
+
+    // ── Issue #242: get_history_range ────────────────────────────────────────
+
+    #[test]
+    fn test_get_history_range_partial() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let base_ts = env.ledger().timestamp();
+
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &1_000_000, &base_ts, &registry_id, &n1);
+        let n2 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &2_000_000, &base_ts, &registry_id, &n2);
+        let n3 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &3_000_000, &base_ts, &registry_id, &n3);
+
+        // All three share the same timestamp; query the exact range
+        let range = client.get_history_range(&proj, &base_ts, &base_ts);
+        assert_eq!(range.len(), 3);
+    }
+
+    #[test]
+    fn test_get_history_range_empty_result() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let base_ts = env.ledger().timestamp();
+
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &1_000_000, &base_ts, &registry_id, &n1);
+
+        // Query a range that contains no recorded points
+        let range = client.get_history_range(&proj, &(base_ts + 1), &(base_ts + 100));
+        assert_eq!(range.len(), 0);
+    }
+
+    // ── Issue #243: get_oracle_count and list_oracles ────────────────────────
+
+    #[test]
+    fn test_get_oracle_count() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        assert_eq!(client.get_oracle_count(), 0);
+        client.register_oracle(&admin, &Address::generate(&env));
+        client.register_oracle(&admin, &Address::generate(&env));
+        assert_eq!(client.get_oracle_count(), 2);
+    }
+
+    #[test]
+    fn test_list_oracles_pagination() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        for _ in 0..5 {
+            client.register_oracle(&admin, &Address::generate(&env));
+        }
+        // page 0, size 3 → 3 results
+        assert_eq!(client.list_oracles(&0, &3).len(), 3);
+        // page 1, size 3 → 2 remaining
+        assert_eq!(client.list_oracles(&1, &3).len(), 2);
+    }
+
+    #[test]
+    fn test_list_oracles_page_size_capped_at_50() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        for _ in 0..5 {
+            client.register_oracle(&admin, &Address::generate(&env));
+        }
+        // page_size=100 is capped to 50 internally; only 5 exist so returns 5
+        assert_eq!(client.list_oracles(&0, &100).len(), 5);
     }
 }

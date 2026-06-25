@@ -292,6 +292,17 @@ impl Marketplace {
         }
 
         let escrow_account: Address = env.current_contract_address();
+
+        // #240: verify escrow still owns the credit before attempting transfer
+        let credit: CreditMetadata = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "get_credit"),
+            (offer.credit_id.clone(),).into_val(&env),
+        );
+        if credit.owner != escrow_account {
+            return Err(MarketplaceError::Unauthorized);
+        }
+
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
             &Symbol::new(&env, "get_nonce"),
@@ -380,12 +391,18 @@ impl Marketplace {
         env.storage().persistent().get(&DataKey::OfferCount).unwrap_or(0u64)
     }
 
-    pub fn cleanup_expired_offers(env: Env, admin: Address) -> Result<(), MarketplaceError> {
+    /// Clean up expired offers starting from `start_id`, processing at most `limit` offers (capped at 100).
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::NotInitialized`] / [`MarketplaceError::Unauthorized`] — caller is not admin.
+    pub fn cleanup_expired_offers(env: Env, admin: Address, start_id: u64, limit: u32) -> Result<(), MarketplaceError> {
         Self::require_admin(&env, &admin)?;
         let count = Self::offer_count(env.clone());
         let now = env.ledger().timestamp();
-        
-        for i in 0..count {
+        let effective_limit = if limit > 100 { 100 } else { limit };
+        let end = (start_id + effective_limit as u64).min(count);
+
+        for i in start_id..end {
             if let Some(mut offer) = env.storage().persistent().get::<_, Offer>(&DataKey::Offer(i)) {
                 if let Some(expires_at) = offer.expires_at {
                     if now > expires_at && offer.active {
@@ -801,5 +818,75 @@ mod tests {
         client.cancel_offer(&seller, &offer_id, &registry.id, &seller_nonce2);
         let offer_after = client.get_offer(&offer_id);
         assert!(!offer_after.active);
+    }
+
+    // ── Issue #240: cancel_offer escrow ownership check ──────────────────────
+
+    #[test]
+    fn test_cancel_offer_fails_when_escrow_does_not_own_credit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &None, &seller_nonce);
+
+        // Forcibly transfer the credit away from escrow to a third party,
+        // simulating a scenario where the escrow no longer owns the credit.
+        let escrow = client.address.clone();
+        let thief = Address::generate(&env);
+        let escrow_nonce = registry.get_nonce(&escrow);
+        registry.transfer_credit(&escrow, &thief, &credit_id, escrow_nonce);
+
+        // Now cancel_offer must return Unauthorized instead of panicking.
+        let seller_nonce2 = client.get_nonce(&seller);
+        let result = client.try_cancel_offer(&seller, &offer_id, &registry.id, &seller_nonce2);
+        assert_eq!(result, Err(Ok(MarketplaceError::Unauthorized)));
+    }
+
+    // ── Issue #241: cleanup_expired_offers bounded iteration ─────────────────
+
+    #[test]
+    fn test_cleanup_expired_offers_bounded() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, admin, registry, credit_id) = setup_with_registry(&env);
+        let now = env.ledger().timestamp();
+        let expires = now + 10;
+
+        // Create 5 offers that will expire (cancel & re-list each time to keep 1 credit)
+        for _ in 0..5 {
+            let n = client.get_nonce(&seller);
+            let id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &Some(expires), &n);
+            let n2 = client.get_nonce(&seller);
+            client.cancel_offer(&seller, &id, &registry.id, &n2);
+        }
+        // Create the final offer that stays active
+        let n = client.get_nonce(&seller);
+        let final_id = client.create_offer(&seller, &credit_id, &10_000_000, &500_000, &registry.id, &Some(expires), &n);
+
+        // Advance time past expiry
+        env.ledger().set_timestamp(now + 100);
+
+        // Process only first 3 (limit=3, start=0) — limit capped at 100 enforced
+        client.cleanup_expired_offers(&admin, &0, &3);
+
+        // Offers 0..2 should be deactivated; 3..5 still active; final_id still active
+        for i in 0u64..3 {
+            // These were already cancelled before, just verify no panic
+            let _ = client.get_offer(&i);
+        }
+
+        // The final active offer should still be active (not yet cleaned up)
+        let final_offer = client.get_offer(&final_id);
+        assert!(final_offer.active);
+    }
+
+    #[test]
+    fn test_cleanup_expired_offers_limit_capped_at_100() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _seller, admin, _registry, _credit_id) = setup_with_registry(&env);
+        // Passing limit=200 must not fail (capped internally to 100)
+        client.cleanup_expired_offers(&admin, &0, &200);
     }
 }

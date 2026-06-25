@@ -45,6 +45,8 @@ test-results/
 .nyc_output/
 lcov.info
 *.lcov
+*.insta.yaml
+insta.yaml
 
 # Build artifacts
 *.js.map
