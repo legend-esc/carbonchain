@@ -11,4 +11,6 @@ pub enum RetirementError {
     ContractPaused     = 114,
     InvalidNonce       = 115,
     NoPendingAdmin     = 116,
+    InvalidTonnes      = 117,
+    InvalidInput       = 118,
 }

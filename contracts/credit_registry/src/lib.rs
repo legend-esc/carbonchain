@@ -662,6 +662,17 @@ impl CreditRegistry {
     // ── Verifier Services ────────────────────────────────────────────────────
 
     /// Replace all capabilities for a verifier. This overwrites any existing services.
+    ///
+    /// Consumes **one admin nonce**. When sequencing multiple service-config calls, fetch
+    /// the current nonce with `get_nonce(admin)` before each call — do not reuse the same
+    /// nonce across calls, as each invocation increments it by one.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let n = contract.get_nonce(&admin);
+    /// contract.configure_verifier_services(&admin, &verifier, &services, n);
+    /// // nonce is now n+1; fetch again before the next admin call
+    /// ```
     pub fn configure_verifier_services(env: Env, admin: Address, verifier: Address, services: Vec<ServiceType>, nonce: u64) -> Result<(), CarbonChainError> {
         let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
         admin.require_auth();
@@ -679,6 +690,10 @@ impl CreditRegistry {
     }
 
     /// Add a single service to a verifier's capabilities.
+    ///
+    /// Consumes **one admin nonce**. Always call `get_nonce(admin)` immediately before
+    /// this function; passing a stale nonce (e.g. one used by a preceding
+    /// `configure_verifier_services` call) will return `InvalidNonce`.
     pub fn add_verifier_service(env: Env, admin: Address, verifier: Address, service: ServiceType, nonce: u64) -> Result<(), CarbonChainError> {
         let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
         admin.require_auth();
@@ -704,6 +719,9 @@ impl CreditRegistry {
     }
 
     /// Remove a single service from a verifier's capabilities.
+    ///
+    /// Consumes **one admin nonce**. Always call `get_nonce(admin)` immediately before
+    /// this function; passing a stale nonce will return `InvalidNonce`.
     pub fn remove_verifier_service(env: Env, admin: Address, verifier: Address, service: ServiceType, nonce: u64) -> Result<(), CarbonChainError> {
         let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
         admin.require_auth();
@@ -1795,5 +1813,27 @@ mod tests {
         let vnonce = client.get_nonce(&verifier);
         let result = client.try_configure_verifier_services(&verifier, &verifier, &services, &vnonce);
         assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_nonce_cannot_be_replayed_after_ttl_reset() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+
+        // Consume nonce 0 — registers verifier successfully
+        let nonce0 = client.get_nonce(&admin);
+        assert_eq!(nonce0, 0);
+        client.register_verifier(&admin, &verifier, &nonce0);
+
+        // Nonce is now 1; attempting to reuse nonce 0 must fail
+        let result = client.try_register_verifier(&admin, &verifier, &0);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidNonce)));
     }
 }

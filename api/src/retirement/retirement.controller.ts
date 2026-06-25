@@ -8,12 +8,16 @@ import {
   Query,
   ParseIntPipe,
   DefaultValuePipe,
+  Response,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response as ExpressResponse } from 'express';
 import { RetirementService, RetireDto } from './retirement.service';
 import { RetirementRecord } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from '../credits/credit.repository';
+import { CertificateService } from './certificate.service';
 
 export interface CertificateVerification {
   id: string;
@@ -30,7 +34,10 @@ export interface CertificateVerification {
 @ApiTags('retirement')
 @Controller('retirement')
 export class RetirementController {
-  constructor(private readonly retirementService: RetirementService) {}
+  constructor(
+    private readonly retirementService: RetirementService,
+    private readonly certificateService: CertificateService,
+  ) {}
 
   /** POST /retirement — protected: requires JWT */
   @UseGuards(JwtAuthGuard)
@@ -64,6 +71,40 @@ export class RetirementController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
     return this.retirementService.getRetirementsByAccount(address, page, limit);
+  }
+
+  /** GET /certificates/:id/download — download retirement certificate as PDF (protected: requires JWT) */
+  @UseGuards(JwtAuthGuard)
+  @Get('certificates/:id/download')
+  async downloadCertificate(
+    @Param('id') certificateId: string,
+    @Response() res: ExpressResponse,
+  ): Promise<void> {
+    // Retrieve the retirement record to ensure it exists
+    const retirement = await this.retirementService.getRetirement(certificateId);
+    if (!retirement) {
+      throw new NotFoundException(
+        `Retirement record ${certificateId} not found`,
+      );
+    }
+
+    // Generate the PDF
+    const pdfBuffer = await this.certificateService.generatePdf({
+      retirementId: certificateId,
+      creditId: retirement.credit_id,
+      buyer: retirement.buyer,
+      tonnes: retirement.tonnes_retired,
+      reason: retirement.reason,
+      timestamp: retirement.retired_at,
+    });
+
+    // Set response headers and stream the PDF
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="certificate-${certificateId}.pdf"`,
+    );
+    res.send(pdfBuffer);
   }
 
   /** GET /certificates/:id/verify — verify retirement certificate authenticity (public) */

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
@@ -103,12 +103,24 @@ export class RetirementService {
     ];
 
     const signer = this.keypairService.getAdminKeypair();
-    const response = await this.stellarService.invokeContract(
-      this.retirementContractId,
-      'retire',
-      args,
-      signer,
-    );
+    let response;
+    try {
+      response = await this.stellarService.invokeContract(
+        this.retirementContractId,
+        'retire',
+        args,
+        signer,
+      );
+    } catch (error: unknown) {
+      // Handle contract paused error (error code 123)
+      const errorMessage = (error as Error).message || '';
+      if (errorMessage.includes('123') || errorMessage.includes('paused')) {
+        throw new ServiceUnavailableException({
+          error: 'Contract is currently paused',
+        });
+      }
+      throw error;
+    }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
     const retirementId = rv

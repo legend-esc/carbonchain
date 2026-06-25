@@ -256,6 +256,113 @@ export class CreditsService {
   }
 
   /**
+   * Get the full lifecycle/provenance of a credit including all lifecycle events.
+   * Returns ordered events showing submit → approval → transfers → retirement.
+   */
+  async getCreditProvenance(creditId: string): Promise<Array<{
+    action: string;
+    actor: string;
+    timestamp: number;
+    txHash: string;
+  }>> {
+    this.logger.log(`Fetching provenance for credit ${creditId}`);
+
+    try {
+      // Fetch all events from the credit registry contract
+      const events = await this.stellarService.getContractEvents(
+        this.contractId,
+      );
+
+      const creditIdHex = creditId.toLowerCase();
+      const provenanceEvents: Array<{
+        action: string;
+        actor: string;
+        timestamp: number;
+        txHash: string;
+        ledger: number; // for sorting
+      }> = [];
+
+      for (const event of events) {
+        const eventType = this.parseEventType(event);
+        const topics = event.topic || [];
+        const data = event.value || {};
+
+        // Map events to provenance records
+        if (eventType === 'CreditSubmitted') {
+          const creditIdData = data.credit_id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Submitted',
+              actor: String(data.issuer || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditMinted') {
+          const creditIdData = data.id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Approved',
+              actor: String(data.verifier || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditTransferred') {
+          const creditIdData = data.credit_id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Transferred',
+              actor: String(data.from || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditRetired') {
+          // CreditRetired events come from retirement contract
+          const creditIdData = data.credit_id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Retired',
+              actor: String(data.buyer || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditFlagged') {
+          const creditIdData = data.id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Flagged',
+              actor: 'system',
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        }
+      }
+
+      // Sort by ledger (timestamp) to maintain chronological order
+      provenanceEvents.sort((a, b) => a.ledger - b.ledger);
+
+      // Remove the temporary ledger field before returning
+      return provenanceEvents.map(({ ledger, ...rest }) => rest);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to fetch provenance for credit ${creditId}: ${(error as Error).message}`,
+      );
+      throw new NotFoundException(
+        `Could not retrieve provenance for credit ${creditId}`,
+      );
+    }
+  }
+
+  /**
    * Invalidate all cached entries for a specific credit and the list cache.
    * Call this whenever a credit's status changes (approve, retire, flag).
    */
@@ -285,116 +392,23 @@ export class CreditsService {
     }
   }
 
-  async transferCredit(
-    creditId: string,
-    toAddress: string,
-    fromAddress: string,
-  ): Promise<CreditMetadata> {
-    this.logger.log(
-      `Transferring credit ${creditId} from ${fromAddress} to ${toAddress}`,
-    );
-
-    // Fetch current credit to verify ownership
-    const credit = await this.getCredit(creditId);
-    if (credit.issuer !== fromAddress) {
-      throw new BadRequestException(
-        'Only the credit issuer can transfer this credit',
-      );
+  private parseEventType(event: any): string {
+    const topics = event.topic || [];
+    if (topics.length > 0) {
+      const firstTopic = topics[0];
+      if (typeof firstTopic === 'string') {
+        return firstTopic;
+      }
     }
-
-    // Build and submit the contract transaction
-    const args = [
-      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
-      nativeToScVal(toAddress, { type: 'address' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    await this.stellarService.invokeContract(
-      this.contractId,
-      'transfer_credit',
-      args,
-      signer,
-    );
-
-    // Invalidate cache and fetch updated metadata
-    await this.invalidateCreditCache(creditId);
-    return this.getCredit(creditId);
+    return 'unknown';
   }
 
-  async splitCredit(
-    creditId: string,
-    splitTonnes: number,
-    fromAddress: string,
-  ): Promise<{ childCredit1: string; childCredit2: string }> {
-    this.logger.log(
-      `Splitting credit ${creditId} by ${splitTonnes} tonnes for ${fromAddress}`,
-    );
-
-    // Fetch current credit to verify ownership
-    const credit = await this.getCredit(creditId);
-    if (credit.issuer !== fromAddress) {
-      throw new BadRequestException(
-        'Only the credit issuer can split this credit',
-      );
+  private parseEventTimestamp(event: any): number {
+    // Use closed_at from the event if available, otherwise use current time
+    if (event.closedAt) {
+      return Math.floor(Number(event.closedAt) / 1000);
     }
-
-    // Validate that splitTonnes is a positive multiple of 100,000 (MIN_CREDIT_UNIT)
-    if (splitTonnes <= 0) {
-      throw new BadRequestException('splitTonnes must be positive');
-    }
-    if (splitTonnes % 100_000 !== 0) {
-      throw new BadRequestException(
-        'splitTonnes must be a multiple of 100,000 (0.1 tonne)',
-      );
-    }
-
-    // Validate that splitTonnes is not greater than the credit's tonnes
-    const creditTonnes = BigInt(credit.tonnes);
-    const splitTonnesBigInt = BigInt(splitTonnes);
-    if (splitTonnesBigInt >= creditTonnes) {
-      throw new BadRequestException(
-        'splitTonnes must be less than the total credit tonnes',
-      );
-    }
-
-    // Build and submit the contract transaction
-    const args = [
-      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
-      nativeToScVal(splitTonnesBigInt, { type: 'i128' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    const response = await this.stellarService.invokeContract(
-      this.contractId,
-      'split_credit',
-      args,
-      signer,
-    );
-
-    // Extract the two child credit IDs from the return value
-    const rv = (response as unknown as Record<string, unknown>).returnValue;
-    if (!rv) {
-      throw new BadRequestException('Failed to split credit: no return value');
-    }
-
-    const nativeResult = scValToNative(rv as Parameters<typeof scValToNative>[0]) as unknown;
-    const resultArray = nativeResult as Uint8Array[];
-
-    if (!Array.isArray(resultArray) || resultArray.length !== 2) {
-      throw new BadRequestException(
-        'Failed to split credit: invalid return value structure',
-      );
-    }
-
-    const childCredit1 = Buffer.from(resultArray[0] as Uint8Array).toString(
-      'hex',
-    );
-    const childCredit2 = Buffer.from(resultArray[1] as Uint8Array).toString(
-      'hex',
-    );
-
-    // Invalidate cache for the parent credit
-    await this.invalidateCreditCache(creditId);
-
-    return { childCredit1, childCredit2 };
+    return Math.floor(Date.now() / 1000);
   }
 
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {
