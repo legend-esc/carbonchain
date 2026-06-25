@@ -313,6 +313,17 @@ impl Marketplace {
         }
 
         let escrow_account: Address = env.current_contract_address();
+
+        // #240: verify escrow still owns the credit before attempting transfer
+        let credit: CreditMetadata = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "get_credit"),
+            (offer.credit_id.clone(),).into_val(&env),
+        );
+        if credit.owner != escrow_account {
+            return Err(MarketplaceError::Unauthorized);
+        }
+
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
             &Symbol::new(&env, "get_nonce"),
@@ -423,12 +434,18 @@ impl Marketplace {
         env.storage().persistent().get(&DataKey::OfferCount).unwrap_or(0u64)
     }
 
-    pub fn cleanup_expired_offers(env: Env, admin: Address) -> Result<(), MarketplaceError> {
+    /// Clean up expired offers starting from `start_id`, processing at most `limit` offers (capped at 100).
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::NotInitialized`] / [`MarketplaceError::Unauthorized`] — caller is not admin.
+    pub fn cleanup_expired_offers(env: Env, admin: Address, start_id: u64, limit: u32) -> Result<(), MarketplaceError> {
         Self::require_admin(&env, &admin)?;
         let count = Self::offer_count(env.clone());
         let now = env.ledger().timestamp();
-        
-        for i in 0..count {
+        let effective_limit = if limit > 100 { 100 } else { limit };
+        let end = (start_id + effective_limit as u64).min(count);
+
+        for i in start_id..end {
             if let Some(mut offer) = env.storage().persistent().get::<_, Offer>(&DataKey::Offer(i)) {
                 if let Some(expires_at) = offer.expires_at {
                     if now > expires_at && offer.active {

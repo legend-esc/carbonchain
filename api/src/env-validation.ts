@@ -10,4 +10,7 @@ export const envValidationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   FRONTEND_URL: Joi.string().uri().optional(),
   REDIS_URL: Joi.string().uri().optional(),
+  LOG_LEVEL: Joi.string()
+    .valid('fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent')
+    .default('info'),
 });
