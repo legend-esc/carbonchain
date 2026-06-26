@@ -44,6 +44,7 @@ use crate::storage::{
     get_credit_approvals, set_credit_approvals, remove_credit_approvals,
     set_session, get_session, get_session_op_count, increment_session_op_count,
     append_audit_log, get_audit_log,
+    add_credit_to_owner, get_credits_by_owner,
 };
 use crate::types::{
     CreditMetadata, CreditStatus, DataKey, ServiceType, VerifierReputation, Methodology,
@@ -394,6 +395,7 @@ impl CreditRegistry {
         set_credit(&env, &id, &metadata);
         set_credit_by_project_vintage(&env, &project_id, vintage_year, &id);
         add_credit_to_project(&env, &project_id, &id);
+        add_credit_to_owner(&env, &issuer, &id);
 
         // Issue 1: track pending credits per verifier so remove_verifier can block removal.
         // We distribute the pending credit across ALL registered verifiers so each one's
@@ -540,6 +542,7 @@ impl CreditRegistry {
         }
         credit.owner = to.clone();
         set_credit(&env, &credit_id, &credit);
+        add_credit_to_owner(&env, &to, &credit_id);
         CreditTransferred { from, to, credit_id }.publish(&env);
         Ok(())
     }
@@ -561,8 +564,14 @@ impl CreditRegistry {
         if split_tonnes <= 0 || split_tonnes >= original.tonnes {
             return Err(CarbonChainError::InvalidSplit);
         }
+        if split_tonnes % MIN_CREDIT_UNIT != 0 {
+            return Err(CarbonChainError::InvalidSplit);
+        }
 
         let remaining_tonnes = original.tonnes - split_tonnes;
+        if remaining_tonnes % MIN_CREDIT_UNIT != 0 {
+            return Err(CarbonChainError::InvalidSplit);
+        }
         
         // Generate IDs for child credits
         let nonce_val: u64 = env.storage().instance().get(&DataKey::CreditNonce).unwrap_or(0u64);
@@ -583,12 +592,14 @@ impl CreditRegistry {
         child1.owner = caller.clone();
         set_credit(&env, &child1_id, &child1);
         add_credit_to_project(&env, &original.project_id, &child1_id);
+        add_credit_to_owner(&env, &caller, &child1_id);
 
         let mut child2 = original.clone();
         child2.tonnes = remaining_tonnes;
         child2.owner = caller.clone();
         set_credit(&env, &child2_id, &child2);
         add_credit_to_project(&env, &original.project_id, &child2_id);
+        add_credit_to_owner(&env, &caller, &child2_id);
 
         // Retire original credit
         original.status = CreditStatus::Retired;
@@ -611,6 +622,21 @@ impl CreditRegistry {
     /// Returns all credit IDs registered under `project_id`.
     pub fn list_credits_by_project(env: Env, project_id: String) -> Vec<BytesN<32>> {
         get_credits_by_project(&env, &project_id)
+    }
+
+    /// Returns credit IDs currently owned by `owner`.
+    /// Filters out stale entries (transferred credits remain in the index of the previous owner).
+    pub fn list_credits_by_owner(env: Env, owner: Address) -> Vec<BytesN<32>> {
+        let all = get_credits_by_owner(&env, &owner);
+        let mut owned: Vec<BytesN<32>> = Vec::new(&env);
+        for id in all.iter() {
+            if let Some(credit) = get_credit(&env, &id) {
+                if credit.owner == owner {
+                    owned.push_back(id);
+                }
+            }
+        }
+        owned
     }
 
     /// Returns the current replay-protection nonce for `address`.
@@ -820,7 +846,7 @@ impl CreditRegistry {
             return Err(CarbonChainError::Unauthorized);
         }
         let mut credit = get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)?;
-        if credit.status == CreditStatus::Retired || credit.status == CreditStatus::Expired {
+        if credit.status != CreditStatus::Active && credit.status != CreditStatus::Disputed {
             return Err(CarbonChainError::InvalidStatusTransition);
         }
         credit.status = CreditStatus::Expired;
@@ -986,6 +1012,7 @@ impl CreditRegistry {
 
         set_credit(&env, &merged_id, &merged_credit);
         add_credit_to_project(&env, &merged_credit.project_id, &merged_id);
+        add_credit_to_owner(&env, &caller, &merged_id);
 
         for id in credit_ids.iter() {
             let mut credit = get_credit(&env, &id).ok_or(CarbonChainError::CreditNotFound)?;

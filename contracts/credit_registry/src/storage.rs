@@ -314,3 +314,20 @@ pub fn get_audit_log(env: &Env, log_id: &BytesN<32>) -> Option<AuditLogEntry> {
         .persistent()
         .get(&DataKey::AuditLog(log_id.clone()))
 }
+
+// ── Credits by owner index ─────────────────────────────────────────────────────
+
+pub fn add_credit_to_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::CreditsByOwner(owner.clone());
+    let mut list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    list.push_back(credit_id.clone());
+    env.storage().persistent().set(&key, &list);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CreditsByOwner(owner.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
