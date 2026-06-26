@@ -47,6 +47,12 @@ lcov.info
 *.lcov
 # Soroban test snapshots (auto-generated, not source)
 test_snapshots/
+# Karma / browser test output
+karma-test-results.xml
+browser_test_results/
+# Vitest / Jest cache
+.vitest-cache/
+.jest-cache/
 
 # Build artifacts
 *.js.map
