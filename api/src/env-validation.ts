@@ -7,6 +7,8 @@ export const envValidationSchema = Joi.object({
   STELLAR_NETWORK: Joi.string().valid('testnet', 'mainnet').default('testnet'),
   STELLAR_HORIZON_URL: Joi.string().uri().required(),
   STELLAR_SOROBAN_RPC: Joi.string().uri().required(),
+  IPFS_API_KEY: Joi.string().required(),
+  IPFS_SECRET_KEY: Joi.string().required(),
   PORT: Joi.number().default(3000),
   FRONTEND_URL: Joi.string().uri().optional(),
   REDIS_URL: Joi.string().uri().optional(),

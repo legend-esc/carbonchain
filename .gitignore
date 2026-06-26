@@ -72,3 +72,24 @@ pnpm-lock.yaml
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Editor backup files
+*.orig
+*.bak
+*.rej
+
+# TypeScript incremental build
+*.tsbuildinfo
+
+# Nest.js build cache
+.nest/
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Profiling
+*.heapsnapshot
+*.cpuprofile

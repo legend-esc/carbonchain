@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { EventsService, SorobanEvent } from './events.service';
 
 @Controller('events')
@@ -9,13 +9,14 @@ export class EventsController {
   getEvents(
     @Query('contractId') contractId?: string,
     @Query('eventType') eventType?: string,
-    @Query('limit') limit = 100,
+    @Query('take') take = 50,
+    @Query('skip') skip = 0,
   ): SorobanEvent[] {
-    return this.eventsService.getEvents(contractId, eventType, limit);
+    return this.eventsService.getEvents(contractId, eventType, Number(take), Number(skip));
   }
 
   @Get(':eventId')
-  getEventById(@Query('eventId') eventId: string): SorobanEvent | undefined {
+  getEventById(@Param('eventId') eventId: string): SorobanEvent | undefined {
     return this.eventsService.getEventById(eventId);
   }
 }

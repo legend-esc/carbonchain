@@ -112,6 +112,13 @@ export class StellarService implements OnModuleInit {
       const preparedTx = rpc.assembleTransaction(tx, simulation).build();
       preparedTx.sign(signerKeypair);
 
+      this.logger.debug(
+        `Submitting Soroban tx: method=${method} hash=${preparedTx.hash().toString('hex').slice(0, 16)}...`,
+      );
+      this.logger.verbose(
+        `Full XDR for method=${method}: ${preparedTx.toEnvelope().toXDR('base64')}`,
+      );
+
       try {
         const response =
           await this.sorobanRpcServer.sendTransaction(preparedTx);
@@ -171,6 +178,11 @@ export class StellarService implements OnModuleInit {
 
     const tx = txBuilder.setTimeout(30).build();
     tx.sign(signerKeypair);
+
+    this.logger.debug(
+      `Submitting Horizon tx: hash=${tx.hash().toString('hex').slice(0, 16)}...`,
+    );
+    this.logger.verbose(`Full XDR: ${tx.toEnvelope().toXDR('base64')}`);
 
     try {
       const result = await this.horizonServer.submitTransaction(tx);

@@ -141,7 +141,8 @@ export class EventsService implements OnModuleInit {
   getEvents(
     contractId?: string,
     eventType?: string,
-    limit = 100,
+    take = 50,
+    skip = 0,
   ): SorobanEvent[] {
     let filtered = Array.from(this.events.values());
 
@@ -153,7 +154,8 @@ export class EventsService implements OnModuleInit {
       filtered = filtered.filter((e) => e.type === eventType);
     }
 
-    return filtered.slice(-limit);
+    const limit = Math.min(take, 200);
+    return filtered.slice(skip, skip + limit);
   }
 
   getEventById(eventId: string): SorobanEvent | undefined {
