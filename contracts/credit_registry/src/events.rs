@@ -113,3 +113,10 @@ pub struct BatchRetired {
     pub buyer: Address,
     pub count: u32,
 }
+
+#[contractevent]
+#[derive(Clone)]
+pub struct RetirementContractUpdated {
+    pub admin: Address,
+    pub new_address: Address,
+}

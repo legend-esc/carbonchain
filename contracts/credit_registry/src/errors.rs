@@ -33,4 +33,6 @@ pub enum CarbonChainError {
     InvalidApprovalThreshold = 124,
     /// Returned when a verifier tries to approve a credit they already approved.
     AlreadyApproved = 125,
+    /// Returned when no retirement contract has been registered.
+    NoRetirementContract = 126,
 }

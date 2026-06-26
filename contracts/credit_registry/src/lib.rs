@@ -55,6 +55,7 @@ use crate::events::{
     CreditSubmitted, CreditMinted, CreditFlagged,
     CreditTransferred, CreditSplit, CreditExpired, CreditDisputed,
     DisputeResolved, CreditsMerged, ProjectRegistered, SessionNew,
+    RetirementContractUpdated,
 };
 
 
@@ -659,6 +660,29 @@ impl CreditRegistry {
         is_verifier(&env, &address)
     }
 
+    // ── Issue #347: Retirement Contract Re-validation ─────────────────────────
+
+    /// Update the registered retirement contract address. Only the admin may call this.
+    /// Requires a valid admin nonce for replay protection.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
+    /// - [`CarbonChainError::Unauthorized`] — caller is not the admin.
+    /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    pub fn update_retirement_contract(env: Env, admin: Address, new_address: Address, nonce: u64) -> Result<(), CarbonChainError> {
+        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        admin.require_auth();
+        if admin != stored_admin {
+            return Err(CarbonChainError::Unauthorized);
+        }
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        set_retirement_contract(&env, &new_address);
+        RetirementContractUpdated { admin, new_address }.publish(&env);
+        Ok(())
+    }
+
     // ── Verifier Services ────────────────────────────────────────────────────
 
     /// Replace all capabilities for a verifier. This overwrites any existing services.
@@ -1192,6 +1216,31 @@ mod tests {
 
         let events = env.events().all();
         assert_eq!(events.events().len(), 1);
+    }
+
+    #[test]
+    fn test_update_retirement_contract_only_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        let new_retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+        let nonce = client.get_nonce(&admin);
+
+        // Admin can update retirement contract
+        let result = client.try_update_retirement_contract(&admin, &new_retirement, &nonce);
+        assert!(result.is_ok());
+
+        // Non-admin cannot update
+        let other = Address::generate(&env);
+        let other_nonce = client.get_nonce(&other);
+        let bad = client.try_update_retirement_contract(&other, &new_retirement, &other_nonce);
+        assert!(bad.is_err());
     }
 
     #[test]
