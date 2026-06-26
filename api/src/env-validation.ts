@@ -13,4 +13,5 @@ export const envValidationSchema = Joi.object({
   LOG_LEVEL: Joi.string()
     .valid('fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent')
     .default('info'),
+  WEBHOOK_ALLOWED_IPS: Joi.string().optional(),
 });
