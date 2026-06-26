@@ -124,4 +124,37 @@ describe('DashboardComponent', () => {
     component.selectCredit('credit-001');
     expect(storeSpy.select).toHaveBeenCalledWith('credit-001');
   });
+
+  // #339 — skeleton loader visibility tests
+  describe('skeleton loader visibility', () => {
+    it('shows loading indicator while store.isLoading() is true', async () => {
+      storeSpy.isLoading = signal(true);
+
+      const localFixture = TestBed.createComponent(DashboardComponent);
+      localFixture.detectChanges();
+      await localFixture.whenStable();
+      localFixture.detectChanges();
+
+      const el = localFixture.nativeElement.querySelector('.status-msg') as HTMLElement | null;
+      expect(el).not.toBeNull();
+      expect(el!.textContent).toContain('dashboard.loading');
+    });
+
+    it('hides loading indicator after data loads (store.isLoading() is false)', async () => {
+      storeSpy.isLoading = signal(false);
+
+      const localFixture = TestBed.createComponent(DashboardComponent);
+      localFixture.detectChanges();
+      await localFixture.whenStable();
+      localFixture.detectChanges();
+
+      const loadingEls = (
+        localFixture.nativeElement.querySelectorAll('.status-msg') as NodeList
+      );
+      const hasLoadingMsg = Array.from(loadingEls).some(
+        (el) => (el as HTMLElement).textContent?.includes('dashboard.loading'),
+      );
+      expect(hasLoadingMsg).toBeFalse();
+    });
+  });
 });
