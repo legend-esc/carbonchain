@@ -18,6 +18,12 @@ export const routes: Routes = [
   { path: 'marketplace', component: MarketplaceComponent, canActivate: [authGuard] },
   { path: 'retire', component: RetireComponent, canActivate: [authGuard] },
   { path: 'credits/:id', component: CreditDetailComponent, canActivate: [authGuard] },
+  {
+    path: 'projects',
+    loadComponent: () =>
+      import('./projects/projects-list.component').then((m) => m.ProjectsListComponent),
+    canActivate: [authGuard],
+  },
   { path: 'projects/:id', component: ProjectDetailComponent, canActivate: [authGuard] },
   { path: 'admin', component: AdminVerifiersComponent, canActivate: [authGuard, adminGuard] },
 ];
