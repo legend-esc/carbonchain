@@ -119,4 +119,6 @@ pub enum DataKey {
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
     VerifierServices(Address),
+    /// Credit IDs indexed by owner address.
+    CreditsByOwner(Address),
 }

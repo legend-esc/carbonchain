@@ -4,6 +4,10 @@ pub mod errors;
 
 use crate::types::{DataKey, RetirementRecord, CreditMetadata, CreditStatus, MIN_TTL, TTL_THRESHOLD};
 use crate::errors::RetirementError;
+
+/// Maximum number of credits allowed in a single `batch_retire` call.
+/// Exceeding this limit causes the Soroban instruction budget to be exhausted.
+const MAX_BATCH_SIZE: u32 = 20;
 use soroban_sdk::{
     contract, contractimpl, contractevent,
     Address, BytesN, Env, String, Symbol, Vec,
@@ -216,6 +220,10 @@ impl Retirement {
         }
 
         if credit_ids.len() != tonnes.len() {
+            return Err(RetirementError::InvalidInput);
+        }
+
+        if credit_ids.len() > MAX_BATCH_SIZE {
             return Err(RetirementError::InvalidInput);
         }
 
@@ -778,6 +786,41 @@ mod tests {
 
         let ids = client.get_retirements_by_account(&buyer);
         assert_eq!(ids.len(), 3);
+    }
+
+    // ── Issue #355: batch_retire MAX_BATCH_SIZE guard ────────────────────────
+
+    #[test]
+    fn test_batch_retire_oversized_batch_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, _, _, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        // Build 21 credit IDs (all zeros — we only need the size check to trigger,
+        // which happens before any cross-contract call).
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut tonnes_vec: Vec<i128> = Vec::new(&env);
+        for _ in 0..21u32 {
+            credit_ids.push_back(BytesN::from_array(&env, &[0u8; 32]));
+            tonnes_vec.push_back(1_000_000);
+        }
+
+        let nonce = client.get_nonce(&buyer);
+        let err = client
+            .try_batch_retire(
+                &buyer,
+                &credit_ids,
+                &tonnes_vec,
+                &String::from_str(&env, "oversized"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidInput);
     }
 
     // ── Issue #234: double initialize guard ──────────────────────────────────

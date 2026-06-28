@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { of, throwError } from 'rxjs';
+import { of, throwError, Subject } from 'rxjs';
 import { MarketplaceListComponent } from './marketplace-list.component';
 import { ApiService } from '../core/services/api.service';
 import { Offer } from '@shared';
@@ -85,5 +85,49 @@ describe('MarketplaceListComponent', () => {
 
   it('formats XLM correctly', () => {
     expect(component.formatXlm('10000000')).toBe('1 XLM');
+  });
+
+  // #340 — pagination boundary tests
+  describe('pagination boundary conditions', () => {
+    it('empty state: shows "No active listings" and no table when 0 listings', async () => {
+      apiSpy.getListings.mockReturnValue(of([]));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('No active listings');
+      expect(fixture.nativeElement.querySelector('table')).toBeNull();
+    });
+
+    it('last page: renders exactly the returned rows when fewer items than a full page', async () => {
+      const partialPage = [mockOffer, { ...mockOffer, id: '2' }, { ...mockOffer, id: '3' }];
+      apiSpy.getListings.mockReturnValue(of(partialPage));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const rows = fixture.nativeElement.querySelectorAll('tbody tr') as NodeList;
+      expect(rows.length).toBe(3);
+    });
+
+    it('refresh button is disabled while loading', () => {
+      // Keep isLoading true by never resolving the observable
+      apiSpy.getListings.mockReturnValue(new Subject());
+      fixture.detectChanges();
+
+      const btn = fixture.nativeElement.querySelector('.btn-primary') as HTMLButtonElement;
+      expect(btn.disabled).toBeTrue();
+    });
+
+    it('refresh button is enabled after load completes', async () => {
+      apiSpy.getListings.mockReturnValue(of([mockOffer]));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      const btn = fixture.nativeElement.querySelector('.btn-primary') as HTMLButtonElement;
+      expect(btn.disabled).toBeFalse();
+    });
   });
 });

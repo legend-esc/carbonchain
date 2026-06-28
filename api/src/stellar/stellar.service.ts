@@ -22,6 +22,13 @@ export class StellarService implements OnModuleInit {
   private sorobanRpcServer: rpc.Server;
   private networkPassphrase: string;
 
+  /** In-process cache for account info. Key: Stellar address. */
+  private readonly accountInfoCache = new Map<
+    string,
+    { value: Horizon.ServerApi.AccountRecord; expiresAt: number }
+  >();
+  private static readonly ACCOUNT_INFO_TTL_MS = 30_000;
+
   constructor(
     private configService: ConfigService,
     private seqNoManager: SequenceNumberManager,
@@ -105,12 +112,21 @@ export class StellarService implements OnModuleInit {
       const preparedTx = rpc.assembleTransaction(tx, simulation).build();
       preparedTx.sign(signerKeypair);
 
+      this.logger.debug(
+        `Submitting Soroban tx: method=${method} hash=${preparedTx.hash().toString('hex').slice(0, 16)}...`,
+      );
+      this.logger.verbose(
+        `Full XDR for method=${method}: ${preparedTx.toEnvelope().toXDR('base64')}`,
+      );
+
       try {
         const response =
           await this.sorobanRpcServer.sendTransaction(preparedTx);
 
         if ((response.status as string) === 'PENDING') {
-          return this.pollTransactionStatus(response.hash);
+          const result = await this.pollTransactionStatus(response.hash);
+          this.invalidateAccountInfoCache(pk);
+          return result;
         }
         throw new Error(`Transaction failed with status: ${response.status}`);
       } catch (error: unknown) {
@@ -163,8 +179,15 @@ export class StellarService implements OnModuleInit {
     const tx = txBuilder.setTimeout(30).build();
     tx.sign(signerKeypair);
 
+    this.logger.debug(
+      `Submitting Horizon tx: hash=${tx.hash().toString('hex').slice(0, 16)}...`,
+    );
+    this.logger.verbose(`Full XDR: ${tx.toEnvelope().toXDR('base64')}`);
+
     try {
-      return await this.horizonServer.submitTransaction(tx);
+      const result = await this.horizonServer.submitTransaction(tx);
+      this.invalidateAccountInfoCache(pk);
+      return result;
     } catch (error: unknown) {
       const err = error as any;
       const isBadSeq =
@@ -320,6 +343,33 @@ export class StellarService implements OnModuleInit {
       return simulation.result.retval;
     }
     return undefined;
+  }
+
+  /**
+   * Returns Horizon account info for `publicKey`.
+   * Results are cached for 30 seconds to avoid redundant Horizon calls on
+   * every request. The cache entry for an address is invalidated after every
+   * successful transaction submission for that address.
+   */
+  async getAccountInfo(
+    publicKey: string,
+  ): Promise<Horizon.ServerApi.AccountRecord> {
+    const now = Date.now();
+    const cached = this.accountInfoCache.get(publicKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+    const account = await this.horizonServer.loadAccount(publicKey);
+    this.accountInfoCache.set(publicKey, {
+      value: account as unknown as Horizon.ServerApi.AccountRecord,
+      expiresAt: now + StellarService.ACCOUNT_INFO_TTL_MS,
+    });
+    return account as unknown as Horizon.ServerApi.AccountRecord;
+  }
+
+  /** Invalidate the account info cache entry for `publicKey`. */
+  private invalidateAccountInfoCache(publicKey: string): void {
+    this.accountInfoCache.delete(publicKey);
   }
 
   getHorizonServer(): Horizon.Server {

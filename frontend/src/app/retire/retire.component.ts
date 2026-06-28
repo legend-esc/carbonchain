@@ -1,6 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { FormsModule, AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
@@ -8,6 +8,17 @@ import { ApiService } from '../core/services/api.service';
 import { CreditStore } from '../core/store/credit.store';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+
+/** Validates that a tonnes value is a positive multiple of 100,000. */
+export function multipleOf100kValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const v = Number(control.value);
+    if (!v || v <= 0 || v % 100_000 !== 0) {
+      return { multipleOf100k: true };
+    }
+    return null;
+  };
+}
 
 type Step = 'form' | 'confirm' | 'success' | 'error';
 
@@ -38,9 +49,13 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
                 [(ngModel)]="tonnes"
                 required
                 type="number"
-                min="1"
+                min="100000"
+                step="100000"
                 placeholder="1000000"
               />
+              @if (tonnesError) {
+                <span class="field-error">Must be a positive multiple of 100,000</span>
+              }
             </label>
             <label>
               {{ 'retire.reason' | translate }}
@@ -51,7 +66,7 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
                 placeholder="2024 Scope 3 offset"
               />
             </label>
-            <button class="btn btn-primary" type="submit" [disabled]="f.invalid">
+            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError">
               {{ 'retire.review' | translate }}
             </button>
           </form>
@@ -227,7 +242,14 @@ export class RetireComponent {
   readonly retirementId = signal<string | null>(null);
   readonly errorMsg = signal<string | null>(null);
 
+  /** True when the current tonnes value is not a positive multiple of 100,000. */
+  get tonnesError(): boolean {
+    const v = this.tonnes;
+    return !v || v <= 0 || v % 100_000 !== 0;
+  }
+
   goConfirm(): void {
+    if (this.tonnesError) return;
     this.step.set('confirm');
   }
 

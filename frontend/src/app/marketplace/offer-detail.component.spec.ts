@@ -26,6 +26,7 @@ describe('OfferDetailComponent', () => {
     fixture = TestBed.createComponent(OfferDetailComponent);
     ref = fixture.componentRef;
     ref.setInput('offer', mockOffer);
+    ref.setInput('errorCode', null);
     component = fixture.componentInstance;
     fixture.detectChanges();
   });
@@ -50,6 +51,15 @@ describe('OfferDetailComponent', () => {
     closeBtn.click();
 
     expect(emitted).toBe(true);
+  });
+
+  it('shows expired offer message when errorCode=123', () => {
+    ref.setInput('errorCode', 123);
+    fixture.detectChanges();
+
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('This offer has expired');
+    expect(text).toContain('Back to marketplace');
   });
 
   it('emits buy with offer when buy button clicked', () => {

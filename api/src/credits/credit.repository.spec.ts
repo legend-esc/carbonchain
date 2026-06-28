@@ -1,6 +1,7 @@
 import { InMemoryCreditRepository } from './credit.repository';
 import { CreditEntity } from './credit.entity';
 import { CreditStatus } from '../shared';
+import { CacheService } from '../common/cache.service';
 
 function makeCredit(
   id: string,
@@ -21,11 +22,17 @@ function makeCredit(
   return e;
 }
 
+/** Minimal no-op CacheService for unit tests (no Redis). */
+function makeNullCache(): CacheService {
+  const c = { get: jest.fn().mockResolvedValue(null), set: jest.fn().mockResolvedValue(undefined), del: jest.fn().mockResolvedValue(undefined), delPattern: jest.fn().mockResolvedValue(undefined) };
+  return c as unknown as CacheService;
+}
+
 describe('InMemoryCreditRepository', () => {
   let repo: InMemoryCreditRepository;
 
   beforeEach(() => {
-    repo = new InMemoryCreditRepository();
+    repo = new InMemoryCreditRepository(makeNullCache());
   });
 
   it('saves and retrieves a credit by id', async () => {
@@ -137,5 +144,66 @@ describe('InMemoryCreditRepository', () => {
     expect(page2.data).toHaveLength(2);
     expect(page2.total).toBe(5);
     expect(page2.page).toBe(2);
+  });
+});
+
+describe('InMemoryCreditRepository.findByFilter', () => {
+  let repo: InMemoryCreditRepository;
+  let cache: CacheService;
+
+  beforeEach(async () => {
+    cache = makeNullCache();
+    repo = new InMemoryCreditRepository(cache);
+    await repo.save(makeCredit('a', 'P1', CreditStatus.Active));
+    await repo.save(makeCredit('b', 'P1', CreditStatus.Retired));
+    const c = makeCredit('c', 'P2', CreditStatus.Active);
+    c.methodology = 'REDD+';
+    c.geography = 'BR';
+    c.vintageYear = 2022;
+    await repo.save(c);
+  });
+
+  it('returns all credits with empty filter', async () => {
+    const result = await repo.findByFilter({}, 1, 10);
+    expect(result.total).toBe(3);
+  });
+
+  it('filters by status', async () => {
+    const result = await repo.findByFilter({ status: CreditStatus.Retired }, 1, 10);
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('b');
+  });
+
+  it('filters by methodology (case-insensitive)', async () => {
+    const result = await repo.findByFilter({ methodology: 'redd+' }, 1, 10);
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('c');
+  });
+
+  it('filters by geography (case-insensitive)', async () => {
+    const result = await repo.findByFilter({ geography: 'br' }, 1, 10);
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('c');
+  });
+
+  it('filters by vintageYear', async () => {
+    const result = await repo.findByFilter({ vintageYear: 2022 }, 1, 10);
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('c');
+  });
+
+  it('returns cached result on second call', async () => {
+    (cache.get as jest.Mock).mockResolvedValueOnce(null);
+    await repo.findByFilter({}, 1, 10);
+    const cachedData = { data: [], total: 0, page: 1, limit: 10 };
+    (cache.get as jest.Mock).mockResolvedValueOnce(cachedData);
+    const result = await repo.findByFilter({}, 1, 10);
+    expect(result).toEqual(cachedData);
+    expect(cache.set).toHaveBeenCalled();
+  });
+
+  it('invalidates cache on save', async () => {
+    await repo.save(makeCredit('new'));
+    expect(cache.delPattern).toHaveBeenCalledWith('credits:repo:filter:*');
   });
 });
