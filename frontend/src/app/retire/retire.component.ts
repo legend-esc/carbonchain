@@ -1,6 +1,14 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule, AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
+import {
+  AbstractControl,
+  ValidationErrors,
+  ValidatorFn,
+  FormsModule,
+  ReactiveFormsModule,
+  FormControl,
+} from '@angular/forms';
+
 import { firstValueFrom } from 'rxjs';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
@@ -13,7 +21,7 @@ import { TranslatePipe } from '../core/pipes/translate.pipe';
 export function multipleOf100kValidator(): ValidatorFn {
   return (control: AbstractControl): ValidationErrors | null => {
     const v = Number(control.value);
-    if (!v || v <= 0 || v % 100_000 !== 0) {
+    if (!Number.isFinite(v) || v <= 0 || v % 100_000 !== 0) {
       return { multipleOf100k: true };
     }
     return null;
@@ -25,7 +33,8 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
 @Component({
   selector: 'app-retire',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConnectWalletComponent, TranslatePipe],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, ConnectWalletComponent, TranslatePipe],
+
   template: `
     <div class="retire-wizard">
       <h1>{{ 'retire.title' | translate }}</h1>
@@ -46,15 +55,15 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
               {{ 'retire.tonnes' | translate }}
               <input
                 name="tonnes"
-                [(ngModel)]="tonnes"
+                [formControl]="tonnesControl"
                 required
                 type="number"
                 min="100000"
                 step="100000"
                 placeholder="1000000"
               />
-              @if (tonnesError) {
-                <span class="field-error">Must be a positive multiple of 100,000</span>
+              @if (tonnesControl.invalid && (tonnesControl.dirty || tonnesControl.touched)) {
+                <span class="field-error">Must be a multiple of 0.1 tonne</span>
               }
             </label>
             <label>
@@ -66,7 +75,11 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
                 placeholder="2024 Scope 3 offset"
               />
             </label>
-            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError">
+            <button
+              class="btn btn-primary"
+              type="submit"
+              [disabled]="f.invalid || tonnesControl.invalid"
+            >
               {{ 'retire.review' | translate }}
             </button>
           </form>
@@ -242,18 +255,19 @@ export class RetireComponent {
   readonly retirementId = signal<string | null>(null);
   readonly errorMsg = signal<string | null>(null);
 
-  /** True when the current tonnes value is not a positive multiple of 100,000. */
-  get tonnesError(): boolean {
-    const v = this.tonnes;
-    return !v || v <= 0 || v % 100_000 !== 0;
-  }
+  readonly tonnesControl = new FormControl<number>(this.tonnes, {
+    nonNullable: true,
+    validators: [multipleOf100kValidator()],
+  });
 
   goConfirm(): void {
-    if (this.tonnesError) return;
+    if (this.tonnesControl.invalid) return;
     this.step.set('confirm');
   }
 
   async submit(): Promise<void> {
+    this.tonnes = this.tonnesControl.value;
+
     this.submitting.set(true);
     try {
       const token = this.auth.token()!;
@@ -283,6 +297,8 @@ export class RetireComponent {
   reset(): void {
     this.creditId = '';
     this.tonnes = 1_000_000;
+    this.tonnesControl.setValue(this.tonnes);
+
     this.reason = '';
     this.retirementId.set(null);
     this.errorMsg.set(null);
