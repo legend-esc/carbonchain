@@ -1,6 +1,6 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { CreditEntity } from './credit.entity';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 import { CacheService } from '../common/cache.service';
 
 export interface PageResult<T> {

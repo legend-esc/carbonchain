@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { ProjectProfile } from '../shared';
+import { ProjectProfile } from '../../../shared';
 
 @Injectable()
 export class ProjectsService {

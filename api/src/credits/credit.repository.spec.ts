@@ -1,6 +1,6 @@
 import { InMemoryCreditRepository } from './credit.repository';
 import { CreditEntity } from './credit.entity';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 import { CacheService } from '../common/cache.service';
 
 function makeCredit(

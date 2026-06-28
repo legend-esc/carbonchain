@@ -1,4 +1,4 @@
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 
 /**
  * Off-chain index of an on-chain carbon credit.

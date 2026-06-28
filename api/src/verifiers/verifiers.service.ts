@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
-import { CreditMetadata, CreditStatus } from '../shared';
+import { CreditMetadata, CreditStatus } from '../../../shared';
 
 export interface VerifierInfo {
   address: string;

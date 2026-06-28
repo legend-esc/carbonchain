@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { RetirementRecord } from '../shared';
+import { RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';

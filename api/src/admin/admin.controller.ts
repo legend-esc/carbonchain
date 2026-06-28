@@ -4,7 +4,7 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard';
 import { AdminService, AdminStats } from './admin.service';
 import type { VerifierCapabilities } from './admin.service';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 
 @ApiTags('admin')
 @UseGuards(AuthGuard('jwt'), AdminGuard)

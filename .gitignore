@@ -84,6 +84,9 @@ yarn-error.log*
 # Nest.js build cache
 .nest/
 
+# Docker Compose local overrides
+docker-compose.override.yml
+
 # Runtime data
 pids/
 *.pid

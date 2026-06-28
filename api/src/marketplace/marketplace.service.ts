@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { Offer } from '../shared';
+import { Offer } from '../../../shared';
 import { CreateOfferDto } from './dto/create-offer.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
 

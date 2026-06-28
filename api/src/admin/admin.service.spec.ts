@@ -3,7 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 
 const mockCredit = {
   id: 'abc123',

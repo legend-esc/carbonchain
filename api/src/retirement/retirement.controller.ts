@@ -14,7 +14,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Response as ExpressResponse } from 'express';
 import { RetirementService, RetireDto, BatchRetireDto } from './retirement.service';
-import { RetirementRecord } from '../shared';
+import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';

@@ -2,7 +2,7 @@ import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
-import { CreditMetadata } from '../shared';
+import { CreditMetadata } from '../../../shared';
 
 @ApiTags('verifiers')
 @Controller('verifiers')

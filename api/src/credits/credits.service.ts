@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
-import { CreditMetadata, CreditStatus } from '../shared';
+import { CreditMetadata, CreditStatus } from '../../../shared';
 import { CreditEntity } from './credit.entity';
 import type { ICreditRepository, PageResult } from './credit.repository';
 import { CREDIT_REPOSITORY } from './credit.repository';
