@@ -1130,10 +1130,26 @@ impl CreditRegistry {
 
     /// Fetch an audit log entry by its ID.
     ///
+    /// Only the contract admin or the session initiator for the associated session may read it.
+    ///
     /// # Errors
+    /// - [`CarbonChainError::Unauthorized`] — caller is not the admin or session initiator.
     /// - [`CarbonChainError::CreditNotFound`] — no audit log entry exists for `log_id`.
-    pub fn get_audit_log(env: Env, log_id: BytesN<32>) -> Result<AuditLogEntry, CarbonChainError> {
-        get_audit_log(&env, &log_id).ok_or(CarbonChainError::CreditNotFound)
+    pub fn get_audit_log(env: Env, caller: Address, log_id: BytesN<32>) -> Result<AuditLogEntry, CarbonChainError> {
+        caller.require_auth();
+
+        let entry = get_audit_log(&env, &log_id).ok_or(CarbonChainError::CreditNotFound)?;
+        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        if caller == stored_admin {
+            return Ok(entry);
+        }
+
+        let session = get_session(&env, &entry.session_id).ok_or(CarbonChainError::CreditNotFound)?;
+        if session.initiator == caller {
+            return Ok(entry);
+        }
+
+        Err(CarbonChainError::Unauthorized)
     }
 }
 
@@ -1833,6 +1849,66 @@ mod tests {
         let nonce = client.get_nonce(&issuer);
         let result = client.try_split_credit(&issuer, &id, &1_000_000, &nonce);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_audit_log_allows_admin_and_session_initiator() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+
+        let initiator = Address::generate(&env);
+        let session_id = client.create_session(&initiator);
+        let entry = AuditLogEntry {
+            session_id: session_id.clone(),
+            credit_id: BytesN::from_array(&env, &[1u8; 32]),
+            actor: initiator.clone(),
+            action: String::from_str(&env, "submit_credit"),
+            timestamp: env.ledger().timestamp(),
+        };
+        let log_id = env.as_contract(&contract_id, || append_audit_log(&env, &entry));
+
+        let admin_result = client.try_get_audit_log(&admin, &log_id);
+        assert!(admin_result.is_ok());
+        let admin_entry = admin_result.unwrap().unwrap();
+        assert_eq!(admin_entry.session_id, session_id);
+
+        let initiator_result = client.try_get_audit_log(&initiator, &log_id);
+        assert!(initiator_result.is_ok());
+        let initiator_entry = initiator_result.unwrap().unwrap();
+        assert_eq!(initiator_entry.credit_id, entry.credit_id);
+    }
+
+    #[test]
+    fn test_get_audit_log_rejects_unauthorized_caller() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+
+        let initiator = Address::generate(&env);
+        let session_id = client.create_session(&initiator);
+        let entry = AuditLogEntry {
+            session_id: session_id.clone(),
+            credit_id: BytesN::from_array(&env, &[2u8; 32]),
+            actor: initiator.clone(),
+            action: String::from_str(&env, "submit_credit"),
+            timestamp: env.ledger().timestamp(),
+        };
+        let log_id = env.as_contract(&contract_id, || append_audit_log(&env, &entry));
+
+        let unauthorized = Address::generate(&env);
+        let result = client.try_get_audit_log(&unauthorized, &log_id);
+        assert!(matches!(result, Err(Ok(CarbonChainError::Unauthorized))));
     }
 
     #[test]
