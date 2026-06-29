@@ -17,6 +17,9 @@ export class CreditEntity {
   issuer: string;
 
   // @Column()
+  owner: string;
+
+  // @Column()
   vintageYear: number;
 
   // @Column()

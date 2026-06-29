@@ -13,6 +13,8 @@ import {
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
 import { IssueCreditDto } from './dto/issue-credit.dto';
+import { TransferCreditDto } from './dto/transfer-credit.dto';
+import { SplitCreditDto } from './dto/split-credit.dto';
 import { CreditMetadata } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from './credit.repository';
@@ -107,24 +109,30 @@ export class CreditsController {
   }
 
   @ApiOperation({ summary: 'Transfer a credit to another address' })
+  @ApiResponse({ status: 200, description: 'Credit transferred successfully' })
+  @ApiResponse({ status: 400, description: 'Caller does not own this credit' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post(':id/transfer')
   async transferCredit(
     @Param('id') creditId: string,
-    @Body() dto: { to: string },
+    @Body() dto: TransferCreditDto,
     @Request() req: any,
   ): Promise<CreditMetadata> {
-    return this.creditsService.transferCredit(creditId, dto.to, req.user.account);
+    return this.creditsService.transferCredit(creditId, dto.to, req.user.account, dto.nonce);
   }
 
   @ApiOperation({ summary: 'Split a credit into two child credits' })
+  @ApiResponse({ status: 201, description: 'Credit split successfully' })
+  @ApiResponse({ status: 400, description: 'Caller does not own this credit' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post(':id/split')
   async splitCredit(
     @Param('id') creditId: string,
-    @Body() dto: { splitTonnes: number },
+    @Body() dto: SplitCreditDto,
     @Request() req: any,
   ): Promise<{ childCredit1: string; childCredit2: string }> {
-    return this.creditsService.splitCredit(creditId, dto.splitTonnes, req.user.account);
+    return this.creditsService.splitCredit(creditId, dto.splitTonnes, req.user.account, dto.nonce);
   }
 }

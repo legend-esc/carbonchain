@@ -87,6 +87,7 @@ export class CreditsService {
     entity.geography = dto.geography;
     entity.tonnes = dto.tonnes;
     entity.ipfsHash = dto.ipfsHash;
+    entity.owner = dto.issuerPublicKey;
     entity.status = CreditStatus.Pending;
     entity.issuedAt = Math.floor(Date.now() / 1000);
     await this.creditRepo.save(entity);
@@ -402,11 +403,134 @@ export class CreditsService {
     return Math.floor(Date.now() / 1000);
   }
 
+  async transferCredit(
+    creditId: string,
+    to: string,
+    caller: string,
+    nonce: number,
+  ): Promise<CreditMetadata> {
+    this.logger.log(`Transferring credit ${creditId} to ${to} by ${caller}`);
+
+    const credit = await this.getCredit(creditId);
+    if (credit.owner !== caller) {
+      throw new BadRequestException('Caller does not own this credit');
+    }
+
+    const args = [
+      nativeToScVal(caller, { type: 'address' }),
+      nativeToScVal(to, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'transfer_credit',
+      args,
+      signer,
+    );
+
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.owner = to;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return this.getCredit(creditId);
+  }
+
+  async splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    caller: string,
+    nonce: number,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    this.logger.log(`Splitting credit ${creditId} with ${splitTonnes} tonnes by ${caller}`);
+
+    const credit = await this.getCredit(creditId);
+    if (credit.owner !== caller) {
+      throw new BadRequestException('Caller does not own this credit');
+    }
+
+    const args = [
+      nativeToScVal(caller, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(BigInt(splitTonnes), { type: 'i128' }),
+      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    const response = await this.stellarService.invokeContract(
+      this.contractId,
+      'split_credit',
+      args,
+      signer,
+    );
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const native = rv
+      ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as {
+          child1: Uint8Array;
+          child2: Uint8Array;
+        })
+      : null;
+    const childCredit1 = native
+      ? Buffer.from(native.child1).toString('hex')
+      : '';
+    const childCredit2 = native
+      ? Buffer.from(native.child2).toString('hex')
+      : '';
+
+    const originalEntity = await this.creditRepo.findById(creditId);
+    if (originalEntity) {
+      originalEntity.status = CreditStatus.Retired;
+      await this.creditRepo.save(originalEntity);
+    }
+
+    const child1 = new CreditEntity();
+    child1.id = childCredit1;
+    child1.projectId = credit.project_id;
+    child1.issuer = credit.issuer;
+    child1.owner = caller;
+    child1.vintageYear = credit.vintage_year;
+    child1.methodology = credit.methodology;
+    child1.geography = credit.geography;
+    child1.tonnes = splitTonnes;
+    child1.ipfsHash = credit.ipfs_hash;
+    child1.status = CreditStatus.Active;
+    child1.issuedAt = Math.floor(Date.now() / 1000);
+    await this.creditRepo.save(child1);
+
+    const remainingTonnes = String(
+      BigInt(credit.tonnes) - BigInt(splitTonnes),
+    );
+    const child2 = new CreditEntity();
+    child2.id = childCredit2;
+    child2.projectId = credit.project_id;
+    child2.issuer = credit.issuer;
+    child2.owner = caller;
+    child2.vintageYear = credit.vintage_year;
+    child2.methodology = credit.methodology;
+    child2.geography = credit.geography;
+    child2.tonnes = remainingTonnes;
+    child2.ipfsHash = credit.ipfs_hash;
+    child2.status = CreditStatus.Active;
+    child2.issuedAt = Math.floor(Date.now() / 1000);
+    await this.creditRepo.save(child2);
+
+    await this.invalidateCreditCache(creditId);
+    await this.invalidateCreditCache(childCredit1);
+    await this.invalidateCreditCache(childCredit2);
+
+    return { childCredit1, childCredit2 };
+  }
+
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {
     return {
       id,
       project_id: String(native.project_id),
       issuer: String(native.issuer),
+      owner: String(native.owner ?? native.issuer),
       vintage_year: Number(native.vintage_year),
       methodology: String(native.methodology),
       geography: String(native.geography),
@@ -422,6 +546,7 @@ export class CreditsService {
       id: entity.id,
       project_id: entity.projectId,
       issuer: entity.issuer,
+      owner: entity.owner,
       vintage_year: entity.vintageYear,
       methodology: entity.methodology,
       geography: entity.geography,

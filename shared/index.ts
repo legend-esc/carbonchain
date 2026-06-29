@@ -12,6 +12,7 @@ export interface CreditMetadata {
   id: string;
   project_id: string;
   issuer: string;
+  owner: string;
   vintage_year: number;
   methodology: string;
   geography: string;
@@ -19,6 +20,12 @@ export interface CreditMetadata {
   ipfs_hash: string;
   status: CreditStatus;
   issued_at: number;
+}
+
+export interface VerifierReputation {
+  address: string;
+  approvalCount: number;
+  disputeCount: number;
 }
 
 export interface ProjectProfile {
