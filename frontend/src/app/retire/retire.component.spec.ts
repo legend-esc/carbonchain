@@ -86,7 +86,9 @@ describe('RetireComponent', () => {
     const comp = fixture.componentInstance;
     comp.creditId = '037176a1';
     comp.tonnes = 1_000_000;
+    comp.tonnesControl.setValue(comp.tonnes);
     comp.reason = '2024 Scope 3';
+
     comp.goConfirm();
     await comp.submit();
     expect(comp.step()).toBe('success');
@@ -116,16 +118,16 @@ describe('RetireComponent', () => {
     expect(result).toContain('t');
   });
 
-  it('tonnesError is true for non-multiple (150001)', () => {
+  it('tonnesControl invalid for non-multiple (150001)', () => {
     const fixture = TestBed.createComponent(RetireComponent);
-    fixture.componentInstance.tonnes = 150_001;
-    expect(fixture.componentInstance.tonnesError).toBe(true);
+    fixture.componentInstance.tonnesControl.setValue(150_001);
+    expect(fixture.componentInstance.tonnesControl.invalid).toBe(true);
   });
 
-  it('tonnesError is false for valid multiple (100000)', () => {
+  it('tonnesControl valid for valid multiple (100000)', () => {
     const fixture = TestBed.createComponent(RetireComponent);
-    fixture.componentInstance.tonnes = 100_000;
-    expect(fixture.componentInstance.tonnesError).toBe(false);
+    fixture.componentInstance.tonnesControl.setValue(100_000);
+    expect(fixture.componentInstance.tonnesControl.invalid).toBe(false);
   });
 });
 

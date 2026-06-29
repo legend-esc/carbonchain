@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror, contractevent,
-    Env, Address, String, Vec, IntoVal,
+    Env, Address, BytesN, String, Vec, IntoVal, Symbol, Val,
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -35,6 +35,8 @@ pub enum DataKey {
     Nonce(Address),
     /// Pending admin for two-step transfer.
     PendingAdmin,
+    /// Anomaly threshold as a basis-point fraction of the previous reading (default 2000 = 20%).
+    AnomalyThreshold,
 }
 
 #[contracterror]
@@ -102,6 +104,14 @@ pub struct AnomalyDetected {
     pub prev_tonnes: i128,
 }
 
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditFlagged {
+    pub oracle: Address,
+    pub project_id: String,
+    pub credit_id: BytesN<32>,
+}
+
 // Maximum MRV history entries retained per project (ring-buffer eviction).
 const MAX_HISTORY: u32 = 100;
 
@@ -122,7 +132,12 @@ impl MrvOracle {
     /// # Errors
     /// - [`OracleError::AlreadyInitialized`] — contract has already been initialised.
     pub fn initialize(env: Env, admin: Address) -> Result<(), OracleError> {
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(OracleError::AlreadyInitialized);
+        }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        // Default anomaly threshold: 2000 basis points = 20%
+        env.storage().instance().set(&DataKey::AnomalyThreshold, &2000u32);
         MrvInit { admin }.publish(&env);
         Ok(())
     }
@@ -198,6 +213,26 @@ impl MrvOracle {
         set.len()
     }
 
+    /// Set the anomaly threshold in basis points (e.g. 2000 = 20% deviation).
+    /// Only the admin may call this.
+    ///
+    /// # Errors
+    /// - [`OracleError::NotInitialized`] — contract has not been initialised.
+    /// - [`OracleError::Unauthorized`] — caller is not the admin.
+    pub fn set_anomaly_threshold(env: Env, admin: Address, threshold_bps: u32) -> Result<(), OracleError> {
+        Self::require_admin(&env, &admin)?;
+        if threshold_bps == 0 || threshold_bps > 10_000 {
+            return Err(OracleError::InvalidReading);
+        }
+        env.storage().instance().set(&DataKey::AnomalyThreshold, &threshold_bps);
+        Ok(())
+    }
+
+    /// Returns the current anomaly threshold in basis points (default 2000).
+    pub fn get_anomaly_threshold(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::AnomalyThreshold).unwrap_or(2000u32)
+    }
+
     /// Returns a page of registered oracles. `page_size` is capped at 50.
     pub fn list_oracles(env: Env, page: u32, page_size: u32) -> Vec<Address> {
         let effective_size = if page_size > 50 { 50 } else { page_size };
@@ -261,7 +296,8 @@ impl MrvOracle {
             return Err(OracleError::InvalidProject);
         }
 
-        let (anomaly, prev_tonnes) = Self::detect_anomaly(&env, &project_id, tonnes)?;
+        let threshold = Self::get_anomaly_threshold(env.clone());
+        let (anomaly, prev_tonnes) = Self::detect_anomaly(&env, &project_id, tonnes, threshold)?;
 
         let point = MrvDataPoint {
             oracle: oracle.clone(),
@@ -289,7 +325,20 @@ impl MrvOracle {
 
         MrvUpd { oracle: oracle.clone(), project_id: project_id.clone(), tonnes, anomaly }.publish(&env);
         if anomaly {
-            AnomalyDetected { oracle, project_id, tonnes, prev_tonnes }.publish(&env);
+            AnomalyDetected { oracle: oracle.clone(), project_id: project_id.clone(), tonnes, prev_tonnes }.publish(&env);
+            // Cross-contract call to flag all credits in the project (best-effort)
+            for i in 0..credits.len() {
+                let cid = credits.get(i).unwrap();
+                // Best-effort cross-contract call to flag credit in registry;
+                // swallow errors (oracle may not be a verifier on the registry)
+                let flag_args: Vec<Val> = (oracle.clone(), cid.clone(), String::from_str(&env, "MRV anomaly detected"), 0u64).into_val(&env);
+                let _ = env.try_invoke_contract::<Val, Val>(
+                    &registry_id,
+                    &Symbol::new(&env, "flag_credit"),
+                    flag_args,
+                );
+                CreditFlagged { oracle: oracle.clone(), project_id: project_id.clone(), credit_id: cid }.publish(&env);
+            }
         }
 
         Ok(anomaly)
@@ -442,7 +491,8 @@ impl MrvOracle {
     }
 
     /// Returns `(is_anomaly, prev_tonnes)` for the latest reading of `project_id`.
-    fn detect_anomaly(env: &Env, project_id: &String, new_tonnes: i128) -> Result<(bool, i128), OracleError> {
+    /// Uses a configurable threshold in basis points (e.g. 2000 = 20%).
+    fn detect_anomaly(env: &Env, project_id: &String, new_tonnes: i128, threshold_bps: u32) -> Result<(bool, i128), OracleError> {
         let prev: Option<MrvDataPoint> = env
             .storage().persistent()
             .get(&DataKey::Latest(project_id.clone()));
@@ -451,9 +501,13 @@ impl MrvOracle {
             Some(p) if p.tonnes == 0 => Ok((false, 0)),
             Some(p) => {
                 let diff = (new_tonnes - p.tonnes).abs();
-                // diff / prev > 0.20  ⟺  diff * 5 > prev
-                let diff_times_5 = diff.checked_mul(5).ok_or(OracleError::Overflow)?;
-                Ok((diff_times_5 > p.tonnes.abs(), p.tonnes))
+                // diff / prev > threshold_bps / 10000
+                // Equivalent: diff * 10000 > prev * threshold_bps
+                let diff_times_10000 = diff.checked_mul(10000).ok_or(OracleError::Overflow)?;
+                let prev_times_threshold = (p.tonnes.abs())
+                    .checked_mul(threshold_bps as i128)
+                    .ok_or(OracleError::Overflow)?;
+                Ok((diff_times_10000 > prev_times_threshold, p.tonnes))
             }
         }
     }
@@ -834,8 +888,10 @@ mod tests {
         client.initialize(&admin);
 
         assert_eq!(client.get_oracle_count(), 0);
-        client.register_oracle(&admin, &Address::generate(&env));
-        client.register_oracle(&admin, &Address::generate(&env));
+        let n0 = client.get_nonce(&admin);
+        client.register_oracle(&admin, &Address::generate(&env), &n0);
+        let n1 = client.get_nonce(&admin);
+        client.register_oracle(&admin, &Address::generate(&env), &n1);
         assert_eq!(client.get_oracle_count(), 2);
     }
 
@@ -848,8 +904,10 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let mut nonce = client.get_nonce(&admin);
         for _ in 0..5 {
-            client.register_oracle(&admin, &Address::generate(&env));
+            client.register_oracle(&admin, &Address::generate(&env), &nonce);
+            nonce = client.get_nonce(&admin);
         }
         // page 0, size 3 → 3 results
         assert_eq!(client.list_oracles(&0, &3).len(), 3);
@@ -866,8 +924,10 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
+        let mut nonce = client.get_nonce(&admin);
         for _ in 0..5 {
-            client.register_oracle(&admin, &Address::generate(&env));
+            client.register_oracle(&admin, &Address::generate(&env), &nonce);
+            nonce = client.get_nonce(&admin);
         }
         // page_size=100 is capped to 50 internally; only 5 exist so returns 5
         assert_eq!(client.list_oracles(&0, &100).len(), 5);

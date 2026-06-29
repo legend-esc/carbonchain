@@ -1,4 +1,4 @@
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 
 /**
  * Off-chain index of an on-chain carbon credit.
@@ -15,6 +15,9 @@ export class CreditEntity {
 
   // @Column()
   issuer: string;
+
+  // @Column()
+  owner: string;
 
   // @Column()
   vintageYear: number;

@@ -444,6 +444,46 @@ sequenceDiagram
     Frontend->>Buyer: Shareable certificate at /certificates/:id
 ```
 
+#### Sequence diagram — verifier multi-sig flow (nonce exchange)
+
+```mermaid
+sequenceDiagram
+    actor Issuer
+    actor Verifier1
+    actor Verifier2
+    participant CreditRegistry
+    participant Ledger
+
+    Issuer->>CreditRegistry: submit_credit(issuer, metadata)
+    CreditRegistry->>Ledger: Write CreditStatus=Pending
+    CreditRegistry-->>Issuer: credit_id
+
+    Issuer->>CreditRegistry: Request nonce
+    CreditRegistry-->>Issuer: nonce_1
+    Issuer->>CreditRegistry: Submit signed nonce_1 (issuer_auth)
+
+    Verifier1->>CreditRegistry: approve_and_mint(verifier1, credit_id)
+    CreditRegistry->>CreditRegistry: require_auth(verifier1)
+    CreditRegistry->>CreditRegistry: Check verifier1 ∈ VerifierSet
+    CreditRegistry->>CreditRegistry: Generate approval_nonce
+    CreditRegistry-->>Verifier1: approval_nonce
+    Verifier1->>CreditRegistry: Signed approval_nonce (verifier1_auth)
+
+    Verifier2->>CreditRegistry: approve_and_mint(verifier2, credit_id)
+    CreditRegistry->>CreditRegistry: require_auth(verifier2)
+    CreditRegistry->>CreditRegistry: Check verifier2 ∈ VerifierSet
+    CreditRegistry->>CreditRegistry: Generate approval_nonce
+    CreditRegistry-->>Verifier2: approval_nonce
+    Verifier2->>CreditRegistry: Signed approval_nonce (verifier2_auth)
+
+    CreditRegistry->>CreditRegistry: Verify nonce replay protection
+    CreditRegistry->>CreditRegistry: Multi-sig threshold met (2/3 quorum)
+    CreditRegistry->>Ledger: Mint CCR token
+    CreditRegistry->>Ledger: CreditStatus=Active, emit CreditMinted
+    Ledger-->>Verifier1: CreditMinted(credit_id)
+    Ledger-->>Verifier2: CreditMinted(credit_id)
+```
+
 ### Retirement flow
 
 ```

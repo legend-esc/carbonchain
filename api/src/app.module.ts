@@ -17,6 +17,8 @@ import { RetirementModule } from './retirement/retirement.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { EventsModule } from './events/events.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { MetricsModule } from './metrics/metrics.module';
+import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
 
 @Module({
   imports: [
@@ -40,6 +42,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     MarketplaceModule,
     EventsModule,
     WebhooksModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
@@ -47,7 +50,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(RequestIdMiddleware, RequestLoggingMiddleware)
+      .apply(RequestIdMiddleware, RequestLoggingMiddleware, RequestMetricsMiddleware)
       .forRoutes('*');
   }
 }

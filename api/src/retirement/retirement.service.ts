@@ -3,13 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { RetirementRecord } from '../shared';
+import { RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
 import { PageResult } from '../credits/credit.repository';
 
-export const MAX_BATCH_SIZE = 20;
+export const MAX_BATCH_SIZE = 10;
 
 export class RetireDto {
   buyerPublicKey: string;
@@ -23,6 +23,12 @@ export class BatchRetireDto {
   creditIds: string[];
   tonnes: string[];
   reason: string;
+  nonce: number;
+}
+
+export interface BatchRetireResult {
+  succeeded: string[];
+  failed: { id: string; reason: string }[];
 }
 
 export interface CertificateVerification {
@@ -172,10 +178,14 @@ export class RetirementService {
   /**
    * Retire multiple credits in a single on-chain call.
    * Enforces MAX_BATCH_SIZE before invoking the contract.
+   *
+   * Persists one RetirementEntity per successful retirement and returns
+   * a partial-success shape so callers can distinguish which credits
+   * succeeded and which failed.
    */
   async batchRetire(
     dto: BatchRetireDto,
-  ): Promise<{ retirementIds: string[] }> {
+  ): Promise<BatchRetireResult> {
     if (dto.creditIds.length > MAX_BATCH_SIZE) {
       throw new BadRequestException(
         `Batch size ${dto.creditIds.length} exceeds maximum allowed (${MAX_BATCH_SIZE})`,
@@ -203,6 +213,7 @@ export class RetirementService {
       tonnesVal,
       nativeToScVal(dto.reason, { type: 'string' }),
       nativeToScVal(this.registryContractId, { type: 'address' }),
+      nativeToScVal(BigInt(dto.nonce), { type: 'u64' }),
     ];
 
     const signer = this.keypairService.getAdminKeypair();
@@ -229,7 +240,44 @@ export class RetirementService {
         )
       : [];
 
-    return { retirementIds };
+    const succeeded: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+    const now = Math.floor(Date.now() / 1000);
+
+    for (let i = 0; i < retirementIds.length; i++) {
+      try {
+        const entity = new RetirementEntity();
+        entity.id = retirementIds[i];
+        entity.creditId = dto.creditIds[i];
+        entity.buyer = dto.buyerPublicKey;
+        entity.tonnesRetired = dto.tonnes[i];
+        entity.reason = dto.reason;
+        entity.retiredAt = now;
+        entity.txHash = '';
+        await this.retirementRepo.save(entity);
+
+        const event: CreditRetiredEvent = {
+          retirementId: entity.id,
+          creditId: entity.creditId,
+          buyer: entity.buyer,
+          tonnesRetired: entity.tonnesRetired,
+          retiredAt: entity.retiredAt,
+        };
+        this.eventEmitter.emit('CreditRetired', event);
+
+        succeeded.push(retirementIds[i]);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Failed to persist retirement for credit ${dto.creditIds[i]}: ${(error as Error).message}`,
+        );
+        failed.push({
+          id: dto.creditIds[i],
+          reason: (error as Error).message,
+        });
+      }
+    }
+
+    return { succeeded, failed };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {

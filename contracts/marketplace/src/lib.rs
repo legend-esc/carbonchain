@@ -382,17 +382,8 @@ impl Marketplace {
 
         if let Some(expires_at) = offer.expires_at {
             if env.ledger().timestamp() > expires_at && offer.active {
-                offer.active = false;
-                env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
-                // Remove from global active index
-                let mut active_ids: Vec<u64> = env.storage().persistent()
-                    .get(&DataKey::ActiveOffers)
-                    .unwrap_or_else(|| Vec::new(&env));
-                if let Some(pos) = active_ids.iter().position(|id| id == offer_id) {
-                    active_ids.remove(pos as u32);
-                    env.storage().persistent().set(&DataKey::ActiveOffers, &active_ids);
-                    env.storage().persistent().extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
-                }
+                // Note: do NOT mutate state here — Soroban rolls back writes when
+                // returning Err; expiry filtering is done in read paths instead.
                 return Err(MarketplaceError::OfferExpired);
             }
         }
@@ -418,11 +409,15 @@ impl Marketplace {
             .unwrap_or_else(|| Vec::new(&env));
 
         let mut active: Vec<u64> = Vec::new(&env);
+        let now = env.ledger().timestamp();
         for id in all_ids.iter() {
             let offer: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(id));
             if let Some(o) = offer {
                 if o.active {
-                    active.push_back(id);
+                    let expired = o.expires_at.map_or(false, |e| now > e);
+                    if !expired {
+                        active.push_back(id);
+                    }
                 }
             }
         }
@@ -503,8 +498,7 @@ impl Marketplace {
         }
         if let Some(expires_at) = offer.expires_at {
             if env.ledger().timestamp() > expires_at {
-                offer.active = false;
-                env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
+                // State changes before Err are rolled back; just return the error.
                 return Err(MarketplaceError::OfferExpired);
             }
         }
@@ -1017,6 +1011,7 @@ mod tests {
     fn test_update_offer_price_below_min_fails() {
         let env = Env::default();
         env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
         let marketplace_id = env.register(Marketplace, ());
         let client = MarketplaceClient::new(&env, &marketplace_id);
         let admin = Address::generate(&env);

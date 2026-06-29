@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 
 export interface AdminStats {
   totalCredits: number;

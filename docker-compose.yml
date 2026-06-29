@@ -20,6 +20,9 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Enable pg_stat_statements for slow-query monitoring (see scripts/slow-queries.sql).
+    # To activate, uncomment the line below:
+    # command: postgres -c shared_preload_libraries=pg_stat_statements
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

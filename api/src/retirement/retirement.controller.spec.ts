@@ -3,7 +3,7 @@ import { RetirementController } from './retirement.controller';
 import { RetirementService } from './retirement.service';
 import { CertificateService } from './certificate.service';
 import { NotFoundException } from '@nestjs/common';
-import { RetirementRecord } from '../shared';
+import { RetirementRecord } from '../../../shared';
 
 const mockRetirementService = {
   retire: jest.fn(),
