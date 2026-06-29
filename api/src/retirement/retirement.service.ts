@@ -1,17 +1,27 @@
-import { Injectable, Logger, NotFoundException, ServiceUnavailableException, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+  BadRequestException,
+  ConflictException,
+  Inject,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { RetirementRecord } from '../../../shared';
+import { CreditStatus, RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
-import { PageResult } from '../credits/credit.repository';
+import type { ICreditRepository } from '../credits/credit.repository';
+import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
+import { RetireDto } from './dto/retire.dto';
 
 export const MAX_BATCH_SIZE = 10;
 
-export class RetireDto {
+export class FullRetireDto {
   buyerPublicKey: string;
   creditId: string;
   tonnes: string;
@@ -75,6 +85,8 @@ export class RetirementService {
     private readonly configService: ConfigService,
     @Inject(RETIREMENT_REPOSITORY)
     private readonly retirementRepo: IRetirementRepository,
+    @Inject(CREDIT_REPOSITORY)
+    private readonly creditRepo: ICreditRepository,
     @Inject(EVENT_EMITTER) private readonly eventEmitter: IEventEmitter,
   ) {
     this.retirementContractId = this.configService.get<string>(
@@ -85,6 +97,38 @@ export class RetirementService {
       'CREDIT_REGISTRY_CONTRACT_ID',
       '',
     );
+  }
+
+  /**
+   * Retire a credit via POST /credits/:id/retire.
+   * Validates off-chain index state before submitting the on-chain transaction.
+   */
+  async retireCredit(
+    creditId: string,
+    dto: RetireDto,
+    buyerPublicKey: string,
+  ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    const credit = await this.creditRepo.findById(creditId);
+    if (!credit) {
+      throw new NotFoundException(`Credit ${creditId} not found`);
+    }
+    if (credit.status !== CreditStatus.Active) {
+      throw new ConflictException(
+        `Credit ${creditId} is not active (status: ${credit.status})`,
+      );
+    }
+
+    const result = await this.retire({
+      buyerPublicKey,
+      creditId,
+      tonnes: credit.tonnes,
+      reason: dto.reason,
+    });
+
+    credit.status = CreditStatus.Retired;
+    await this.creditRepo.save(credit);
+
+    return result;
   }
 
   /**
@@ -103,7 +147,7 @@ export class RetirementService {
    *   3. Emit the `CreditRetired` application event.
    */
   async retire(
-    dto: RetireDto,
+    dto: FullRetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
     this.logger.log(
       `Retiring credit ${dto.creditId} for ${dto.buyerPublicKey}`,
@@ -183,16 +227,16 @@ export class RetirementService {
    * a partial-success shape so callers can distinguish which credits
    * succeeded and which failed.
    */
-  async batchRetire(
-    dto: BatchRetireDto,
-  ): Promise<BatchRetireResult> {
+  async batchRetire(dto: BatchRetireDto): Promise<BatchRetireResult> {
     if (dto.creditIds.length > MAX_BATCH_SIZE) {
       throw new BadRequestException(
         `Batch size ${dto.creditIds.length} exceeds maximum allowed (${MAX_BATCH_SIZE})`,
       );
     }
     if (dto.creditIds.length !== dto.tonnes.length) {
-      throw new BadRequestException('creditIds and tonnes arrays must have the same length');
+      throw new BadRequestException(
+        'creditIds and tonnes arrays must have the same length',
+      );
     }
 
     this.logger.log(
@@ -228,16 +272,20 @@ export class RetirementService {
     } catch (error: unknown) {
       const msg = (error as Error).message || '';
       if (msg.includes('123') || msg.includes('paused')) {
-        throw new ServiceUnavailableException({ error: 'Contract is currently paused' });
+        throw new ServiceUnavailableException({
+          error: 'Contract is currently paused',
+        });
       }
       throw error;
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
     const retirementIds: string[] = rv
-      ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as Uint8Array[]).map(
-          (b) => Buffer.from(b).toString('hex'),
-        )
+      ? (
+          scValToNative(
+            rv as Parameters<typeof scValToNative>[0],
+          ) as Uint8Array[]
+        ).map((b) => Buffer.from(b).toString('hex'))
       : [];
 
     const succeeded: string[] = [];

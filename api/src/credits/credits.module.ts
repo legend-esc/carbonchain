@@ -16,6 +16,6 @@ import {
     CreditsService,
     { provide: CREDIT_REPOSITORY, useClass: InMemoryCreditRepository },
   ],
-  exports: [CreditsService],
+  exports: [CreditsService, CREDIT_REPOSITORY],
 })
 export class CreditsModule {}

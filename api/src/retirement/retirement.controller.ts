@@ -13,7 +13,11 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Response as ExpressResponse } from 'express';
-import { RetirementService, RetireDto, BatchRetireResult } from './retirement.service';
+import {
+  RetirementService,
+  FullRetireDto,
+  BatchRetireResult,
+} from './retirement.service';
 import { BatchRetireDto } from './dto/batch-retire.dto';
 import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -47,7 +51,7 @@ export class RetirementController {
   @UseGuards(JwtAuthGuard)
   @Post()
   retire(
-    @Body() dto: RetireDto,
+    @Body() dto: FullRetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
     return this.retirementService.retire(dto);
   }
@@ -64,7 +68,10 @@ export class RetirementController {
   }
 
   @ApiOperation({ summary: 'List retirements (paginated)' })
-  @ApiResponse({ status: 200, description: 'Paginated list of retirement records' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list of retirement records',
+  })
   @Get()
   listRetirements(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
@@ -82,7 +89,10 @@ export class RetirementController {
   }
 
   @ApiOperation({ summary: 'Get retirements by account address' })
-  @ApiResponse({ status: 200, description: 'Paginated retirements for account' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated retirements for account',
+  })
   @Get('account/:address')
   getByAccount(
     @Param('address') address: string,
@@ -103,7 +113,8 @@ export class RetirementController {
     @Response() res: ExpressResponse,
   ): Promise<void> {
     // Retrieve the retirement record to ensure it exists
-    const retirement = await this.retirementService.getRetirement(certificateId);
+    const retirement =
+      await this.retirementService.getRetirement(certificateId);
     if (!retirement) {
       throw new NotFoundException(
         `Retirement record ${certificateId} not found`,
