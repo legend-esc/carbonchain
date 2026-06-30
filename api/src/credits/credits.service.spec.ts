@@ -211,6 +211,8 @@ describe('CreditsService.getCreditProvenance', () => {
       new CacheService(mockConfig),
     );
 
-    await expect(svcWithNoEvents.getCreditProvenance('nonexistent')).rejects.toThrow();
+    await expect(
+      svcWithNoEvents.getCreditProvenance('nonexistent'),
+    ).rejects.toThrow();
   });
 });

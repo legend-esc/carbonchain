@@ -102,7 +102,8 @@ export class InMemoryCreditRepository implements ICreditRepository {
     }
     if (filter.methodology) {
       all = all.filter(
-        (c) => c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
+        (c) =>
+          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
       );
     }
     if (filter.geography) {

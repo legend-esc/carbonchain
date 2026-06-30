@@ -16,7 +16,8 @@ import { ApiProperty } from '@nestjs/swagger';
 export class ArraysEqualLengthConstraint implements ValidatorConstraintInterface {
   validate(value: unknown, args: ValidationArguments): boolean {
     const obj = args.object as BatchRetireDto;
-    if (!Array.isArray(obj.creditIds) || !Array.isArray(obj.tonnes)) return false;
+    if (!Array.isArray(obj.creditIds) || !Array.isArray(obj.tonnes))
+      return false;
     return obj.creditIds.length === obj.tonnes.length;
   }
 

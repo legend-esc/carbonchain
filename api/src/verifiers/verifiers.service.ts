@@ -9,7 +9,11 @@ import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
-import { CreditMetadata, CreditStatus, VerifierReputation } from '../../../shared';
+import {
+  CreditMetadata,
+  CreditStatus,
+  VerifierReputation,
+} from '../../../shared';
 import { CacheService } from '../common/cache.service';
 
 export interface VerifierInfo {
@@ -154,7 +158,9 @@ export class VerifiersService {
     caller: string,
   ): Promise<void> {
     if (caller !== address) {
-      throw new ForbiddenException('Caller does not match the verifier address');
+      throw new ForbiddenException(
+        'Caller does not match the verifier address',
+      );
     }
 
     await this.getVerifier(address);
@@ -179,7 +185,9 @@ export class VerifiersService {
         msg.includes('Error(125)') ||
         msg.includes('status: 125')
       ) {
-        throw new ConflictException('Verifier has already approved this credit');
+        throw new ConflictException(
+          'Verifier has already approved this credit',
+        );
       }
       throw error;
     }

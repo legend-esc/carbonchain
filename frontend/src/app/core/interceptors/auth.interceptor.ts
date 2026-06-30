@@ -11,7 +11,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const router = inject(Router);
 
   return next(req).pipe(
-    catchError(err => {
+    catchError((err) => {
       if (err.status === 401) {
         auth.clearSession();
         toast.show('Session expired, please reconnect', 'error');

@@ -8,7 +8,10 @@ export class OracleController {
   constructor(private readonly oracleService: OracleService) {}
 
   @ApiOperation({ summary: 'Ingest MRV data from an authorised oracle' })
-  @ApiResponse({ status: 201, description: 'MRV data ingested, returns anomaly flag' })
+  @ApiResponse({
+    status: 201,
+    description: 'MRV data ingested, returns anomaly flag',
+  })
   @ApiResponse({ status: 401, description: 'Invalid oracle signature' })
   @Post('mrv')
   ingestMrv(@Body() dto: MrvWebhookDto): Promise<{ anomaly: boolean }> {

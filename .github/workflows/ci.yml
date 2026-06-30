@@ -21,9 +21,6 @@ jobs:
       # #193 — enforce consistent formatting across all four contracts
       - name: Check Rust formatting
         run: cd contracts && cargo fmt --all -- --check
-      # #192 — zero-warning clippy policy across all four contracts
-      - name: Clippy
-        run: cd contracts && cargo clippy --all-targets -- -D warnings
       # #47 — cache cargo registry and build artifacts for all four contracts
       - name: Cache cargo dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -35,8 +32,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      # Build WASM first — test_helpers.rs uses include_bytes! which requires the
+      # wasm32v1-none artifact to exist before clippy or cargo test compiles test targets
       - name: Build Contracts
         run: cd contracts && cargo build --target wasm32v1-none --release
+      # #192 — zero-warning clippy policy across all four contracts (after WASM build)
+      - name: Clippy
+        run: cd contracts && cargo clippy --all-targets -- -D warnings
       # #47 — run credit_registry tests standalone (avoids workspace feature unification)
       - name: Run Credit Registry Tests
         run: cd contracts/credit_registry && cargo test

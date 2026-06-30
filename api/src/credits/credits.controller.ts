@@ -84,17 +84,18 @@ export class CreditsController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({
     summary: 'Get credit provenance',
-    description: 'Returns the full lifecycle of a credit including all events (submit, approval, transfers, retirement)',
+    description:
+      'Returns the full lifecycle of a credit including all events (submit, approval, transfers, retirement)',
   })
   @Get(':id/provenance')
-  async getCreditProvenance(
-    @Param('id') creditId: string,
-  ): Promise<Array<{
-    action: string;
-    actor: string;
-    timestamp: number;
-    txHash: string;
-  }>> {
+  async getCreditProvenance(@Param('id') creditId: string): Promise<
+    Array<{
+      action: string;
+      actor: string;
+      timestamp: number;
+      txHash: string;
+    }>
+  > {
     return this.creditsService.getCreditProvenance(creditId);
   }
 
@@ -119,7 +120,12 @@ export class CreditsController {
     @Body() dto: TransferCreditDto,
     @Request() req: any,
   ): Promise<CreditMetadata> {
-    return this.creditsService.transferCredit(creditId, dto.to, req.user.account, dto.nonce);
+    return this.creditsService.transferCredit(
+      creditId,
+      dto.to,
+      req.user.account,
+      dto.nonce,
+    );
   }
 
   @ApiOperation({ summary: 'Split a credit into two child credits' })
@@ -133,6 +139,11 @@ export class CreditsController {
     @Body() dto: SplitCreditDto,
     @Request() req: any,
   ): Promise<{ childCredit1: string; childCredit2: string }> {
-    return this.creditsService.splitCredit(creditId, dto.splitTonnes, req.user.account, dto.nonce);
+    return this.creditsService.splitCredit(
+      creditId,
+      dto.splitTonnes,
+      req.user.account,
+      dto.nonce,
+    );
   }
 }

@@ -50,7 +50,11 @@ import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer
-      .apply(RequestIdMiddleware, RequestLoggingMiddleware, RequestMetricsMiddleware)
+      .apply(
+        RequestIdMiddleware,
+        RequestLoggingMiddleware,
+        RequestMetricsMiddleware,
+      )
       .forRoutes('*');
   }
 }

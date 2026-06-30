@@ -9,7 +9,10 @@ export class PinoNestLogger implements LoggerService {
   }
 
   error(message: unknown, trace?: string, context?: string): void {
-    pinoLogger.error({ ...this.requestCtx(), context, trace }, this.stringify(message));
+    pinoLogger.error(
+      { ...this.requestCtx(), context, trace },
+      this.stringify(message),
+    );
   }
 
   warn(message: unknown, context?: string): void {
@@ -17,11 +20,17 @@ export class PinoNestLogger implements LoggerService {
   }
 
   debug(message: unknown, context?: string): void {
-    pinoLogger.debug({ ...this.requestCtx(), context }, this.stringify(message));
+    pinoLogger.debug(
+      { ...this.requestCtx(), context },
+      this.stringify(message),
+    );
   }
 
   verbose(message: unknown, context?: string): void {
-    pinoLogger.trace({ ...this.requestCtx(), context }, this.stringify(message));
+    pinoLogger.trace(
+      { ...this.requestCtx(), context },
+      this.stringify(message),
+    );
   }
 
   private stringify(message: unknown): string {

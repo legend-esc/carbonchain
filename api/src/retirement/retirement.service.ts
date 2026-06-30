@@ -17,24 +17,10 @@ import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
 import type { ICreditRepository } from '../credits/credit.repository';
 import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
-import { RetireDto } from './dto/retire.dto';
+import { RetireDto, FullRetireDto } from './dto/retire.dto';
+import { BatchRetireDto } from './dto/batch-retire.dto';
 
 export const MAX_BATCH_SIZE = 10;
-
-export class FullRetireDto {
-  buyerPublicKey: string;
-  creditId: string;
-  tonnes: string;
-  reason: string;
-}
-
-export class BatchRetireDto {
-  buyerPublicKey: string;
-  creditIds: string[];
-  tonnes: string[];
-  reason: string;
-  nonce: number;
-}
 
 export interface BatchRetireResult {
   succeeded: string[];
@@ -123,6 +109,7 @@ export class RetirementService {
       creditId,
       tonnes: credit.tonnes,
       reason: dto.reason,
+      nonce: dto.nonce,
     });
 
     credit.status = CreditStatus.Retired;
@@ -159,6 +146,7 @@ export class RetirementService {
       nativeToScVal(BigInt(dto.tonnes), { type: 'i128' }),
       nativeToScVal(dto.reason, { type: 'string' }),
       nativeToScVal(this.registryContractId, { type: 'address' }),
+      nativeToScVal(BigInt(dto.nonce ?? 0), { type: 'u64' }),
     ];
 
     const signer = this.keypairService.getAdminKeypair();

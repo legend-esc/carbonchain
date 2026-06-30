@@ -1,4 +1,9 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { StellarService } from '../stellar/stellar.service';
@@ -57,9 +62,7 @@ export class OracleService {
 
     const tonnes = BigInt(dto.tonnesSequestered);
     if (tonnes <= 0n) {
-      throw new BadRequestException(
-        'tonnes must be positive (greater than 0)',
-      );
+      throw new BadRequestException('tonnes must be positive (greater than 0)');
     }
 
     this.logger.log(

@@ -16,9 +16,9 @@ function makeAuthStub(admin: boolean): Partial<AuthService> {
 }
 
 function runGuard(): boolean | UrlTree {
-  return TestBed.runInInjectionContext(() =>
-    adminGuard({} as never, {} as never),
-  ) as boolean | UrlTree;
+  return TestBed.runInInjectionContext(() => adminGuard({} as never, {} as never)) as
+    | boolean
+    | UrlTree;
 }
 
 describe('adminGuard', () => {
@@ -26,10 +26,7 @@ describe('adminGuard', () => {
 
   function setup(isAdmin: boolean): void {
     TestBed.configureTestingModule({
-      providers: [
-        { provide: AuthService, useValue: makeAuthStub(isAdmin) },
-        provideRouter([]),
-      ],
+      providers: [{ provide: AuthService, useValue: makeAuthStub(isAdmin) }, provideRouter([])],
     });
     router = TestBed.inject(Router);
   }

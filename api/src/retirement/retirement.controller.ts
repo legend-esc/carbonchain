@@ -15,27 +15,16 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Response as ExpressResponse } from 'express';
 import {
   RetirementService,
-  FullRetireDto,
   BatchRetireResult,
+  CertificateVerification,
 } from './retirement.service';
+import { FullRetireDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
 import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
-
-export interface CertificateVerification {
-  id: string;
-  credit_id: string;
-  buyer: string;
-  tonnes_retired: string;
-  reason: string;
-  retired_at: number;
-  tx_hash: string;
-  verified: boolean;
-  ledger_sequence?: number;
-}
 
 @ApiTags('retirement')
 @Controller('retirement')

@@ -56,8 +56,14 @@ export class VerifiersController {
 
   @ApiOperation({ summary: 'Approve a pending credit as a verifier' })
   @ApiResponse({ status: 200, description: 'Credit approved successfully' })
-  @ApiResponse({ status: 403, description: 'Not a registered verifier or caller mismatch' })
-  @ApiResponse({ status: 409, description: 'Verifier has already approved this credit' })
+  @ApiResponse({
+    status: 403,
+    description: 'Not a registered verifier or caller mismatch',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Verifier has already approved this credit',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(AuthGuard('jwt'))
   @Post(':address/approve/:creditId')

@@ -30,7 +30,9 @@ export class AdminService {
     };
   }
 
-  registerVerifier(address: string): { registered: boolean; address: string } {
+  async registerVerifier(
+    address: string,
+  ): Promise<{ registered: boolean; address: string }> {
     return { registered: true, address };
   }
 

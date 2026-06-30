@@ -28,7 +28,10 @@ import { CreditStatus } from '@shared';
 
           <label class="field">
             <span>Methodology</span>
-            <select [ngModel]="selectedMethodology()" (ngModelChange)="selectedMethodology.set($event); onFiltersChanged()">
+            <select
+              [ngModel]="selectedMethodology()"
+              (ngModelChange)="selectedMethodology.set($event); onFiltersChanged()"
+            >
               <option [ngValue]="''">All</option>
               @for (m of methodologies(); track m) {
                 <option [ngValue]="m">{{ m }}</option>

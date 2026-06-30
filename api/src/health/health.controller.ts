@@ -16,9 +16,7 @@ export class HealthController {
     const result = await this.healthService.check();
     res
       .status(
-        result.status === 'ok'
-          ? HttpStatus.OK
-          : HttpStatus.SERVICE_UNAVAILABLE,
+        result.status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
       )
       .json(result);
   }

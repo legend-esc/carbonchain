@@ -8,11 +8,11 @@
  */
 import {
   RetirementService,
-  FullRetireDto,
   CreditRetiredEvent,
   EVENT_EMITTER,
   IEventEmitter,
 } from './retirement.service';
+import { FullRetireDto } from './dto/retire.dto';
 import {
   ConflictException,
   NotFoundException,

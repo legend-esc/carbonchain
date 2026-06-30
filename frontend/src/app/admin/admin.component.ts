@@ -11,6 +11,12 @@ import { AdminVerifiersComponent } from './admin-verifiers.component';
       <app-admin-verifiers />
     </main>
   `,
-  styles: [`.admin-panel { padding: 2rem; }`],
+  styles: [
+    `
+      .admin-panel {
+        padding: 2rem;
+      }
+    `,
+  ],
 })
 export class AdminComponent {}

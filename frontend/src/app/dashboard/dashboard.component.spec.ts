@@ -149,11 +149,9 @@ describe('DashboardComponent', () => {
       await localFixture.whenStable();
       localFixture.detectChanges();
 
-      const loadingEls = (
-        localFixture.nativeElement.querySelectorAll('.status-msg') as NodeList
-      );
-      const hasLoadingMsg = Array.from(loadingEls).some(
-        (el) => (el as HTMLElement).textContent?.includes('dashboard.loading'),
+      const loadingEls = localFixture.nativeElement.querySelectorAll('.status-msg') as NodeList;
+      const hasLoadingMsg = Array.from(loadingEls).some((el) =>
+        (el as HTMLElement).textContent?.includes('dashboard.loading'),
       );
       expect(hasLoadingMsg).toBeFalsy();
     });

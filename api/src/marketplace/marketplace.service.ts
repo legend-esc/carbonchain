@@ -65,7 +65,12 @@ export class MarketplaceService {
     methodology?: string;
     minPrice?: number;
     maxPrice?: number;
-  }): Promise<{ data: Offer[]; total: number; page: number; pageSize: number }> {
+  }): Promise<{
+    data: Offer[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
     let offers = await this.getListings();
 
     if (params.methodology) {

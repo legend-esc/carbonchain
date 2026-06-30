@@ -10,8 +10,6 @@ import { InternalNetworkMiddleware } from './internal-network.middleware';
 })
 export class MetricsModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer
-      .apply(InternalNetworkMiddleware)
-      .forRoutes('metrics');
+    consumer.apply(InternalNetworkMiddleware).forRoutes('metrics');
   }
 }

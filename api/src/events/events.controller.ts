@@ -16,7 +16,12 @@ export class EventsController {
     @Query('take') take = 50,
     @Query('skip') skip = 0,
   ): SorobanEvent[] {
-    return this.eventsService.getEvents(contractId, eventType, Number(take), Number(skip));
+    return this.eventsService.getEvents(
+      contractId,
+      eventType,
+      Number(take),
+      Number(skip),
+    );
   }
 
   @ApiOperation({ summary: 'Get event by ID' })

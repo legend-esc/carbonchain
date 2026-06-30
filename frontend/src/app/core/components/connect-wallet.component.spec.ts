@@ -17,7 +17,7 @@ const translationStub: Partial<TranslationService> = {
       'wallet.step1': 'Step 1',
       'wallet.step2': 'Step 2',
       'wallet.step3': 'Step 3',
-    }[key] ?? key),
+    })[key] ?? key,
 };
 
 function createMocks(freighterInstalled: boolean) {

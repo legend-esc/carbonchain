@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Worker } from 'worker_threads';
@@ -75,7 +74,8 @@ export class CertificateService {
       worker.once('message', (buf: Buffer) => resolve(buf));
       worker.once('error', reject);
       worker.once('exit', (code) => {
-        if (code !== 0) reject(new Error(`PDF worker exited with code ${code}`));
+        if (code !== 0)
+          reject(new Error(`PDF worker exited with code ${code}`));
       });
     });
   }

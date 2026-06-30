@@ -56,9 +56,7 @@ describe('RetirementController', () => {
 
       const mockPdfBuffer = Buffer.from('PDF content');
 
-      mockRetirementService.getRetirement.mockResolvedValueOnce(
-        mockRetirement,
-      );
+      mockRetirementService.getRetirement.mockResolvedValueOnce(mockRetirement);
       mockCertificateService.generatePdf.mockResolvedValueOnce(mockPdfBuffer);
 
       const mockResponse = {
@@ -120,9 +118,7 @@ describe('RetirementController', () => {
         tx_hash: 'hash-123',
       };
 
-      mockRetirementService.getRetirement.mockResolvedValueOnce(
-        mockRetirement,
-      );
+      mockRetirementService.getRetirement.mockResolvedValueOnce(mockRetirement);
       mockCertificateService.generatePdf.mockRejectedValueOnce(
         new Error('PDF generation failed'),
       );
