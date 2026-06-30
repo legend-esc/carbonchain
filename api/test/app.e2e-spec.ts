@@ -4,6 +4,8 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { RetirementService } from './../src/retirement/retirement.service';
+import { JwtAuthGuard } from './../src/auth/jwt-auth.guard';
+import { ExecutionContext } from '@nestjs/common';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
@@ -57,6 +59,16 @@ describe('RetirementController batch_retire (e2e)', () => {
           ),
         getRetirement: jest.fn(),
         getRetirementsByAccount: jest.fn(),
+      })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({
+        canActivate: (ctx: ExecutionContext) => {
+          // Inject a minimal user object so downstream code that reads
+          // req.user doesn't throw, then allow the request through.
+          const req = ctx.switchToHttp().getRequest<{ user?: unknown }>();
+          req.user = { account: 'GTEST_E2E_ACCOUNT', isAdmin: false };
+          return true;
+        },
       })
       .compile();
 
