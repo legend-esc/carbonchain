@@ -3,10 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 
-// ip-range-check is a bare CJS module; mock it so Jest's ESM resolver
-// doesn't fail when the guard is imported transitively.
-jest.mock('ip-range-check', () => jest.fn(() => true));
-
 const mockConfigService = {
   get: jest.fn((key: string, def?: string) => {
     if (key === 'WEBHOOK_SIGNATURE_HEADER') return 'x-mrv-signature';

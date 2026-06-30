@@ -40,6 +40,7 @@
     "class-validator": "^0.15.1",
     "dotenv": "^16.4.5",
     "helmet": "^8.0.0",
+    "ip-range-check": "^0.2.0",
     "joi": "^17.13.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
@@ -89,6 +90,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^ip-range-check$": "<rootDir>/../test/__mocks__/ip-range-check.js"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
