@@ -563,6 +563,43 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "CreditsByOwner"
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "vec": [
+                  {
+                    "bytes": "68ddc8506e3c56d88ef3d56b3acd4c0af1152889a02d325ed099f3daf1fe3ce1"
+                  },
+                  {
+                    "bytes": "e70aa1b8d5fc53573429187183bd378ac4a1a961490e18e460419df668fbf89c"
+                  },
+                  {
+                    "bytes": "e67a1de075efbd04b2084e7dd634491bd1b30173c951e701cd992ab05df2417c"
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6307200
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Nonce"
                   },
                   {

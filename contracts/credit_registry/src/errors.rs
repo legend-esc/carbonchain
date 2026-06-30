@@ -1,5 +1,12 @@
 use soroban_sdk::contracterror;
 
+/// Stable error codes for the CarbonChain credit registry contract.
+///
+/// All error codes (100–126) are defined here in the credit registry.
+/// The retirement contract (errors 200–209) and marketplace contract
+/// (errors 300–309) define their own separate error enums.
+///
+/// Codes are intentionally stable — do not renumber existing variants.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]

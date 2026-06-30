@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, String};
 
 /// Minimum TTL in ledgers (~1 year at 5s/ledger).
 pub const MIN_TTL: u32 = 6_307_200;
