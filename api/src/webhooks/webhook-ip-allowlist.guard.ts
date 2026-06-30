@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import ipRangeCheck from 'ip-range-check';
+import ipRangeCheck = require('ip-range-check');
 
 /**
  * Guard that restricts webhook endpoints to a configured IP allowlist.
