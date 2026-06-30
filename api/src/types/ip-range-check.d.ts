@@ -4,5 +4,5 @@ declare module 'ip-range-check' {
    * `ranges` can be a single IP/CIDR string or an array of them.
    */
   function ipRangeCheck(ip: string, ranges: string | string[]): boolean;
-  export = ipRangeCheck;
+  export default ipRangeCheck;
 }
