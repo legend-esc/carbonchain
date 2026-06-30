@@ -120,8 +120,9 @@ export class StellarService implements OnModuleInit {
       );
 
       try {
-        const response =
-          await this.sorobanRpcServer.sendTransaction(preparedTx);
+        const response = await this.submitTransactionWithRetry(() =>
+          this.sorobanRpcServer.sendTransaction(preparedTx),
+        );
 
         if ((response.status as string) === 'PENDING') {
           const result = await this.pollTransactionStatus(response.hash);
@@ -132,11 +133,13 @@ export class StellarService implements OnModuleInit {
       } catch (error: unknown) {
         const isBadSeq =
           (error as Error).message?.toLowerCase().includes('tx_bad_seq') ||
-          (error as any)?.response?.data?.extras?.result_codes?.transaction ===
-            'tx_bad_seq';
-      const response = await this.submitTransactionWithRetry(() =>
-        this.sorobanRpcServer.sendTransaction(preparedTx),
-      );
+          (
+            error as {
+              response?: {
+                data?: { extras?: { result_codes?: { transaction?: string } } };
+              };
+            }
+          )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
 
         if (isBadSeq && retries > 0) {
           this.logger.warn(
@@ -185,13 +188,20 @@ export class StellarService implements OnModuleInit {
     this.logger.verbose(`Full XDR: ${tx.toEnvelope().toXDR('base64')}`);
 
     try {
-      const result = await this.horizonServer.submitTransaction(tx);
+      const result = await this.submitTransactionWithRetry(() =>
+        this.horizonServer.submitTransaction(tx),
+      );
       this.invalidateAccountInfoCache(pk);
       return result;
     } catch (error: unknown) {
-      const err = error as any;
       const isBadSeq =
-        err?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
+        (
+          error as {
+            response?: {
+              data?: { extras?: { result_codes?: { transaction?: string } } };
+            };
+          }
+        )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
 
       if (isBadSeq && retries > 0) {
         this.logger.warn(`tx_bad_seq for ${pk}, resetting cache and retrying`);
@@ -200,9 +210,6 @@ export class StellarService implements OnModuleInit {
       }
       throw error;
     }
-    return this.submitTransactionWithRetry(() =>
-      this.horizonServer.submitTransaction(tx),
-    );
   }
 
   async getContractData(
@@ -275,7 +282,8 @@ export class StellarService implements OnModuleInit {
         lastError = error instanceof Error ? error : new Error(String(error));
 
         // Extract status code from error response
-        const statusCode = error?.response?.status;
+        const statusCode = (error as { response?: { status?: number } })
+          ?.response?.status;
 
         // Fail immediately on non-retryable errors
         if (statusCode === 400 || statusCode === 404) {

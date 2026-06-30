@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import {
   Injectable,
   Inject,
@@ -9,7 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
-import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
+import { scValToNative, nativeToScVal, rpc } from '@stellar/stellar-sdk';
 import { CreditMetadata, CreditStatus } from '../../../shared';
 import { CreditEntity } from './credit.entity';
 import type { ICreditRepository, PageResult } from './credit.repository';
@@ -37,7 +36,6 @@ interface ListCreditsFilter {
 export class CreditsService {
   private readonly logger = new Logger(CreditsService.name);
   private readonly contractId: string;
-  private creditsCache: Map<string, CreditMetadata> = new Map();
 
   constructor(
     private stellarService: StellarService,
@@ -171,10 +169,6 @@ export class CreditsService {
   }> {
     // Default to Active-only when no status is requested, so Retired and Flagged
     // credits are never included unless the caller explicitly opts in.
-    const effectiveStatus: string = filter.status ?? CreditStatus.Active;
-    const effectiveFilter = { ...filter, status: effectiveStatus };
-
-    // Default to Active when client does not provide a status filter
     if (!filter.status) {
       filter.status = CreditStatus.Active;
     }
@@ -191,58 +185,53 @@ export class CreditsService {
       return cachedResult;
     }
 
-    // Fetch all credits from the off-chain repository and map to metadata.
-    // Use a large limit to retrieve the full index for server-side filtering.
-    let allCredits: CreditMetadata[] = [];
+    // Push structured filters to the repository so it can apply them at the
+    // storage layer rather than fetching every record into memory first.
+    const repoFilter: import('./credit.repository').CreditFilter = {
+      status: filter.status as CreditStatus | undefined,
+      methodology: filter.methodology,
+      geography: filter.geography,
+      vintageYear: filter.vintageYear,
+    };
+
+    let repoResult: PageResult<CreditEntity>;
     try {
-      const repoResult = await this.creditRepo.findAll(1, 1000000);
-      allCredits = repoResult.data.map((e) => this.entityToMetadata(e));
+      repoResult = await this.creditRepo.findByFilter(
+        repoFilter,
+        filter.page,
+        filter.limit,
+      );
     } catch (err) {
       this.logger.warn(
         `Failed to fetch credits from repo: ${(err as Error).message}`,
       );
-      allCredits = [];
+      repoResult = {
+        data: [],
+        total: 0,
+        page: filter.page,
+        limit: filter.limit,
+      };
     }
 
-    // Apply secondary filters
-    let filtered = allCredits;
-
-    if (filter.status) {
-      filtered = filtered.filter((c) => c.status === filter.status);
-    }
-
-    if (filter.methodology) {
-      filtered = filtered.filter(
-        (c) =>
-          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
-      );
-    }
-
-    if (filter.geography) {
-      filtered = filtered.filter(
-        (c) => c.geography.toLowerCase() === filter.geography!.toLowerCase(),
-      );
-    }
-
-    if (filter.vintageYear) {
-      filtered = filtered.filter((c) => c.vintage_year === filter.vintageYear);
-    }
+    // Apply tonnes range filters post-fetch (not yet part of CreditFilter interface).
+    let data = repoResult.data.map((e) => this.entityToMetadata(e));
 
     if (filter.minTonnes) {
       const minVal = BigInt(filter.minTonnes);
-      filtered = filtered.filter((c) => BigInt(c.tonnes) >= minVal);
+      data = data.filter((c) => BigInt(c.tonnes) >= minVal);
     }
 
     if (filter.maxTonnes) {
       const maxVal = BigInt(filter.maxTonnes);
-      filtered = filtered.filter((c) => BigInt(c.tonnes) <= maxVal);
+      data = data.filter((c) => BigInt(c.tonnes) <= maxVal);
     }
 
-    const total = filtered.length;
-    const start = (filter.page - 1) * filter.limit;
-    const data = filtered.slice(start, start + filter.limit);
-
-    const result = { data, total, page: filter.page, limit: filter.limit };
+    const result = {
+      data,
+      total: repoResult.total,
+      page: filter.page,
+      limit: filter.limit,
+    };
     await this.cache.set(cacheKey, result, CREDIT_TTL);
     return result;
   }
@@ -251,12 +240,14 @@ export class CreditsService {
    * Get the full lifecycle/provenance of a credit including all lifecycle events.
    * Returns ordered events showing submit → approval → transfers → retirement.
    */
-  async getCreditProvenance(creditId: string): Promise<Array<{
-    action: string;
-    actor: string;
-    timestamp: number;
-    txHash: string;
-  }>> {
+  async getCreditProvenance(creditId: string): Promise<
+    Array<{
+      action: string;
+      actor: string;
+      timestamp: number;
+      txHash: string;
+    }>
+  > {
     this.logger.log(`Fetching provenance for credit ${creditId}`);
 
     try {
@@ -276,16 +267,29 @@ export class CreditsService {
 
       for (const event of events) {
         const eventType = this.parseEventType(event);
-        const topics = event.topic || [];
-        const data = event.value || {};
+        // Decode the event value: real events carry xdr.ScVal, test stubs may carry plain objects.
+        let data: Record<string, unknown> = {};
+        if (event.value) {
+          try {
+            data = scValToNative(event.value) as Record<string, unknown>;
+          } catch {
+            // Fallback for plain-object stubs (e.g. in unit tests)
+            data = event.value as unknown as Record<string, unknown>;
+          }
+        }
 
         // Map events to provenance records
         if (eventType === 'CreditSubmitted') {
           const creditIdData = data.credit_id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Submitted',
-              actor: String(data.issuer || 'unknown'),
+              actor: String(
+                typeof data.issuer === 'string' ? data.issuer : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -293,10 +297,15 @@ export class CreditsService {
           }
         } else if (eventType === 'CreditMinted') {
           const creditIdData = data.id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Approved',
-              actor: String(data.verifier || 'unknown'),
+              actor: String(
+                typeof data.verifier === 'string' ? data.verifier : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -304,10 +313,15 @@ export class CreditsService {
           }
         } else if (eventType === 'CreditTransferred') {
           const creditIdData = data.credit_id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Transferred',
-              actor: String(data.from || 'unknown'),
+              actor: String(
+                typeof data.from === 'string' ? data.from : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -316,10 +330,15 @@ export class CreditsService {
         } else if (eventType === 'CreditRetired') {
           // CreditRetired events come from retirement contract
           const creditIdData = data.credit_id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Retired',
-              actor: String(data.buyer || 'unknown'),
+              actor: String(
+                typeof data.buyer === 'string' ? data.buyer : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -327,7 +346,10 @@ export class CreditsService {
           }
         } else if (eventType === 'CreditFlagged') {
           const creditIdData = data.id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Flagged',
               actor: 'system',
@@ -341,6 +363,12 @@ export class CreditsService {
 
       // Sort by ledger (timestamp) to maintain chronological order
       provenanceEvents.sort((a, b) => a.ledger - b.ledger);
+
+      if (provenanceEvents.length === 0) {
+        throw new NotFoundException(
+          `No provenance events found for credit ${creditId}`,
+        );
+      }
 
       // Remove the temporary ledger field before returning
       return provenanceEvents.map(({ ledger, ...rest }) => rest);
@@ -384,8 +412,8 @@ export class CreditsService {
     }
   }
 
-  private parseEventType(event: any): string {
-    const topics = event.topic || [];
+  private parseEventType(event: rpc.Api.EventResponse): string {
+    const topics = event.topic ?? [];
     if (topics.length > 0) {
       const firstTopic = topics[0];
       if (typeof firstTopic === 'string') {
@@ -395,10 +423,11 @@ export class CreditsService {
     return 'unknown';
   }
 
-  private parseEventTimestamp(event: any): number {
-    // Use closed_at from the event if available, otherwise use current time
-    if (event.closedAt) {
-      return Math.floor(Number(event.closedAt) / 1000);
+  private parseEventTimestamp(event: rpc.Api.EventResponse): number {
+    // closedAt is not part of the typed interface; fall back to Date.now()
+    const raw = (event as unknown as Record<string, unknown>).closedAt;
+    if (typeof raw === 'number' || typeof raw === 'string') {
+      return Math.floor(Number(raw) / 1000);
     }
     return Math.floor(Date.now() / 1000);
   }
@@ -447,7 +476,9 @@ export class CreditsService {
     caller: string,
     nonce: number,
   ): Promise<{ childCredit1: string; childCredit2: string }> {
-    this.logger.log(`Splitting credit ${creditId} with ${splitTonnes} tonnes by ${caller}`);
+    this.logger.log(
+      `Splitting credit ${creditId} with ${splitTonnes} tonnes by ${caller}`,
+    );
 
     const credit = await this.getCredit(creditId);
     if (credit.owner !== caller) {
@@ -501,9 +532,7 @@ export class CreditsService {
     child1.issuedAt = Math.floor(Date.now() / 1000);
     await this.creditRepo.save(child1);
 
-    const remainingTonnes = String(
-      BigInt(credit.tonnes) - BigInt(splitTonnes),
-    );
+    const remainingTonnes = String(BigInt(credit.tonnes) - BigInt(splitTonnes));
     const child2 = new CreditEntity();
     child2.id = childCredit2;
     child2.projectId = credit.project_id;

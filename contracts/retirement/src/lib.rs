@@ -1,30 +1,37 @@
 #![no_std]
-pub mod types;
 pub mod errors;
+pub mod types;
 
-use crate::types::{DataKey, RetirementRecord, CreditMetadata, CreditStatus, MIN_TTL, TTL_THRESHOLD};
 use crate::errors::RetirementError;
+use crate::types::{
+    CreditMetadata, CreditStatus, DataKey, RetirementRecord, MIN_TTL, TTL_THRESHOLD,
+};
 
 /// Maximum number of credits allowed in a single `batch_retire` call.
 /// Exceeding this limit causes the Soroban instruction budget to be exhausted.
 const MAX_BATCH_SIZE: u32 = 20;
-use soroban_sdk::{
-    contract, contractimpl, contractevent,
-    Address, BytesN, Env, String, Symbol, Vec,
-    IntoVal,
-};
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{
+    contract, contractevent, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
+};
 
 fn get_nonce(env: &Env, addr: &Address) -> u64 {
-    env.storage().persistent().get(&DataKey::Nonce(addr.clone())).unwrap_or(0u64)
+    env.storage()
+        .persistent()
+        .get(&DataKey::Nonce(addr.clone()))
+        .unwrap_or(0u64)
 }
 
 fn consume_nonce(env: &Env, addr: &Address, expected: u64) -> bool {
     let current = get_nonce(env, addr);
-    if current != expected { return false; }
+    if current != expected {
+        return false;
+    }
     let key = DataKey::Nonce(addr.clone());
     env.storage().persistent().set(&key, &(current + 1));
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     true
 }
 
@@ -94,7 +101,10 @@ impl Retirement {
 
     /// Returns `true` if the contract is currently paused.
     pub fn paused(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     // ── Retirement ───────────────────────────────────────────────────────────
@@ -137,11 +147,11 @@ impl Retirement {
             &Symbol::new(&env, "get_credit"),
             (credit_id.clone(),).into_val(&env),
         );
-        
+
         if credit.status != CreditStatus::Active {
             return Err(RetirementError::CreditNotActive);
         }
-        
+
         if credit.owner != buyer {
             return Err(RetirementError::Unauthorized);
         }
@@ -173,9 +183,11 @@ impl Retirement {
         env.storage()
             .persistent()
             .set(&DataKey::Retirement(retirement_id.clone()), &record);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Retirement(retirement_id.clone()), TTL_THRESHOLD, MIN_TTL);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Retirement(retirement_id.clone()),
+            TTL_THRESHOLD,
+            MIN_TTL,
+        );
 
         // Index under buyer account
         let acct_key = DataKey::AccountRetirements(buyer.clone());
@@ -186,10 +198,17 @@ impl Retirement {
             .unwrap_or_else(|| Vec::new(&env));
         list.push_back(retirement_id.clone());
         env.storage().persistent().set(&acct_key, &list);
-        env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
         // Emit retirement event
-        Retire { buyer, credit_id, retirement_id: retirement_id.clone() }.publish(&env);
+        Retire {
+            buyer,
+            credit_id,
+            retirement_id: retirement_id.clone(),
+        }
+        .publish(&env);
 
         Ok(retirement_id)
     }
@@ -262,10 +281,6 @@ impl Retirement {
             let credit_id = credit_ids.get(i).unwrap();
             let tonne_amount = tonnes.get(i).unwrap();
 
-            if tonne_amount <= 0 {
-                return Err(RetirementError::InvalidTonnes);
-            }
-
             // Derive a deterministic retirement ID
             let mut preimage = credit_id.clone().to_xdr(&env);
             preimage.append(&reason.clone().to_xdr(&env));
@@ -284,9 +299,11 @@ impl Retirement {
             env.storage()
                 .persistent()
                 .set(&DataKey::Retirement(retirement_id.clone()), &record);
-            env.storage()
-                .persistent()
-                .extend_ttl(&DataKey::Retirement(retirement_id.clone()), TTL_THRESHOLD, MIN_TTL);
+            env.storage().persistent().extend_ttl(
+                &DataKey::Retirement(retirement_id.clone()),
+                TTL_THRESHOLD,
+                MIN_TTL,
+            );
 
             list.push_back(retirement_id.clone());
             retirement_ids.push_back(retirement_id.clone());
@@ -299,11 +316,18 @@ impl Retirement {
             );
 
             // Emit individual retirement event
-            Retire { buyer: buyer.clone(), credit_id: credit_id.clone(), retirement_id }.publish(&env);
+            Retire {
+                buyer: buyer.clone(),
+                credit_id: credit_id.clone(),
+                retirement_id,
+            }
+            .publish(&env);
         }
 
         env.storage().persistent().set(&acct_key, &list);
-        env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
         Ok(retirement_ids)
     }
@@ -317,7 +341,11 @@ impl Retirement {
             .unwrap_or_else(|| Vec::new(&env));
         let mut total: i128 = 0;
         for id in ids.iter() {
-            if let Some(record) = env.storage().persistent().get::<_, RetirementRecord>(&DataKey::Retirement(id)) {
+            if let Some(record) = env
+                .storage()
+                .persistent()
+                .get::<_, RetirementRecord>(&DataKey::Retirement(id))
+            {
                 total += record.tonnes_retired;
             }
         }
@@ -336,7 +364,12 @@ impl Retirement {
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the admin.
     /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current admin nonce.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>, nonce: u64) -> Result<(), RetirementError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+        nonce: u64,
+    ) -> Result<(), RetirementError> {
         Self::require_admin(&env, &admin)?;
         if !consume_nonce(&env, &admin, nonce) {
             return Err(RetirementError::InvalidNonce);
@@ -350,15 +383,23 @@ impl Retirement {
     /// # Errors
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the current admin.
-    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), RetirementError> {
-        let stored: Address = env.storage().instance()
+    pub fn propose_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), RetirementError> {
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Admin)
             .ok_or(RetirementError::NotInitialized)?;
         admin.require_auth();
         if admin != stored {
             return Err(RetirementError::Unauthorized);
         }
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
         Ok(())
     }
 
@@ -368,7 +409,9 @@ impl Retirement {
     /// - [`RetirementError::NoPendingAdmin`] — no transfer has been proposed.
     /// - [`RetirementError::Unauthorized`] — `new_admin` does not match the pending candidate.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), RetirementError> {
-        let pending: Address = env.storage().instance()
+        let pending: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::PendingAdmin)
             .ok_or(RetirementError::NoPendingAdmin)?;
         if new_admin != pending {
@@ -403,7 +446,11 @@ impl Retirement {
         page: u32,
         page_size: u32,
     ) -> Vec<BytesN<32>> {
-        let page_size = if page_size == 0 || page_size > 50 { 50 } else { page_size };
+        let page_size = if page_size == 0 || page_size > 50 {
+            50
+        } else {
+            page_size
+        };
         let all: Vec<BytesN<32>> = env
             .storage()
             .persistent()
@@ -435,20 +482,23 @@ impl Retirement {
     }
 
     fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use carbonchain_credit_registry::test_helpers::RegistryHelper;
     use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::{Env, String};
-    use carbonchain_credit_registry::test_helpers::RegistryHelper;
 
     /// Returns (retirement_contract_id, registry, credit_id, retirement_admin, credit_owner)
     fn setup(env: &Env) -> (Address, RegistryHelper, BytesN<32>, Address, Address) {
-        env.budget().reset_unlimited();
+        env.cost_estimate().budget().reset_unlimited();
         env.ledger().set_timestamp(1735689600);
         let retirement_id = env.register(Retirement, ());
         let registry = RegistryHelper::deploy(env);
@@ -718,10 +768,13 @@ mod tests {
 
         credit_ids.push_back(credit_id);
         tonnes.push_back(1_000_000);
-        for (suffix, vintage) in [("b1", 2025u32), ("b2", 2026u32), ("b3", 2022u32), ("b4", 2023u32)] {
-            let cid = submit_credit_for_batch(
-                &env, &registry, &issuer, &issuer, vintage, suffix,
-            );
+        for (suffix, vintage) in [
+            ("b1", 2025u32),
+            ("b2", 2026u32),
+            ("b3", 2022u32),
+            ("b4", 2023u32),
+        ] {
+            let cid = submit_credit_for_batch(&env, &registry, &issuer, &issuer, vintage, suffix);
             credit_ids.push_back(cid);
             tonnes.push_back(1_000_000);
         }
@@ -761,9 +814,7 @@ mod tests {
         credit_ids.push_back(credit_id);
         tonnes.push_back(1_000_000);
         for (suffix, vintage) in [("f1", 2025u32), ("f2", 2022u32)] {
-            let cid = submit_credit_for_batch(
-                &env, &registry, &issuer, &issuer, vintage, suffix,
-            );
+            let cid = submit_credit_for_batch(&env, &registry, &issuer, &issuer, vintage, suffix);
             credit_ids.push_back(cid);
             tonnes.push_back(1_000_000);
         }
@@ -922,4 +973,3 @@ mod tests {
         assert_eq!(total, 2_000_000);
     }
 }
-
