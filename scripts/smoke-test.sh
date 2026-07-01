@@ -92,8 +92,7 @@ NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 pass "credit_registry.get_nonce() = $NONCE"
 
 log "Registering a test verifier"
-stellar keys rm smoke-verifier 2>/dev/null || true
-stellar keys generate smoke-verifier
+stellar keys generate smoke-verifier --overwrite
 VERIFIER_SECRET=$(stellar keys show smoke-verifier 2>/dev/null)
 VERIFIER_ADDRESS=$(stellar keys address smoke-verifier 2>/dev/null)
 [[ -n "$VERIFIER_ADDRESS" ]] || fail "Could not generate smoke-verifier keypair"
@@ -111,8 +110,7 @@ IS_VERIFIER=$(invoke "$CREDIT_REGISTRY_ID" is_verifier --address "$VERIFIER_ADDR
 assert_eq "credit_registry.is_verifier()" "$IS_VERIFIER" "true"
 
 log "Registering a test issuer"
-stellar keys rm smoke-issuer 2>/dev/null || true
-stellar keys generate smoke-issuer
+stellar keys generate smoke-issuer --overwrite
 ISSUER_SECRET=$(stellar keys show smoke-issuer 2>/dev/null)
 ISSUER_ADDRESS=$(stellar keys address smoke-issuer 2>/dev/null)
 [[ -n "$ISSUER_ADDRESS" ]] || fail "Could not generate smoke-issuer keypair"
