@@ -1,14 +1,17 @@
 import {
+  BadRequestException,
   Controller,
   Get,
-  Post,
+  Header,
   Param,
+  Post,
   UseGuards,
   Request,
   HttpCode,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { StrKey } from '@stellar/stellar-sdk';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
 import { CreditMetadata, VerifierReputation } from '../../../shared';
 
@@ -81,12 +84,25 @@ export class VerifiersController {
   }
 
   @ApiOperation({ summary: 'Get verifier reputation' })
-  @ApiResponse({ status: 200, description: 'Verifier reputation' })
-  @ApiResponse({ status: 404, description: 'Verifier not found' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns { address, approvalCount, disputeCount } for the verifier.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid Stellar Ed25519 public key format.' })
+  @ApiResponse({ status: 404, description: 'Verifier not found.' })
+  @Header('Cache-Control', 'max-age=60')
   @Get(':address/reputation')
   async getReputation(
     @Param('address') address: string,
   ): Promise<VerifierReputation> {
+    // Validate that the address is a valid Stellar Ed25519 public key before
+    // making any downstream calls.  This prevents nonsense values from reaching
+    // the Stellar SDK / contract layer and returns a clear HTTP 400 to callers.
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      throw new BadRequestException(
+        `'${address}' is not a valid Stellar Ed25519 public key.`,
+      );
+    }
     return this.verifiersService.getReputation(address);
   }
 }

@@ -86,6 +86,8 @@ pub enum MarketplaceError {
     OfferExpired = 123,
     Overflow = 124,
     AlreadyInitialized = 126,
+    /// Buyer does not hold enough XLM to cover the offer price.
+    InsufficientFunds = 127,
 }
 
 #[contractevent]
@@ -620,6 +622,142 @@ impl Marketplace {
             new_price_xlm,
         }
         .publish(&env);
+        Ok(())
+    }
+
+    /// Purchase an active offer.
+    ///
+    /// Execution order (all-or-nothing, Soroban atomicity):
+    /// 1. Validate offer exists, is active, and not expired.
+    /// 2. Pre-check buyer XLM balance ≥ `price_xlm` (returns `InsufficientFunds` early).
+    /// 3. Overflow-safe cast of `price_xlm` (i128) to i128 — already i128, guarded against negative.
+    /// 4. **Token transfer first** — transfer `price_xlm` XLM stroops from buyer → seller.
+    /// 5. **Credit transfer second** — transfer escrowed credit from marketplace → buyer.
+    /// 6. Mark offer inactive, remove from active index.
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::ContractPaused`] — contract is paused.
+    /// - [`MarketplaceError::InvalidNonce`] — `nonce` does not match the current buyer nonce.
+    /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
+    /// - [`MarketplaceError::AlreadyClosed`] — offer has already been cancelled/filled.
+    /// - [`MarketplaceError::OfferExpired`] — offer has expired.
+    /// - [`MarketplaceError::InsufficientFunds`] — buyer XLM balance is less than `price_xlm`.
+    /// - [`MarketplaceError::Overflow`] — price overflows i128 (should never happen in practice).
+    pub fn buy_offer(
+        env: Env,
+        buyer: Address,
+        offer_id: u64,
+        registry_id: Address,
+        token_id: Address,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        if Self::is_paused(&env) {
+            return Err(MarketplaceError::ContractPaused);
+        }
+        buyer.require_auth();
+        if !Self::consume_nonce(&env, &buyer, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+
+        // Load and validate the offer — all checks before any state mutation.
+        let mut offer: Offer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Offer(offer_id))
+            .ok_or(MarketplaceError::OfferNotFound)?;
+
+        if !offer.active {
+            return Err(MarketplaceError::AlreadyClosed);
+        }
+        if let Some(expires_at) = offer.expires_at {
+            if env.ledger().timestamp() > expires_at {
+                return Err(MarketplaceError::OfferExpired);
+            }
+        }
+
+        // Overflow guard: price_xlm is stored as i128; it must be positive (validated on
+        // create_offer) and must not be i128::MIN (nonsensical).  Negative values indicate
+        // corrupt state — treat as overflow.
+        let price: i128 = offer.price_xlm;
+        if price <= 0 {
+            return Err(MarketplaceError::Overflow);
+        }
+
+        // ── Pre-check: verify buyer holds enough XLM before touching any state ──────
+        //
+        // Call the native token contract's `balance` function.  This is a read-only call
+        // so it does not modify state; if it panics the whole transaction reverts cleanly.
+        let buyer_balance: i128 = env.invoke_contract(
+            &token_id,
+            &Symbol::new(&env, "balance"),
+            (buyer.clone(),).into_val(&env),
+        );
+        if buyer_balance < price {
+            return Err(MarketplaceError::InsufficientFunds);
+        }
+
+        let escrow_account: Address = env.current_contract_address();
+
+        // ── Step 1 (token transfer FIRST) ─────────────────────────────────────────
+        //
+        // Transfer XLM from buyer to seller.  If this fails (e.g. actual balance changed
+        // since the pre-check), Soroban's atomicity ensures no credit transfer occurs.
+        let _: () = env.invoke_contract(
+            &token_id,
+            &Symbol::new(&env, "transfer"),
+            (buyer.clone(), offer.seller.clone(), price).into_val(&env),
+        );
+
+        // ── Step 2 (credit transfer SECOND) ──────────────────────────────────────
+        //
+        // Now that payment has been confirmed, transfer the escrowed credit to the buyer.
+        let registry_nonce: u64 = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "get_nonce"),
+            (escrow_account.clone(),).into_val(&env),
+        );
+        let _: () = env.invoke_contract(
+            &registry_id,
+            &Symbol::new(&env, "transfer_credit"),
+            (
+                escrow_account.clone(),
+                buyer.clone(),
+                offer.credit_id.clone(),
+                registry_nonce,
+            )
+                .into_val(&env),
+        );
+
+        // ── Mark offer inactive and remove from indexes ───────────────────────────
+        offer.active = false;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Offer(offer_id), &offer);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Offer(offer_id), TTL_THRESHOLD, MIN_TTL);
+
+        // Clear escrowed-amount record
+        env.storage()
+            .persistent()
+            .remove(&DataKey::EscrowedAmount(offer_id));
+
+        // Remove from global active index
+        let mut active_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ActiveOffers)
+            .unwrap_or_else(|| Vec::new(&env));
+        if let Some(pos) = active_ids.iter().position(|id| id == offer_id) {
+            active_ids.remove(pos as u32);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ActiveOffers, &active_ids);
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+        }
+
         Ok(())
     }
 
@@ -1514,5 +1652,227 @@ mod tests {
         // With no offers, page_size=100 should return empty (capped at 50, but still 0 items)
         let result = client.list_active_offers(&0, &100);
         assert_eq!(result.len(), 0);
+    }
+
+    // ── Issue #480: buy_offer tests ──────────────────────────────────────────
+
+    /// Mock token contract that records calls and supports `balance` + `transfer`.
+    /// Used exclusively in buy_offer tests.
+    mod token_mock {
+        use soroban_sdk::{contract, contractimpl, Address, Env, Map};
+
+        #[contract]
+        pub struct MockToken;
+
+        #[contractimpl]
+        impl MockToken {
+            /// Seed the mock balance for an address.
+            pub fn set_balance(env: Env, addr: Address, amount: i128) {
+                env.storage().persistent().set(&addr, &amount);
+            }
+
+            /// Native token `balance` interface.
+            pub fn balance(env: Env, addr: Address) -> i128 {
+                env.storage()
+                    .persistent()
+                    .get(&addr)
+                    .unwrap_or(0i128)
+            }
+
+            /// Native token `transfer` interface.
+            /// Subtracts from sender, adds to recipient.  Panics if sender has insufficient funds.
+            pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+                let from_bal: i128 = env.storage().persistent().get(&from).unwrap_or(0);
+                if from_bal < amount {
+                    panic!("insufficient balance");
+                }
+                env.storage().persistent().set(&from, &(from_bal - amount));
+                let to_bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+                env.storage().persistent().set(&to, &(to_bal + amount));
+            }
+        }
+    }
+
+    use token_mock::MockToken;
+    use token_mock::MockTokenClient;
+
+    fn setup_with_token(
+        env: &Env,
+    ) -> (
+        MarketplaceClient<'static>,
+        Address,
+        Address,
+        RegistryHelper,
+        BytesN<32>,
+        MockTokenClient<'static>,
+    ) {
+        let (client, seller, admin, registry, credit_id) = setup_with_registry(env);
+        let token_id = env.register(MockToken, ());
+        let token = MockTokenClient::new(env, &token_id);
+        (client, seller, admin, registry, credit_id, token)
+    }
+
+    #[test]
+    fn test_buy_offer_insufficient_funds_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) =
+            setup_with_token(&env);
+
+        // Seller creates offer at 10_000_000 stroops
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        // Buyer has only 5_000_000 stroops — not enough
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &5_000_000);
+
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &buyer_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InsufficientFunds)));
+
+        // Offer must still be active — no state was changed
+        assert!(client.get_offer(&offer_id).active);
+    }
+
+    #[test]
+    fn test_buy_offer_sufficient_funds_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) =
+            setup_with_token(&env);
+
+        let price = 10_000_000i128;
+
+        // Seller creates offer
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        // Buyer has exactly enough
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &price);
+
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &buyer_nonce,
+        );
+        assert!(result.is_ok());
+
+        // Offer should now be inactive (filled)
+        assert!(!client.get_offer(&offer_id).active);
+
+        // Credit should now be owned by buyer
+        let credit = registry.get_credit(&credit_id);
+        assert_eq!(credit.owner, buyer);
+
+        // Token should have moved: buyer -price, seller +price
+        assert_eq!(token.balance(&buyer), 0);
+        assert_eq!(token.balance(&seller), price);
+    }
+
+    #[test]
+    fn test_buy_offer_removes_from_active_index() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) =
+            setup_with_token(&env);
+
+        let price = 10_000_000i128;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+        assert_eq!(client.list_active_offers(&0, &50).len(), 1);
+
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &price);
+        let buyer_nonce = client.get_nonce(&buyer);
+        client.buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &buyer_nonce,
+        );
+
+        // Should be removed from active index after purchase
+        assert_eq!(client.list_active_offers(&0, &50).len(), 0);
+    }
+
+    #[test]
+    fn test_buy_offer_already_closed_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) =
+            setup_with_token(&env);
+
+        let price = 10_000_000i128;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        // First buyer purchases the offer
+        let buyer1 = Address::generate(&env);
+        token.set_balance(&buyer1, &price);
+        let b1nonce = client.get_nonce(&buyer1);
+        client.buy_offer(
+            &buyer1,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &b1nonce,
+        );
+
+        // Second buyer tries to buy the same (now closed) offer
+        let buyer2 = Address::generate(&env);
+        token.set_balance(&buyer2, &price);
+        let b2nonce = client.get_nonce(&buyer2);
+        let result = client.try_buy_offer(
+            &buyer2,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &b2nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::AlreadyClosed)));
     }
 }

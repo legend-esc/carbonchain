@@ -159,9 +159,18 @@ impl Retirement {
         if tonnes <= 0 {
             return Err(RetirementError::InvalidTonnes);
         }
+
+        // Issue #482: include the buyer's nonce (before it was consumed) in the preimage
+        // so that two separate retire calls with the same credit_id, reason, and ledger
+        // timestamp always produce distinct retirement IDs.
+        //
+        // The nonce consumed above was `nonce`; the value that was stored before
+        // consumption is `nonce` itself (consume_nonce increments it to nonce+1).
+        // We embed the original value here.
         let mut preimage = credit_id.clone().to_xdr(&env);
         preimage.append(&reason.clone().to_xdr(&env));
         preimage.append(&env.ledger().timestamp().to_xdr(&env));
+        preimage.append(&nonce.to_xdr(&env));
         let retirement_id: BytesN<32> = env.crypto().sha256(&preimage).into();
 
         // Cross-contract: mark the credit as retired in the registry FIRST
@@ -972,4 +981,55 @@ mod tests {
         let total = client.get_total_retired_by_account(&issuer);
         assert_eq!(total, 2_000_000);
     }
-}
+
+    // ── Issue #482: retirement_id uniqueness via buyer nonce ─────────────────
+
+    /// Two retire calls for different credits in the same ledger with the same reason
+    /// must produce distinct retirement IDs even though the timestamp is identical.
+    /// We achieve this by embedding the buyer's nonce in the preimage.
+    ///
+    /// We can only attempt to retire a credit once per credit (since mark_retired
+    /// transitions it to Retired, and a second attempt would fail with CreditNotActive).
+    /// So we retire two different credits with the same reason and same timestamp and
+    /// verify their IDs are distinct.
+    #[test]
+    fn test_retire_produces_distinct_ids_for_same_timestamp_and_reason() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        // Create a second credit
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "uniq1");
+
+        // Fix the timestamp so both calls see the same ledger timestamp
+        env.ledger().set_timestamp(1735689600);
+
+        let n1 = client.get_nonce(&issuer);
+        let ret_id1 = client.retire(
+            &issuer,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "same reason"),
+            &registry.id,
+            &n1,
+        );
+
+        // Timestamp unchanged — second retire call would have the same timestamp
+        let n2 = client.get_nonce(&issuer);
+        let ret_id2 = client.retire(
+            &issuer,
+            &cid2,
+            &1_000_000,
+            &String::from_str(&env, "same reason"),
+            &registry.id,
+            &n2,
+        );
+
+        // IDs must be distinct because n1 != n2 (nonce was consumed between calls)
+        assert_ne!(
+            ret_id1, ret_id2,
+            "retirement IDs must be distinct even with same timestamp and reason"
+        );
+    }

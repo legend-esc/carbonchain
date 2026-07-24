@@ -119,4 +119,12 @@ pub enum DataKey {
     VerifierServices(Address),
     /// Credit IDs indexed by owner address.
     CreditsByOwner(Address),
+    /// Per-credit snapshot of verifiers assigned at submission time.
+    /// Used by remove_verifier to correctly block removal only when
+    /// the verifier is specifically assigned to a pending credit.
+    CreditVerifiers(BytesN<32>),
+    /// Global list of all credit IDs currently in Pending status.
+    /// Maintained by submit_credit (add) and approve_and_mint/flag_credit (remove).
+    /// Used by remove_verifier to iterate per-credit snapshots efficiently.
+    PendingCredits,
 }
