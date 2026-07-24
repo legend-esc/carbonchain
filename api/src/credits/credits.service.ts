@@ -585,6 +585,246 @@ export class CreditsService {
     return { childCredit1, childCredit2 };
   }
 
+  // ── Issue #485: Credit expiry ─────────────────────────────────────────────
+
+  /**
+   * POST /api/v1/credits/:id/expire
+   *
+   * Transition an Active (or Disputed) credit to Expired on-chain by calling
+   * `expire_credit` on the credit registry contract.  Only the admin may call
+   * this endpoint.
+   *
+   * The contract enforces:
+   *   - Credit must be Active or Disputed (not Retired / Flagged / already Expired).
+   *   - Caller must be the registered contract admin.
+   *
+   * On success the off-chain index is updated and caches are invalidated.
+   */
+  async expireCredit(
+    creditId: string,
+    adminPublicKey: string,
+  ): Promise<{ creditId: string; status: CreditStatus }> {
+    this.logger.log(`Expiring credit ${creditId} by admin ${adminPublicKey}`);
+
+    const args = [
+      nativeToScVal(adminPublicKey, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'expire_credit',
+      args,
+      signer,
+    );
+
+    // Update off-chain index
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.status = CreditStatus.Expired;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return { creditId, status: CreditStatus.Expired };
+  }
+
+  // ── Issue #486: Credit dispute lifecycle ──────────────────────────────────
+
+  /**
+   * POST /api/v1/credits/:id/dispute
+   *
+   * Transition an Active credit to Disputed on-chain and store the evidence
+   * IPFS hash.  Any verifier (or the credit owner) may raise a dispute.
+   *
+   * Contract enforces:
+   *   - Credit must not already be Retired or Disputed.
+   *   - `dispute_credit` stores evidence in DataKey::Dispute(credit_id).
+   *   - CreditDisputed event is emitted.
+   */
+  async disputeCredit(
+    creditId: string,
+    disputerPublicKey: string,
+    evidenceIpfsHash: string,
+  ): Promise<{ creditId: string; status: CreditStatus }> {
+    this.logger.log(
+      `Disputing credit ${creditId} by ${disputerPublicKey} with evidence ${evidenceIpfsHash}`,
+    );
+
+    const args = [
+      nativeToScVal(disputerPublicKey, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(evidenceIpfsHash, { type: 'string' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'dispute_credit',
+      args,
+      signer,
+    );
+
+    // Update off-chain index
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.status = CreditStatus.Disputed;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return { creditId, status: CreditStatus.Disputed };
+  }
+
+  /**
+   * POST /api/v1/credits/:id/resolve
+   *
+   * Resolve a disputed credit.  Only the admin may call this.
+   *
+   * Outcome codes (mirror the contract):
+   *   0 → Active   (dispute upheld, credit reinstated)
+   *   1 → Flagged  (dispute escalated)
+   *   2 → Retired  (credit revoked)
+   *
+   * Contract enforces:
+   *   - Credit must be in Disputed status.
+   *   - Caller must be the registered contract admin.
+   *   - DisputeResolved event is emitted; dispute evidence entry is removed.
+   */
+  async resolveDispute(
+    creditId: string,
+    adminPublicKey: string,
+    outcome: number,
+  ): Promise<{ creditId: string; status: CreditStatus; outcome: number }> {
+    this.logger.log(
+      `Resolving dispute for credit ${creditId} with outcome ${outcome} by admin ${adminPublicKey}`,
+    );
+
+    const args = [
+      nativeToScVal(adminPublicKey, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(outcome, { type: 'u32' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'resolve_dispute',
+      args,
+      signer,
+    );
+
+    // Map the numeric outcome to the resulting CreditStatus for the off-chain index.
+    const outcomeStatus: CreditStatus =
+      outcome === 0
+        ? CreditStatus.Active
+        : outcome === 1
+          ? CreditStatus.Flagged
+          : CreditStatus.Retired;
+
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.status = outcomeStatus;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return { creditId, status: outcomeStatus, outcome };
+  }
+
+  // ── Issue #487: Credit merging ────────────────────────────────────────────
+
+  /**
+   * POST /api/v1/credits/merge
+   *
+   * Merge 2–20 Active credits owned by the same caller into a single new
+   * credit whose tonnes equals the sum of all inputs.  Input credits are
+   * consumed (set to Retired) and a new Active credit is created.
+   *
+   * Contract enforces:
+   *   - All inputs must be Active and owned by `callerPublicKey`.
+   *   - All inputs must share project_id, vintage_year, methodology, geography.
+   *   - Maximum 20 credits per call (instruction-budget).
+   *   - CreditsMerged event is emitted.
+   */
+  async mergeCredits(
+    callerPublicKey: string,
+    creditIds: string[],
+  ): Promise<{ mergedCreditId: string; sourceCount: number }> {
+    this.logger.log(
+      `Merging ${creditIds.length} credits for caller ${callerPublicKey}`,
+    );
+
+    if (creditIds.length < 2 || creditIds.length > 20) {
+      throw new BadRequestException(
+        'merge_credits requires between 2 and 20 credit IDs',
+      );
+    }
+
+    // Build contract args: (caller: Address, credit_ids: Vec<BytesN<32>>)
+    const cleanArgs = [
+      nativeToScVal(callerPublicKey, { type: 'address' }),
+      nativeToScVal(
+        creditIds.map((id) => Buffer.from(id, 'hex')),
+        { type: 'vec' },
+      ),
+    ];
+
+    const signer = this.keypairService.getAdminKeypair();
+    const response = await this.stellarService.invokeContract(
+      this.contractId,
+      'merge_credits',
+      cleanArgs,
+      signer,
+    );
+
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const mergedCreditId = rv
+      ? Buffer.from(
+          scValToNative(
+            rv as Parameters<typeof scValToNative>[0],
+          ) as Uint8Array,
+        ).toString('hex')
+      : 'unknown';
+
+    // Mark all source credits as Retired in the off-chain index.
+    for (const id of creditIds) {
+      const entity = await this.creditRepo.findById(id);
+      if (entity) {
+        entity.status = CreditStatus.Retired;
+        await this.creditRepo.save(entity);
+      }
+      await this.invalidateCreditCache(id);
+    }
+
+    // Index the new merged credit by reading it back from chain.
+    if (mergedCreditId !== 'unknown') {
+      try {
+        const merged = await this.getCredit(mergedCreditId);
+        const mergedEntity = new CreditEntity();
+        mergedEntity.id = mergedCreditId;
+        mergedEntity.projectId = merged.project_id;
+        mergedEntity.issuer = merged.issuer;
+        mergedEntity.owner = merged.owner;
+        mergedEntity.vintageYear = merged.vintage_year;
+        mergedEntity.methodology = merged.methodology;
+        mergedEntity.geography = merged.geography;
+        mergedEntity.tonnes = merged.tonnes;
+        mergedEntity.ipfsHash = merged.ipfs_hash;
+        mergedEntity.status = CreditStatus.Active;
+        mergedEntity.issuedAt = Math.floor(Date.now() / 1000);
+        await this.creditRepo.save(mergedEntity);
+      } catch (err) {
+        this.logger.warn(
+          `Could not index merged credit ${mergedCreditId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return { mergedCreditId, sourceCount: creditIds.length };
+  }
+
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {
     return {
       id,

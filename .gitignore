@@ -60,6 +60,8 @@ browser_test_results/
 # Vitest / Jest cache
 .vitest-cache/
 .jest-cache/
+# Jest coverage directory (alternative name)
+jest-coverage/
 
 # Build artifacts
 *.js.map
@@ -74,6 +76,9 @@ Cargo.lock
 .yarn/
 yarn.lock
 pnpm-lock.yaml
+# Packed npm tarballs
+*.tgz
+*.tar.gz
 
 # Debug
 npm-debug.log*
@@ -103,3 +108,8 @@ pids/
 # Profiling
 *.heapsnapshot
 *.cpuprofile
+
+# Soroban CLI local deploy artifacts
+.stellar/
+contract-ids.*.json
+

@@ -6,6 +6,12 @@ export enum CreditStatus {
   Active = "Active",
   Retired = "Retired",
   Flagged = "Flagged",
+  // Issue #485: credits past their vintage grace period can be expired by the admin.
+  // Matches CreditStatus::Expired = 5 in contracts/credit_registry/src/types.rs.
+  Expired = "Expired",
+  // Issue #486: credits under dispute are blocked from trading until resolved.
+  // Matches CreditStatus::Disputed = 4 in contracts/credit_registry/src/types.rs.
+  Disputed = "Disputed",
 }
 
 export interface CreditMetadata {
