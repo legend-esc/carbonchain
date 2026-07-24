@@ -16,6 +16,7 @@ import {
   StrKey,
 } from '@stellar/stellar-sdk';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
+import { CacheService } from '../common/cache.service';
 
 @Injectable()
 export class AuthService {
@@ -27,6 +28,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly keypairService: StellarKeypairService,
+    private readonly cache: CacheService,
   ) {
     const network = this.configService.get<string>(
       'STELLAR_NETWORK',
@@ -44,11 +46,12 @@ export class AuthService {
    * SEP-10 §3.1 — Build a challenge transaction.
    * The server signs a transaction with a random nonce operation (manageData)
    * and returns it for the client wallet to sign.
+   * Issue #254 — Store the nonce in cache with 5-minute TTL to prevent replay attacks.
    */
-  generateChallenge(clientAccount: string): {
+  async generateChallenge(clientAccount: string): Promise<{
     transaction: string;
     network_passphrase: string;
-  } {
+  }> {
     if (!clientAccount || !StrKey.isValidEd25519PublicKey(clientAccount)) {
       throw new BadRequestException('Invalid Stellar account address');
     }
@@ -78,6 +81,9 @@ export class AuthService {
 
     tx.sign(serverKeypair);
 
+    // Store nonce in cache with 5-minute TTL (300 seconds)
+    await this.cache.set(`sep10:nonce:${nonce}`, true, 300);
+
     return {
       transaction: tx.toEnvelope().toXDR('base64'),
       network_passphrase: this.networkPassphrase,
@@ -90,8 +96,11 @@ export class AuthService {
    *  1. Transaction is parseable and within time bounds
    *  2. Server signature is present and valid
    *  3. Client signature is present and valid on the manageData operation
+   *  4. Nonce has not been previously used (Issue #254)
    */
-  verifyAndIssueToken(signedTransactionXdr: string): { access_token: string } {
+  async verifyAndIssueToken(signedTransactionXdr: string): Promise<{
+    access_token: string;
+  }> {
     let tx: Transaction;
     try {
       tx = new Transaction(signedTransactionXdr, this.networkPassphrase);
@@ -151,6 +160,19 @@ export class AuthService {
     if (!clientSig) {
       throw new UnauthorizedException('Client signature missing or invalid');
     }
+
+    // Issue #254 — Verify nonce freshness and prevent replay attacks
+    const nonce = (manageDataOp as any).value;
+    const nonceKey = `sep10:nonce:${nonce}`;
+    const nonceExists = await this.cache.get<boolean>(nonceKey);
+    if (!nonceExists) {
+      throw new UnauthorizedException(
+        'Challenge nonce not found or already used',
+      );
+    }
+
+    // Delete nonce to prevent reuse
+    await this.cache.del(nonceKey);
 
     const access_token = this.jwtService.sign({ account: clientAccount });
     this.logger.log(`Issued JWT for account: ${clientAccount}`);

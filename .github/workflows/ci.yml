@@ -11,14 +11,19 @@ jobs:
     name: Smart Contracts (Soroban)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.91.0
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master (1.91.0)
         with:
+          toolchain: "1.91.0"
           targets: wasm32v1-none
+          components: rustfmt
+      # #193 — enforce consistent formatting across all four contracts
+      - name: Check Rust formatting
+        run: cd contracts && cargo fmt --all -- --check
       # #47 — cache cargo registry and build artifacts for all four contracts
       - name: Cache cargo dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -28,10 +33,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Build Contracts
-        run: cd contracts && CARGO_TARGET_WASM32V1_NONE_RUSTFLAGS="-C link-args=--allow-multiple-definition" cargo build --target wasm32v1-none
-      # #47 — run tests for all four contracts (credit_registry, retirement, marketplace, mrv_oracle)
-      - name: Run Contract Tests
-        run: cd contracts && cargo test --workspace
+        run: cd contracts && cargo build --target wasm32v1-none --release
+      # #47 — run credit_registry tests standalone (avoids workspace feature unification)
+      - name: Run Credit Registry Tests
+        run: cd contracts/credit_registry && cargo test
+      - name: Run Remaining Contract Tests
+        run: |
+          cd contracts && cargo test -p carbonchain-retirement \
+                                 -p carbonchain-marketplace \
+                                 -p carbonchain-mrv-oracle
 
   api:
     name: Backend API (NestJS)
@@ -52,17 +62,20 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: "npm"
           cache-dependency-path: api/package-lock.json
       - name: Install Dependencies
         run: cd api && npm ci --legacy-peer-deps
+      # #194 — enforce lint and format without auto-fixing
       - name: Lint
         run: cd api && npm run lint
+      - name: Check Formatting
+        run: cd api && npm run format:check
       - name: Build
         run: cd api && npm run build
       # #48 — run unit tests
@@ -78,6 +91,15 @@ jobs:
           STELLAR_NETWORK: testnet
           STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
           STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+      # #249 — generate test coverage report
+      - name: Generate Coverage Report
+        run: cd api && npm run test:cov
+      # #249 — upload coverage artifacts
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-coverage-report
+          path: api/coverage
 
   deploy:
     name: Testnet Deploy + Smoke Tests
@@ -86,25 +108,41 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment: testnet
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master (stable)
         with:
+          toolchain: stable
           targets: wasm32v1-none
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: contracts
+      - name: Install system deps (for stellar-cli dbus)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev libudev-dev libssl-dev pkg-config
+      # #247 — cache stellar-cli binary keyed on version to skip recompilation on cache hit
+      - name: Cache stellar-cli binary
+        id: cache-stellar-cli
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/stellar
+          key: ${{ runner.os }}-stellar-cli-26.1.0
       - name: Install Stellar CLI
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
         run: cargo install --locked stellar-cli@26.1.0
-      - name: Deploy contracts & run smoke tests
+      - name: Deploy contracts
         env:
           ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
         run: |
           chmod +x scripts/deploy-testnet.sh scripts/smoke-test.sh
           ./scripts/deploy-testnet.sh
+      # #250 — run smoke tests after deployment
+      - name: Run Smoke Tests
+        env:
+          ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
+        run: ./scripts/smoke-test.sh
       - name: Upload contract IDs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: contract-ids-testnet
           path: scripts/contract-ids.testnet.json
@@ -113,9 +151,11 @@ jobs:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master (stable)
+        with:
+          toolchain: stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
@@ -129,15 +169,20 @@ jobs:
     name: Frontend SPA (Angular)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install Dependencies
         run: cd frontend && npm ci --legacy-peer-deps
+      # #194 — enforce lint and format
+      - name: Lint
+        run: cd frontend && npm run lint
+      - name: Check Formatting
+        run: cd frontend && npm run format:check
       - name: Build
         run: cd frontend && npm run build
       - name: Run Tests

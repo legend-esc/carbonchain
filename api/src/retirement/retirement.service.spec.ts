@@ -13,6 +13,7 @@ import {
   EVENT_EMITTER,
   IEventEmitter,
 } from './retirement.service';
+import { ServiceUnavailableException } from '@nestjs/common';
 import {
   InMemoryRetirementRepository,
   RETIREMENT_REPOSITORY,
@@ -188,5 +189,90 @@ describe('RetirementService — event ordering (issue #162)', () => {
       'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
     );
     expect(record!.tonnesRetired).toBe('1000000');
+  });
+});
+
+describe('RetirementService — contract error handling (issue #258)', () => {
+  let service: RetirementService;
+  let repo: InMemoryRetirementRepository;
+  let eventEmitter: IEventEmitter;
+
+  beforeEach(async () => {
+    eventEmitter = {
+      emit(event: string, payload: unknown): boolean {
+        return true;
+      },
+    };
+
+    repo = new InMemoryRetirementRepository();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RetirementService,
+        { provide: StellarService, useValue: mockStellarService },
+        { provide: StellarKeypairService, useValue: mockKeypairService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: RETIREMENT_REPOSITORY, useValue: repo },
+        { provide: EVENT_EMITTER, useValue: eventEmitter },
+      ],
+    }).compile();
+
+    service = module.get<RetirementService>(RetirementService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('throws ServiceUnavailableException when contract returns error code 123', async () => {
+    mockStellarService.invokeContract.mockRejectedValueOnce(
+      new Error('Contract error code 123: paused'),
+    );
+
+    await expect(service.retire(makeDto())).rejects.toThrow(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('returns 503 response with correct error message for paused contract', async () => {
+    mockStellarService.invokeContract.mockRejectedValueOnce(
+      new Error('Soroban error code 123'),
+    );
+
+    try {
+      await service.retire(makeDto());
+      fail('Should have thrown ServiceUnavailableException');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ServiceUnavailableException);
+      const response = (error as ServiceUnavailableException).getResponse();
+      expect(response).toEqual({ error: 'Contract is currently paused' });
+    }
+  });
+
+  it('does not emit CreditRetired event when contract is paused', async () => {
+    let eventEmitted = false;
+    eventEmitter.emit = jest.fn().mockImplementation((event: string) => {
+      if (event === 'CreditRetired') {
+        eventEmitted = true;
+      }
+      return true;
+    });
+
+    mockStellarService.invokeContract.mockRejectedValueOnce(
+      new Error('Contract error 123'),
+    );
+
+    await expect(service.retire(makeDto())).rejects.toThrow();
+    expect(eventEmitted).toBe(false);
+  });
+
+  it('re-throws other contract errors unchanged', async () => {
+    mockStellarService.invokeContract.mockRejectedValueOnce(
+      new Error('Some other contract error'),
+    );
+
+    await expect(service.retire(makeDto())).rejects.toThrow(
+      'Some other contract error',
+    );
   });
 });

@@ -7,6 +7,11 @@
   "wallet.disconnect": "Desconectar",
   "wallet.connecting": "Conectando…",
   "wallet.install": "Instalar Freighter",
+  "wallet.pageTitle": "Conecta tu billetera",
+  "wallet.pageDescription": "CarbonChain utiliza la blockchain Stellar para emitir, intercambiar y retirar créditos de carbono. Para comenzar, necesitas conectar una billetera Stellar.",
+  "wallet.step1": "Instala la extensión Freighter desde freighter.app",
+  "wallet.step2": "Crea o importa una cuenta Stellar en Freighter",
+  "wallet.step3": "Haz clic en \"Conectar Billetera\" para autenticarte",
 
   "dashboard.title": "Portafolio de Créditos de Carbono",
   "dashboard.totalCredits": "Total de Créditos",

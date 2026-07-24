@@ -1,5 +1,6 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
+
 import { Offer } from '@shared';
 import { ApiService } from '../services/api.service';
 
@@ -9,15 +10,33 @@ export type LoadingState = 'idle' | 'loading' | 'loaded' | 'error';
 export class MarketplaceStore {
   private readonly api = inject(ApiService);
 
+  readonly pageSize = 10;
+
   private readonly _offers = signal<Offer[]>([]);
   private readonly _state = signal<LoadingState>('idle');
   private readonly _error = signal<string | null>(null);
 
+  private readonly _page = signal(0);
+
   readonly offers = this._offers.asReadonly();
   readonly state = this._state.asReadonly();
   readonly error = this._error.asReadonly();
+  readonly error$: Observable<string | null> = this._error.asObservable();
+
+  readonly page = this._page.asReadonly();
   readonly isLoading = computed(() => this._state() === 'loading');
-  readonly activeOffers = computed(() => this._offers().filter((o) => o.status === 'open'));
+
+  private readonly _allActiveOffers = computed(() =>
+    this._offers().filter((o) => o.status === 'open'),
+  );
+  readonly totalActiveOffers = computed(() => this._allActiveOffers().length);
+  readonly totalPages = computed(() =>
+    Math.max(1, Math.ceil(this.totalActiveOffers() / this.pageSize)),
+  );
+  readonly activeOffers = computed(() => {
+    const start = this._page() * this.pageSize;
+    return this._allActiveOffers().slice(start, start + this.pageSize);
+  });
 
   async loadOffersBySeller(seller: string): Promise<void> {
     this._state.set('loading');
@@ -29,6 +48,7 @@ export class MarketplaceStore {
       );
       this._offers.set(offers);
       this._state.set('loaded');
+      this._page.set(0);
     } catch (err) {
       this._error.set(err instanceof Error ? err.message : 'Failed to load offers.');
       this._state.set('error');
@@ -51,9 +71,18 @@ export class MarketplaceStore {
     }
   }
 
+  nextPage(): void {
+    if (this._page() < this.totalPages() - 1) this._page.update((p) => p + 1);
+  }
+
+  prevPage(): void {
+    if (this._page() > 0) this._page.update((p) => p - 1);
+  }
+
   reset(): void {
     this._offers.set([]);
     this._state.set('idle');
     this._error.set(null);
+    this._page.set(0);
   }
 }

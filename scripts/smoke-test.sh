@@ -27,6 +27,17 @@ invoke() {
     -- "$@"
 }
 
+invoke_as() {
+  # invoke_as <secret_key> <contract_id> <function> [args...]
+  local secret="$1"; shift
+  local contract_id="$1"; shift
+  stellar contract invoke \
+    --id "$contract_id" \
+    --source "$secret" \
+    --network testnet \
+    -- "$@"
+}
+
 assert_eq() {
   local label="$1" got="$2" want="$3"
   if [[ "$got" == "$want" ]]; then
@@ -81,9 +92,12 @@ NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 pass "credit_registry.get_nonce() = $NONCE"
 
 log "Registering a test verifier"
-VERIFIER_KEY=$(stellar keys generate smoke-verifier --no-fund 2>/dev/null || true)
+stellar keys rm smoke-verifier 2>/dev/null || true
+stellar keys generate smoke-verifier --no-fund || stellar keys generate smoke-verifier
+VERIFIER_SECRET=$(stellar keys show smoke-verifier 2>/dev/null)
 VERIFIER_ADDRESS=$(stellar keys address smoke-verifier 2>/dev/null)
 [[ -n "$VERIFIER_ADDRESS" ]] || fail "Could not generate smoke-verifier keypair"
+stellar keys fund "$VERIFIER_ADDRESS" --network testnet 2>/dev/null || true
 
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 invoke "$CREDIT_REGISTRY_ID" register_verifier \
@@ -97,9 +111,12 @@ IS_VERIFIER=$(invoke "$CREDIT_REGISTRY_ID" is_verifier --address "$VERIFIER_ADDR
 assert_eq "credit_registry.is_verifier()" "$IS_VERIFIER" "true"
 
 log "Registering a test issuer"
-ISSUER_KEY=$(stellar keys generate smoke-issuer --no-fund 2>/dev/null || true)
+stellar keys rm smoke-issuer 2>/dev/null || true
+stellar keys generate smoke-issuer --no-fund || stellar keys generate smoke-issuer
+ISSUER_SECRET=$(stellar keys show smoke-issuer 2>/dev/null)
 ISSUER_ADDRESS=$(stellar keys address smoke-issuer 2>/dev/null)
 [[ -n "$ISSUER_ADDRESS" ]] || fail "Could not generate smoke-issuer keypair"
+stellar keys fund "$ISSUER_ADDRESS" --network testnet 2>/dev/null || true
 
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 invoke "$CREDIT_REGISTRY_ID" register_issuer \
@@ -118,17 +135,17 @@ invoke "$CREDIT_REGISTRY_ID" register_methodology \
 pass "credit_registry.register_methodology() succeeded (or already registered)"
 
 log "Registering test project"
-invoke "$CREDIT_REGISTRY_ID" register_project \
+invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" register_project \
   --owner "$ISSUER_ADDRESS" \
   --project-id '"SMOKE-PROJ-001"' \
   --name '"Smoke Test Project"' \
   --description '"Automated smoke test project"' \
-  --location '"NG"' > /dev/null 2>&1 || true  # may already exist from prior run
+  --location '"NG"' 2>&1 || true  # may already exist from prior run
 pass "credit_registry.register_project() succeeded (or already registered)"
 
 log "Submitting a test credit"
 ISSUER_NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ISSUER_ADDRESS")
-CREDIT_ID=$(invoke "$CREDIT_REGISTRY_ID" submit_credit \
+CREDIT_ID=$(invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" submit_credit \
   --issuer "$ISSUER_ADDRESS" \
   --project-id '"SMOKE-PROJ-001"' \
   --vintage-year 2024 \
@@ -149,7 +166,7 @@ pass "credit_registry.get_credit() status = $CREDIT_STATUS"
 
 log "Approving and minting the credit"
 VERIFIER_NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$VERIFIER_ADDRESS")
-invoke "$CREDIT_REGISTRY_ID" approve_and_mint \
+invoke_as "$VERIFIER_SECRET" "$CREDIT_REGISTRY_ID" approve_and_mint \
   --verifier "$VERIFIER_ADDRESS" \
   --credit-id "$CREDIT_ID" \
   --nonce "$VERIFIER_NONCE" > /dev/null

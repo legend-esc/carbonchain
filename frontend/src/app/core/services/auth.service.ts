@@ -18,6 +18,16 @@ export class AuthService {
   readonly authState = this._authState.asReadonly();
   readonly authError = this._authError.asReadonly();
   readonly isAuthenticated = computed(() => this._authState() === 'authenticated');
+  readonly isAdmin = computed(() => {
+    const t = this._token();
+    if (!t) return false;
+    try {
+      const payload = JSON.parse(atob(t.split('.')[1]));
+      return payload.role === 'admin';
+    } catch {
+      return false;
+    }
+  });
 
   /**
    * Full SEP-10 flow:
@@ -60,5 +70,12 @@ export class AuthService {
     this._authState.set('unauthenticated');
     this._authError.set(null);
     this.wallet.disconnect();
+  }
+
+  /** Called by AuthInterceptor when a 401 is received mid-session. */
+  clearSession(): void {
+    this._token.set(null);
+    this._authState.set('unauthenticated');
+    this._authError.set(null);
   }
 }

@@ -12,6 +12,8 @@ import {
   Address,
   rpc,
 } from '@stellar/stellar-sdk';
+import { SequenceNumberManager } from './sequence-number-manager.service';
+import { RequestContextStore } from '../common/request-context';
 
 @Injectable()
 export class StellarService implements OnModuleInit {
@@ -20,7 +22,17 @@ export class StellarService implements OnModuleInit {
   private sorobanRpcServer: rpc.Server;
   private networkPassphrase: string;
 
-  constructor(private configService: ConfigService) {}
+  /** In-process cache for account info. Key: Stellar address. */
+  private readonly accountInfoCache = new Map<
+    string,
+    { value: Horizon.ServerApi.AccountRecord; expiresAt: number }
+  >();
+  private static readonly ACCOUNT_INFO_TTL_MS = 30_000;
+
+  constructor(
+    private configService: ConfigService,
+    private seqNoManager: SequenceNumberManager,
+  ) {}
 
   onModuleInit() {
     const horizonUrl =
@@ -53,15 +65,27 @@ export class StellarService implements OnModuleInit {
     this.logger.log(`StellarService initialized for ${network} network`);
   }
 
+  private async getNextSequenceNumber(publicKey: string): Promise<number> {
+    const cached = this.seqNoManager.getNextSequenceNumber(publicKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const account = await this.horizonServer.loadAccount(publicKey);
+    const seq = Number(account.sequenceNumber);
+    this.seqNoManager.cacheSequenceNumber(publicKey, seq);
+    return this.seqNoManager.getNextSequenceNumber(publicKey)!;
+  }
+
   async invokeContract(
     contractId: string,
     method: string,
     args: xdr.ScVal[] = [],
     signerKeypair: Keypair,
+    retries = 1,
   ): Promise<rpc.Api.GetTransactionResponse> {
-    const account = await this.horizonServer.loadAccount(
-      signerKeypair.publicKey(),
-    );
+    const pk = signerKeypair.publicKey();
+    const seq = await this.getNextSequenceNumber(pk);
+    const account = new Account(pk, seq.toString());
 
     const tx = new TransactionBuilder(account, {
       fee: '1000',
@@ -88,12 +112,40 @@ export class StellarService implements OnModuleInit {
       const preparedTx = rpc.assembleTransaction(tx, simulation).build();
       preparedTx.sign(signerKeypair);
 
-      const response = await this.sorobanRpcServer.sendTransaction(preparedTx);
+      try {
+        const response =
+          await this.sorobanRpcServer.sendTransaction(preparedTx);
 
-      if ((response.status as any) === 'PENDING') {
-        return this.pollTransactionStatus(response.hash);
+        if ((response.status as string) === 'PENDING') {
+          const result = await this.pollTransactionStatus(response.hash);
+          this.invalidateAccountInfoCache(pk);
+          return result;
+        }
+        throw new Error(`Transaction failed with status: ${response.status}`);
+      } catch (error: unknown) {
+        const isBadSeq =
+          (error as Error).message?.toLowerCase().includes('tx_bad_seq') ||
+          (error as any)?.response?.data?.extras?.result_codes?.transaction ===
+            'tx_bad_seq';
+      const response = await this.submitTransactionWithRetry(() =>
+        this.sorobanRpcServer.sendTransaction(preparedTx),
+      );
+
+        if (isBadSeq && retries > 0) {
+          this.logger.warn(
+            `tx_bad_seq for ${pk} (sig:${method}), resetting cache and retrying`,
+          );
+          this.seqNoManager.reset(pk);
+          return this.invokeContract(
+            contractId,
+            method,
+            args,
+            signerKeypair,
+            retries - 1,
+          );
+        }
+        throw error;
       }
-      throw new Error(`Transaction failed with status: ${response.status}`);
     } else {
       throw new Error(`Simulation failed: ${JSON.stringify(simulation)}`);
     }
@@ -102,10 +154,11 @@ export class StellarService implements OnModuleInit {
   async buildAndSubmit(
     operations: Operation[],
     signerKeypair: Keypair,
-  ): Promise<any> {
-    const account = await this.horizonServer.loadAccount(
-      signerKeypair.publicKey(),
-    );
+    retries = 1,
+  ): Promise<Horizon.HorizonApi.SubmitTransactionResponse> {
+    const pk = signerKeypair.publicKey();
+    const seq = await this.getNextSequenceNumber(pk);
+    const account = new Account(pk, seq.toString());
 
     const txBuilder = new TransactionBuilder(account, {
       fee: '1000',
@@ -119,7 +172,25 @@ export class StellarService implements OnModuleInit {
     const tx = txBuilder.setTimeout(30).build();
     tx.sign(signerKeypair);
 
-    return this.horizonServer.submitTransaction(tx);
+    try {
+      const result = await this.horizonServer.submitTransaction(tx);
+      this.invalidateAccountInfoCache(pk);
+      return result;
+    } catch (error: unknown) {
+      const err = error as any;
+      const isBadSeq =
+        err?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
+
+      if (isBadSeq && retries > 0) {
+        this.logger.warn(`tx_bad_seq for ${pk}, resetting cache and retrying`);
+        this.seqNoManager.reset(pk);
+        return this.buildAndSubmit(operations, signerKeypair, retries - 1);
+      }
+      throw error;
+    }
+    return this.submitTransactionWithRetry(() =>
+      this.horizonServer.submitTransaction(tx),
+    );
   }
 
   async getContractData(
@@ -173,6 +244,58 @@ export class StellarService implements OnModuleInit {
     throw new Error(`Transaction polling timed out for hash: ${hash}`);
   }
 
+  /**
+   * Issue #253 — Submit transaction with exponential backoff retry logic.
+   * Retries up to 3 times for transient errors (429, 503).
+   * Fails immediately for non-retryable errors (400, 404).
+   */
+  private async submitTransactionWithRetry<T>(
+    submitFn: () => Promise<T>,
+    maxRetries = 3,
+    initialDelayMs = 100,
+  ): Promise<T> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await submitFn();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Extract status code from error response
+        const statusCode = error?.response?.status;
+
+        // Fail immediately on non-retryable errors
+        if (statusCode === 400 || statusCode === 404) {
+          throw error;
+        }
+
+        // Only retry on transient errors (429, 503)
+        if (statusCode !== 429 && statusCode !== 503) {
+          throw error;
+        }
+
+        // Don't retry after max attempts
+        if (attempt === maxRetries) {
+          break;
+        }
+
+        // Exponential backoff with jitter
+        const exponentialDelay = initialDelayMs * Math.pow(2, attempt);
+        const jitter = Math.random() * exponentialDelay * 0.1; // 10% jitter
+        const delayMs = exponentialDelay + jitter;
+
+        this.logger.warn(
+          `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] Transaction submission failed with ${statusCode}, retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    throw lastError || new Error('Transaction submission failed');
+  }
+
   async readContract(
     contractId: string,
     method: string,
@@ -210,6 +333,33 @@ export class StellarService implements OnModuleInit {
     return undefined;
   }
 
+  /**
+   * Returns Horizon account info for `publicKey`.
+   * Results are cached for 30 seconds to avoid redundant Horizon calls on
+   * every request. The cache entry for an address is invalidated after every
+   * successful transaction submission for that address.
+   */
+  async getAccountInfo(
+    publicKey: string,
+  ): Promise<Horizon.ServerApi.AccountRecord> {
+    const now = Date.now();
+    const cached = this.accountInfoCache.get(publicKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+    const account = await this.horizonServer.loadAccount(publicKey);
+    this.accountInfoCache.set(publicKey, {
+      value: account as unknown as Horizon.ServerApi.AccountRecord,
+      expiresAt: now + StellarService.ACCOUNT_INFO_TTL_MS,
+    });
+    return account as unknown as Horizon.ServerApi.AccountRecord;
+  }
+
+  /** Invalidate the account info cache entry for `publicKey`. */
+  private invalidateAccountInfoCache(publicKey: string): void {
+    this.accountInfoCache.delete(publicKey);
+  }
+
   getHorizonServer(): Horizon.Server {
     return this.horizonServer;
   }
@@ -240,7 +390,7 @@ export class StellarService implements OnModuleInit {
       return response.events || [];
     } catch (error) {
       this.logger.error(
-        `Failed to fetch events for contract ${contractId}: ${(error as Error).message}`,
+        `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] Failed to fetch events for contract ${contractId}: ${(error as Error).message}`,
       );
       return [];
     }

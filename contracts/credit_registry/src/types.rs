@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, BytesN, Vec};
+use soroban_sdk::{contracttype, Address, String, BytesN};
 
 /// Unit convention: all `tonnes` fields are stored as fixed-point integers
 /// where 1 tonne = 1_000_000 units (0.1 tonne resolution = 100_000 units).

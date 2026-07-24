@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac } from 'crypto';
 import axios, { AxiosError } from 'axios';
 
 export interface Webhook {
@@ -28,6 +30,16 @@ export class WebhooksService {
   private deliveries: Map<string, WebhookDelivery> = new Map();
   private readonly MAX_RETRIES = 5;
   private readonly RETRY_DELAY_MS = 5000;
+  private readonly signatureHeaderName: string;
+  private readonly signatureAlgorithm: string;
+
+  constructor(private readonly configService: ConfigService) {
+    this.signatureHeaderName =
+      this.configService.get<string>('WEBHOOK_SIGNATURE_HEADER') ||
+      'x-mrv-signature';
+    this.signatureAlgorithm =
+      this.configService.get<string>('WEBHOOK_SIGNATURE_ALGO') || 'sha256';
+  }
 
   registerWebhook(url: string, events: string[]): Webhook {
     const id = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -156,5 +168,33 @@ export class WebhooksService {
         });
       }
     }
+  }
+
+  /**
+   * Generate HMAC signature for webhook payload using configured algorithm.
+   * @param payload - The payload string to sign
+   * @param secret - The secret key for HMAC
+   * @returns Hex-encoded signature
+   */
+  generateSignature(payload: string, secret: string): string {
+    return createHmac(this.signatureAlgorithm, secret)
+      .update(payload)
+      .digest('hex');
+  }
+
+  /**
+   * Get the configured webhook signature header name.
+   * @returns The header name (e.g., 'x-mrv-signature')
+   */
+  getSignatureHeaderName(): string {
+    return this.signatureHeaderName;
+  }
+
+  /**
+   * Get the configured webhook signature algorithm.
+   * @returns The algorithm name (e.g., 'sha256')
+   */
+  getSignatureAlgorithm(): string {
+    return this.signatureAlgorithm;
   }
 }

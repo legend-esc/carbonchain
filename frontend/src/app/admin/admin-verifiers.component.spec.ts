@@ -4,6 +4,9 @@ import { AdminVerifiersComponent } from './admin-verifiers.component';
 import { ApiService, VerifierInfo } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { ToastService } from '../core/services/toast.service';
+import { Router } from '@angular/router';
+import { TestBed as TB } from '@angular/core/testing';
+import { adminGuard } from '../core/guards/admin.guard';
 
 const MOCK_TOKEN = 'header.eyJyb2xlIjoiYWRtaW4ifQ.sig'; // role: admin
 
@@ -111,7 +114,9 @@ describe('AdminVerifiersComponent', () => {
     btn.click();
     fixture.detectChanges();
 
-    const modal = fixture.nativeElement.querySelector('[aria-labelledby="register-title"]') as HTMLElement;
+    const modal = fixture.nativeElement.querySelector(
+      '[aria-labelledby="register-title"]',
+    ) as HTMLElement;
     expect(modal).toBeTruthy();
   });
 
@@ -178,7 +183,9 @@ describe('AdminVerifiersComponent', () => {
     component.openConfigure(mockVerifier.address);
     fixture.detectChanges();
 
-    const modal = fixture.nativeElement.querySelector('[aria-labelledby="configure-title"]') as HTMLElement;
+    const modal = fixture.nativeElement.querySelector(
+      '[aria-labelledby="configure-title"]',
+    ) as HTMLElement;
     expect(modal).toBeTruthy();
     expect(modal.textContent).toContain(mockVerifier.address);
   });
@@ -202,7 +209,9 @@ describe('AdminVerifiersComponent', () => {
   });
 
   it('calls configureVerifier on submit and shows success toast', async () => {
-    apiSpy.configureVerifier.mockReturnValue(of({ configured: true, verifierId: mockVerifier.address }));
+    apiSpy.configureVerifier.mockReturnValue(
+      of({ configured: true, verifierId: mockVerifier.address }),
+    );
     component.openConfigure(mockVerifier.address);
     component.toggleMethodology('Verra VCS');
     component.toggleGeography('Africa');
@@ -246,7 +255,9 @@ describe('AdminVerifiersComponent', () => {
     component.openSuspend(mockVerifier.address);
     fixture.detectChanges();
 
-    const modal = fixture.nativeElement.querySelector('[aria-labelledby="suspend-title"]') as HTMLElement;
+    const modal = fixture.nativeElement.querySelector(
+      '[aria-labelledby="suspend-title"]',
+    ) as HTMLElement;
     expect(modal).toBeTruthy();
     expect(modal.textContent).toContain(mockVerifier.address);
   });
@@ -280,5 +291,44 @@ describe('AdminVerifiersComponent', () => {
 
     component.closeSuspend();
     expect(component['suspendingVerifier']()).toBeNull();
+  });
+});
+
+// ── Admin Guard redirect ──────────────────────────────────────────────────────
+
+describe('adminGuard', () => {
+  function runGuard(token: string | null, isAuthenticated: boolean) {
+    const authSpy = { token: () => token, isAuthenticated: () => isAuthenticated };
+    const routerSpy = { createUrlTree: vi.fn((path: string[]) => ({ path })) };
+
+    TB.configureTestingModule({
+      providers: [
+        { provide: AuthService, useValue: authSpy },
+        { provide: Router, useValue: routerSpy },
+      ],
+    });
+
+    const result = TB.runInInjectionContext(() => adminGuard({} as any, {} as any));
+    return { result, routerSpy };
+  }
+
+  it('redirects to /dashboard when authenticated but not admin', () => {
+    // non-admin token: payload role = "user"
+    const nonAdminToken = 'header.' + btoa(JSON.stringify({ role: 'user' })) + '.sig';
+    const { result, routerSpy } = runGuard(nonAdminToken, true);
+    expect(routerSpy.createUrlTree).toHaveBeenCalledWith(['/dashboard']);
+    expect(result).toEqual({ path: ['/dashboard'] });
+  });
+
+  it('allows access when authenticated and role is admin', () => {
+    const adminToken = 'header.' + btoa(JSON.stringify({ role: 'admin' })) + '.sig';
+    const { result } = runGuard(adminToken, true);
+    expect(result).toBe(true);
+  });
+
+  it('redirects to /connect-wallet when not authenticated', () => {
+    const { result, routerSpy } = runGuard(null, false);
+    expect(routerSpy.createUrlTree).toHaveBeenCalledWith(['/connect-wallet']);
+    expect(result).toEqual({ path: ['/connect-wallet'] });
   });
 });

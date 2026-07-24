@@ -2,16 +2,20 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideRouter } from '@angular/router';
 import { RetireComponent } from './retire.component';
+import { multipleOf100kValidator } from './retire.component';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
+import { CreditStore } from '../core/store/credit.store';
 import { signal } from '@angular/core';
 import { of } from 'rxjs';
+import { FormControl } from '@angular/forms';
 
 describe('RetireComponent', () => {
   let authServiceMock: Partial<AuthService>;
   let walletServiceMock: Partial<StellarWalletService>;
   let apiServiceMock: Partial<ApiService>;
+  let creditStoreMock: Partial<CreditStore>;
 
   beforeEach(() => {
     authServiceMock = {
@@ -32,6 +36,10 @@ describe('RetireComponent', () => {
       retireCredit: () => of({ retirementId: 'abc123' }),
     };
 
+    creditStoreMock = {
+      loadOne: vi.fn().mockResolvedValue(undefined),
+    };
+
     TestBed.configureTestingModule({
       imports: [RetireComponent],
       providers: [
@@ -40,6 +48,7 @@ describe('RetireComponent', () => {
         { provide: AuthService, useValue: authServiceMock },
         { provide: StellarWalletService, useValue: walletServiceMock },
         { provide: ApiService, useValue: apiServiceMock },
+        { provide: CreditStore, useValue: creditStoreMock },
       ],
     });
   });
@@ -82,6 +91,7 @@ describe('RetireComponent', () => {
     await comp.submit();
     expect(comp.step()).toBe('success');
     expect(comp.retirementId()).toBe('abc123');
+    expect(creditStoreMock.loadOne).toHaveBeenCalledWith('037176a1');
   });
 
   it('submit() sets error step on API failure', async () => {
@@ -96,6 +106,7 @@ describe('RetireComponent', () => {
     comp.goConfirm();
     await comp.submit();
     expect(comp.step()).toBe('error');
+    expect(creditStoreMock.loadOne).not.toHaveBeenCalled();
   });
 
   it('formatTonnes converts units correctly', () => {
@@ -103,5 +114,48 @@ describe('RetireComponent', () => {
     const result = fixture.componentInstance.formatTonnes(1_000_000);
     expect(result).toContain('1');
     expect(result).toContain('t');
+  });
+
+  it('tonnesError is true for non-multiple (150001)', () => {
+    const fixture = TestBed.createComponent(RetireComponent);
+    fixture.componentInstance.tonnes = 150_001;
+    expect(fixture.componentInstance.tonnesError).toBe(true);
+  });
+
+  it('tonnesError is false for valid multiple (100000)', () => {
+    const fixture = TestBed.createComponent(RetireComponent);
+    fixture.componentInstance.tonnes = 100_000;
+    expect(fixture.componentInstance.tonnesError).toBe(false);
+  });
+});
+
+// ── multipleOf100kValidator ───────────────────────────────────────────────────
+
+describe('multipleOf100kValidator', () => {
+  const validate = multipleOf100kValidator();
+
+  it('returns error for non-multiple (150001)', () => {
+    const ctrl = new FormControl(150_001);
+    expect(validate(ctrl)).toEqual({ multipleOf100k: true });
+  });
+
+  it('returns null for valid multiple (100000)', () => {
+    const ctrl = new FormControl(100_000);
+    expect(validate(ctrl)).toBeNull();
+  });
+
+  it('returns null for 1_000_000', () => {
+    const ctrl = new FormControl(1_000_000);
+    expect(validate(ctrl)).toBeNull();
+  });
+
+  it('returns error for zero', () => {
+    const ctrl = new FormControl(0);
+    expect(validate(ctrl)).toEqual({ multipleOf100k: true });
+  });
+
+  it('returns error for negative', () => {
+    const ctrl = new FormControl(-100_000);
+    expect(validate(ctrl)).toEqual({ multipleOf100k: true });
   });
 });

@@ -43,7 +43,6 @@ stellar keys fund "$ADMIN_ADDRESS" --network testnet || true
 
 log "Building Soroban contracts..."
 (cd "$SCRIPT_DIR/../contracts" && \
-  CARGO_TARGET_WASM32V1_NONE_RUSTFLAGS="-C link-args=--allow-multiple-definition" \
   cargo build --target wasm32v1-none --release --quiet)
 
 WASM_DIR="$SCRIPT_DIR/../contracts/target/wasm32v1-none/release"
@@ -87,7 +86,8 @@ stellar contract invoke \
   --network testnet \
   -- initialize \
   --admin "$ADMIN_ADDRESS" \
-  --retirement-contract "$RETIREMENT_ID"
+  --retirement-contract "$RETIREMENT_ID" \
+  --required-approvals 1
 
 log "Initializing retirement..."
 stellar contract invoke \

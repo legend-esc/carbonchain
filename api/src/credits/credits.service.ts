@@ -256,6 +256,113 @@ export class CreditsService {
   }
 
   /**
+   * Get the full lifecycle/provenance of a credit including all lifecycle events.
+   * Returns ordered events showing submit → approval → transfers → retirement.
+   */
+  async getCreditProvenance(creditId: string): Promise<Array<{
+    action: string;
+    actor: string;
+    timestamp: number;
+    txHash: string;
+  }>> {
+    this.logger.log(`Fetching provenance for credit ${creditId}`);
+
+    try {
+      // Fetch all events from the credit registry contract
+      const events = await this.stellarService.getContractEvents(
+        this.contractId,
+      );
+
+      const creditIdHex = creditId.toLowerCase();
+      const provenanceEvents: Array<{
+        action: string;
+        actor: string;
+        timestamp: number;
+        txHash: string;
+        ledger: number; // for sorting
+      }> = [];
+
+      for (const event of events) {
+        const eventType = this.parseEventType(event);
+        const topics = event.topic || [];
+        const data = event.value || {};
+
+        // Map events to provenance records
+        if (eventType === 'CreditSubmitted') {
+          const creditIdData = data.credit_id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Submitted',
+              actor: String(data.issuer || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditMinted') {
+          const creditIdData = data.id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Approved',
+              actor: String(data.verifier || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditTransferred') {
+          const creditIdData = data.credit_id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Transferred',
+              actor: String(data.from || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditRetired') {
+          // CreditRetired events come from retirement contract
+          const creditIdData = data.credit_id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Retired',
+              actor: String(data.buyer || 'unknown'),
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        } else if (eventType === 'CreditFlagged') {
+          const creditIdData = data.id as string | undefined;
+          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+            provenanceEvents.push({
+              action: 'Flagged',
+              actor: 'system',
+              timestamp: this.parseEventTimestamp(event),
+              txHash: event.txHash || '',
+              ledger: event.ledger || 0,
+            });
+          }
+        }
+      }
+
+      // Sort by ledger (timestamp) to maintain chronological order
+      provenanceEvents.sort((a, b) => a.ledger - b.ledger);
+
+      // Remove the temporary ledger field before returning
+      return provenanceEvents.map(({ ledger, ...rest }) => rest);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to fetch provenance for credit ${creditId}: ${(error as Error).message}`,
+      );
+      throw new NotFoundException(
+        `Could not retrieve provenance for credit ${creditId}`,
+      );
+    }
+  }
+
+  /**
    * Invalidate all cached entries for a specific credit and the list cache.
    * Call this whenever a credit's status changes (approve, retire, flag).
    */
@@ -283,6 +390,25 @@ export class CreditsService {
       );
       return [];
     }
+  }
+
+  private parseEventType(event: any): string {
+    const topics = event.topic || [];
+    if (topics.length > 0) {
+      const firstTopic = topics[0];
+      if (typeof firstTopic === 'string') {
+        return firstTopic;
+      }
+    }
+    return 'unknown';
+  }
+
+  private parseEventTimestamp(event: any): number {
+    // Use closed_at from the event if available, otherwise use current time
+    if (event.closedAt) {
+      return Math.floor(Number(event.closedAt) / 1000);
+    }
+    return Math.floor(Date.now() / 1000);
   }
 
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {

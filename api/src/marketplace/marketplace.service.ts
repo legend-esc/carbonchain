@@ -58,6 +58,37 @@ export class MarketplaceService {
     return this.mapOffer(offerId, scValToNative(retval));
   }
 
+  /** Returns paginated active offers with optional filters. */
+  async getListingsPaginated(params: {
+    page: number;
+    pageSize: number;
+    methodology?: string;
+    minPrice?: number;
+    maxPrice?: number;
+  }): Promise<{ data: Offer[]; total: number; page: number; pageSize: number }> {
+    let offers = await this.getListings();
+
+    if (params.methodology) {
+      const m = params.methodology.toLowerCase();
+      offers = offers.filter((o) => o.methodology?.toLowerCase() === m);
+    }
+    if (params.minPrice !== undefined) {
+      offers = offers.filter((o) => Number(o.price_xlm) >= params.minPrice!);
+    }
+    if (params.maxPrice !== undefined) {
+      offers = offers.filter((o) => Number(o.price_xlm) <= params.maxPrice!);
+    }
+
+    const total = offers.length;
+    const start = (params.page - 1) * params.pageSize;
+    return {
+      data: offers.slice(start, start + params.pageSize),
+      total,
+      page: params.page,
+      pageSize: params.pageSize,
+    };
+  }
+
   /** Returns all active (open) offers from the contract. */
   async getListings(): Promise<Offer[]> {
     const args = [nativeToScVal(true, { type: 'bool' })];
@@ -131,6 +162,7 @@ export class MarketplaceService {
       tonnes_available: String(n.tonnes),
       created_at: Number(n.created_at),
       status: n.active ? 'open' : 'cancelled',
+      methodology: n.methodology ? String(n.methodology) : undefined,
     };
   }
 }

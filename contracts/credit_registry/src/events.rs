@@ -1,77 +1,115 @@
-use soroban_sdk::{Env, Address, BytesN, Symbol, String, symbol_short};
+use soroban_sdk::{contractevent, Address, BytesN, String};
 
-/// Event topics use Symbol::new for consistent formatting across all contracts.
-/// This ensures off-chain indexers can reliably parse event schemas.
-
-pub fn credit_submitted(env: &Env, issuer: Address, project_id: String, credit_id: BytesN<32>, tonnes: i128) {
-    let topics = (symbol_short!("submit"), issuer);
-    env.events().publish(topics, (project_id, credit_id, tonnes));
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractPaused {
+    pub admin: Address,
 }
 
-pub fn credit_minted(env: &Env, verifier: Address, id: BytesN<32>) {
-    let topics = (Symbol::new(env, "credit_minted"), verifier);
-    env.events().publish(topics, id);
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractUnpaused {
+    pub admin: Address,
 }
 
-pub fn credit_flagged(env: &Env, id: BytesN<32>, reason: String) {
-    let topics = (Symbol::new(env, "credit_flagged"),);
-    env.events().publish(topics, (id, reason));
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierRegistered {
+    pub admin: Address,
+    pub verifier: Address,
 }
 
-pub fn credit_disputed(env: &Env, id: BytesN<32>, disputer: Address, evidence: String) {
-    let topics = (symbol_short!("dispute"), disputer);
-    env.events().publish(topics, (id, evidence));
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierRemoved {
+    pub admin: Address,
+    pub verifier: Address,
 }
 
-pub fn dispute_resolved(env: &Env, id: BytesN<32>, outcome: u32) {
-    let topics = (symbol_short!("resolved"),);
-    env.events().publish(topics, (id, outcome));
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditSubmitted {
+    pub issuer: Address,
+    pub project_id: String,
+    pub credit_id: BytesN<32>,
+    pub tonnes: i128,
 }
 
-pub fn credit_expired(env: &Env, id: BytesN<32>) {
-    let topics = (symbol_short!("expired"),);
-    env.events().publish(topics, id);
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditMinted {
+    pub verifier: Address,
+    pub id: BytesN<32>,
 }
 
-pub fn credits_merged(env: &Env, new_id: BytesN<32>, source_count: u32) {
-    let topics = (symbol_short!("merged"),);
-    env.events().publish(topics, (new_id, source_count));
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditFlagged {
+    pub id: BytesN<32>,
+    pub reason: String,
 }
 
-pub fn project_registered(env: &Env, project_id: String, owner: Address) {
-    let topics = (symbol_short!("proj_reg"), owner);
-    env.events().publish(topics, project_id);
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditDisputed {
+    pub disputer: Address,
+    pub credit_id: BytesN<32>,
+    pub evidence: String,
 }
 
-pub fn verifier_registered(env: &Env, admin: Address, verifier: Address) {
-    let topics = (Symbol::new(env, "VerifierRegistered"), admin);
-    env.events().publish(topics, verifier);
+#[contractevent]
+#[derive(Clone)]
+pub struct DisputeResolved {
+    pub credit_id: BytesN<32>,
+    pub outcome: u32,
 }
 
-pub fn verifier_removed(env: &Env, admin: Address, verifier: Address) {
-    let topics = (Symbol::new(env, "verifier_removed"), admin);
-    env.events().publish(topics, verifier);
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditExpired {
+    pub credit_id: BytesN<32>,
 }
 
-pub fn contract_paused(env: &Env, admin: Address) {
-    env.events().publish((Symbol::new(env, "contract_paused"),), admin);
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditsMerged {
+    pub new_id: BytesN<32>,
+    pub source_count: u32,
 }
 
-pub fn contract_unpaused(env: &Env, admin: Address) {
-    env.events().publish((Symbol::new(env, "contract_unpaused"),), admin);
+#[contractevent]
+#[derive(Clone)]
+pub struct ProjectRegistered {
+    pub owner: Address,
+    pub project_id: String,
 }
 
-pub fn credit_transferred(env: &Env, from: Address, to: Address, credit_id: BytesN<32>) {
-    let topics = (symbol_short!("xfer"),);
-    env.events().publish(topics, (from, to, credit_id));
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditTransferred {
+    pub from: Address,
+    pub to: Address,
+    pub credit_id: BytesN<32>,
 }
 
-pub fn credit_split(env: &Env, original_id: BytesN<32>, child1_id: BytesN<32>, child2_id: BytesN<32>) {
-    let topics = (symbol_short!("split"),);
-    env.events().publish(topics, (original_id, child1_id, child2_id));
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditSplit {
+    pub original_id: BytesN<32>,
+    pub child1_id: BytesN<32>,
+    pub child2_id: BytesN<32>,
 }
 
-pub fn batch_retired(env: &Env, buyer: Address, count: u32) {
-    let topics = (symbol_short!("batch_ret"), buyer);
-    env.events().publish(topics, count);
+#[contractevent]
+#[derive(Clone)]
+pub struct SessionNew {
+    pub initiator: Address,
+    pub session_id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct BatchRetired {
+    pub buyer: Address,
+    pub count: u32,
 }

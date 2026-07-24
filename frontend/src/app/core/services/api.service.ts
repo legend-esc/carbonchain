@@ -35,6 +35,14 @@ export interface VerifierConfig {
   geographies?: string[];
 }
 
+export interface ProvenanceEvent {
+  event: string;
+  actor: string;
+  timestamp: number;
+  tx_hash?: string;
+  detail?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -93,6 +101,11 @@ export class ApiService {
   /** GET /credits/:id */
   getCredit(id: string): Observable<CreditMetadata> {
     return this.http.get<CreditMetadata>(`${this.baseUrl}/credits/${id}`);
+  }
+
+  /** GET /credits/:id/provenance */
+  getCreditProvenance(id: string): Observable<ProvenanceEvent[]> {
+    return this.http.get<ProvenanceEvent[]>(`${this.baseUrl}/credits/${id}/provenance`);
   }
 
   /** GET /credits/project/:projectId */
@@ -161,7 +174,10 @@ export class ApiService {
   }
 
   /** POST /admin/verifiers/register */
-  registerVerifier(address: string, token: string): Observable<{ registered: boolean; address: string }> {
+  registerVerifier(
+    address: string,
+    token: string,
+  ): Observable<{ registered: boolean; address: string }> {
     return this.http.post<{ registered: boolean; address: string }>(
       `${this.baseUrl}/admin/verifiers/register`,
       { address },
@@ -179,7 +195,11 @@ export class ApiService {
   }
 
   /** POST /admin/verifiers/:id/configure */
-  configureVerifier(id: string, config: VerifierConfig, token: string): Observable<{ configured: boolean; verifierId: string }> {
+  configureVerifier(
+    id: string,
+    config: VerifierConfig,
+    token: string,
+  ): Observable<{ configured: boolean; verifierId: string }> {
     return this.http.post<{ configured: boolean; verifierId: string }>(
       `${this.baseUrl}/admin/verifiers/${id}/configure`,
       config,
@@ -192,4 +212,11 @@ export class ApiService {
   private authHeaders(token: string): HttpHeaders {
     return new HttpHeaders({ Authorization: `Bearer ${token}` });
   }
+}
+
+export interface VerifierRecord {
+  address: string;
+  name: string;
+  status: 'pending' | 'approved' | 'removed';
+  registered_at: number;
 }

@@ -1,4 +1,11 @@
 header { font-size: 0.9rem; }
+.offline-banner {
+  background: #fff3cd;
+  color: #856404;
+  text-align: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+}
 .app-header {
   display: flex;
   align-items: center;

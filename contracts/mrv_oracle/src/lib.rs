@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, symbol_short,
-    Env, Address, String, Vec, Symbol, IntoVal,
+    contract, contractimpl, contracttype, contracterror, contractevent,
+    Env, Address, String, Vec, IntoVal,
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -51,6 +51,55 @@ pub enum OracleError {
     InvalidProject     = 126,
     InvalidTimestamp   = 127,
     NoPendingAdmin     = 128,
+    InvalidReading     = 129,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct MrvInit {
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct Paused {
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct Unpaused {
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct OrcDup {
+    pub oracle: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct OrcNew {
+    pub oracle: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct MrvUpd {
+    pub oracle: Address,
+    pub project_id: String,
+    pub tonnes: i128,
+    pub anomaly: bool,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct AnomalyDetected {
+    pub oracle: Address,
+    pub project_id: String,
+    pub tonnes: i128,
+    pub prev_tonnes: i128,
 }
 
 // Maximum MRV history entries retained per project (ring-buffer eviction).
@@ -74,7 +123,7 @@ impl MrvOracle {
     /// - [`OracleError::AlreadyInitialized`] — contract has already been initialised.
     pub fn initialize(env: Env, admin: Address) -> Result<(), OracleError> {
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.events().publish((symbol_short!("mrv_init"),), admin);
+        MrvInit { admin }.publish(&env);
         Ok(())
     }
 
@@ -88,7 +137,7 @@ impl MrvOracle {
     pub fn pause(env: Env, admin: Address) -> Result<(), OracleError> {
         Self::require_admin(&env, &admin)?;
         env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((symbol_short!("paused"),), admin);
+        Paused { admin }.publish(&env);
         Ok(())
     }
 
@@ -100,7 +149,7 @@ impl MrvOracle {
     pub fn unpause(env: Env, admin: Address) -> Result<(), OracleError> {
         Self::require_admin(&env, &admin)?;
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("unpaused"),), admin);
+        Unpaused { admin }.publish(&env);
         Ok(())
     }
 
@@ -120,21 +169,48 @@ impl MrvOracle {
     /// - [`OracleError::NotInitialized`] — contract has not been initialised.
     /// - [`OracleError::Unauthorized`] — caller is not the admin.
     /// - [`OracleError::InvalidNonce`] — `nonce` does not match the current admin nonce.
-    pub fn register_oracle(env: Env, admin: Address, oracle: Address) -> Result<bool, OracleError> {
+    pub fn register_oracle(env: Env, admin: Address, oracle: Address, nonce: u64) -> Result<bool, OracleError> {
         Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(OracleError::InvalidNonce);
+        }
         let mut set: Vec<Address> = env
             .storage().instance()
             .get(&DataKey::OracleSet)
             .unwrap_or_else(|| Vec::new(&env));
         if set.contains(&oracle) {
             // Already registered — emit a distinct event so callers know.
-            env.events().publish((symbol_short!("orc_dup"),), oracle);
+            OrcDup { oracle: oracle.clone() }.publish(&env);
             return Ok(false);
         }
         set.push_back(oracle.clone());
         env.storage().instance().set(&DataKey::OracleSet, &set);
-        env.events().publish((symbol_short!("orc_new"),), oracle);
+        OrcNew { oracle: oracle.clone() }.publish(&env);
         Ok(true)
+    }
+
+    /// Returns the total number of registered oracles.
+    pub fn get_oracle_count(env: Env) -> u32 {
+        let set: Vec<Address> = env
+            .storage().instance()
+            .get(&DataKey::OracleSet)
+            .unwrap_or_else(|| Vec::new(&env));
+        set.len()
+    }
+
+    /// Returns a page of registered oracles. `page_size` is capped at 50.
+    pub fn list_oracles(env: Env, page: u32, page_size: u32) -> Vec<Address> {
+        let effective_size = if page_size > 50 { 50 } else { page_size };
+        let set: Vec<Address> = env
+            .storage().instance()
+            .get(&DataKey::OracleSet)
+            .unwrap_or_else(|| Vec::new(&env));
+        let start = (page * effective_size) as usize;
+        let mut result: Vec<Address> = Vec::new(&env);
+        for i in start..(start + effective_size as usize).min(set.len() as usize) {
+            result.push_back(set.get(i as u32).unwrap());
+        }
+        result
     }
 
     /// Submit a new MRV reading for a project. Returns `true` if an anomaly was detected.
@@ -171,6 +247,9 @@ impl MrvOracle {
         if timestamp > env.ledger().timestamp() {
             return Err(OracleError::InvalidTimestamp);
         }
+        if tonnes < 0 {
+            return Err(OracleError::InvalidReading);
+        }
 
         // Validate project exists in registry
         let credits: soroban_sdk::Vec<soroban_sdk::BytesN<32>> = env.invoke_contract(
@@ -182,7 +261,7 @@ impl MrvOracle {
             return Err(OracleError::InvalidProject);
         }
 
-        let anomaly = Self::detect_anomaly(&env, &project_id, tonnes)?;
+        let (anomaly, prev_tonnes) = Self::detect_anomaly(&env, &project_id, tonnes)?;
 
         let point = MrvDataPoint {
             oracle: oracle.clone(),
@@ -208,10 +287,10 @@ impl MrvOracle {
         env.storage().persistent().set(&hist_key, &history);
         env.storage().persistent().extend_ttl(&hist_key, TTL_THRESHOLD, MIN_TTL);
 
-        env.events().publish(
-            (symbol_short!("mrv_upd"), oracle),
-            (project_id, tonnes, anomaly),
-        );
+        MrvUpd { oracle: oracle.clone(), project_id: project_id.clone(), tonnes, anomaly }.publish(&env);
+        if anomaly {
+            AnomalyDetected { oracle, project_id, tonnes, prev_tonnes }.publish(&env);
+        }
 
         Ok(anomaly)
     }
@@ -284,6 +363,21 @@ impl MrvOracle {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Returns individual MRV data points for `project_id` where `from_ts <= recorded_at <= to_ts`.
+    pub fn get_history_range(env: Env, project_id: String, from_ts: u64, to_ts: u64) -> Vec<MrvDataPoint> {
+        let history: Vec<MrvDataPoint> = env.storage()
+            .persistent()
+            .get(&DataKey::History(project_id))
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut result: Vec<MrvDataPoint> = Vec::new(&env);
+        for point in history.iter() {
+            if point.recorded_at >= from_ts && point.recorded_at <= to_ts {
+                result.push_back(point);
+            }
+        }
+        result
+    }
+
     /// Aggregate MRV readings over a time range.
     /// Returns (sum_tonnes, average_tonnes) for readings where from_ts <= recorded_at <= to_ts.
     pub fn get_mrv_aggregate(
@@ -347,19 +441,19 @@ impl MrvOracle {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 
-    /// Returns true if `new_tonnes` deviates more than 20% from the last reading.
-    fn detect_anomaly(env: &Env, project_id: &String, new_tonnes: i128) -> Result<bool, OracleError> {
+    /// Returns `(is_anomaly, prev_tonnes)` for the latest reading of `project_id`.
+    fn detect_anomaly(env: &Env, project_id: &String, new_tonnes: i128) -> Result<(bool, i128), OracleError> {
         let prev: Option<MrvDataPoint> = env
             .storage().persistent()
             .get(&DataKey::Latest(project_id.clone()));
         match prev {
-            None => Ok(false),
-            Some(p) if p.tonnes == 0 => Ok(false),
+            None => Ok((false, 0)),
+            Some(p) if p.tonnes == 0 => Ok((false, 0)),
             Some(p) => {
                 let diff = (new_tonnes - p.tonnes).abs();
                 // diff / prev > 0.20  ⟺  diff * 5 > prev
                 let diff_times_5 = diff.checked_mul(5).ok_or(OracleError::Overflow)?;
-                Ok(diff_times_5 > p.tonnes.abs())
+                Ok((diff_times_5 > p.tonnes.abs(), p.tonnes))
             }
         }
     }
@@ -374,31 +468,32 @@ mod tests {
 
     fn setup() -> (Env, MrvOracleClient<'static>, Address, Address, Address) {
         let env = Env::default();
+        env.budget().reset_unlimited();
         env.mock_all_auths();
         env.ledger().set_timestamp(1735689600);
-        
-        let registry_id = env.register(carbonchain_credit_registry::CreditRegistry, ());
-        let registry_client = carbonchain_credit_registry::CreditRegistryClient::new(&env, &registry_id);
+
+        let registry = carbonchain_credit_registry::test_helpers::RegistryHelper::deploy(&env);
+        let registry_id = registry.id.clone();
         let admin = Address::generate(&env);
         let verifier = Address::generate(&env);
         let retirement = Address::generate(&env);
-        registry_client.initialize(&admin, &retirement, &1);
-        let nonce = registry_client.get_nonce(&admin);
-        registry_client.register_verifier(&admin, &verifier, &nonce);
-        
+        registry.initialize(&admin, &retirement, 1);
+        let nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &verifier, nonce);
+
         let issuer = Address::generate(&env);
-        let anonce = registry_client.get_nonce(&admin);
-        registry_client.register_issuer(&admin, &issuer, &anonce);
-        let anonce2 = registry_client.get_nonce(&admin);
-        registry_client.register_methodology(
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
             &admin,
             &String::from_str(&env, "VCS"),
             &String::from_str(&env, "Verified Carbon Standard"),
-            &anonce2,
+            anonce2,
         );
         for proj in ["PROJ-001", "PROJ-AGG", "PROJ-EMPTY", "PROJ-CAP"] {
-            let anonce_proj = registry_client.get_nonce(&admin);
-            registry_client.register_project(
+            let anonce_proj = registry.get_nonce(&admin);
+            registry.register_project(
                 &admin,
                 &String::from_str(&env, proj),
                 &String::from_str(&env, "Test Project"),
@@ -407,36 +502,37 @@ mod tests {
             );
         }
 
-        let inonce = registry_client.get_nonce(&issuer);
-        registry_client.submit_credit(
+        let inonce = registry.get_nonce(&issuer);
+        registry.submit_credit(
             &issuer,
             &String::from_str(&env, "PROJ-001"),
-            &2024,
+            2024,
             &String::from_str(&env, "VCS"),
             &String::from_str(&env, "NG"),
-            &1_000_000,
+            1_000_000,
             &String::from_str(&env, "bafybei123"),
-            &inonce,
+            inonce,
         );
         for proj in ["PROJ-AGG", "PROJ-EMPTY", "PROJ-CAP"] {
-            let inonce2 = registry_client.get_nonce(&issuer);
-            registry_client.submit_credit(
+            let inonce2 = registry.get_nonce(&issuer);
+            registry.submit_credit(
                 &issuer,
                 &String::from_str(&env, proj),
-                &2024,
+                2024,
                 &String::from_str(&env, "VCS"),
                 &String::from_str(&env, "NG"),
-                &1_000_000,
+                1_000_000,
                 &String::from_str(&env, "bafybei456"),
-                &inonce2,
+                inonce2,
             );
         }
-        
+
         let id = env.register(MrvOracle, ());
         let client = MrvOracleClient::new(&env, &id);
         let oracle = Address::generate(&env);
         client.initialize(&admin);
-        client.register_oracle(&admin, &oracle);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_oracle(&admin, &oracle, &reg_nonce);
         (env, client, oracle, registry_id, admin)
     }
 
@@ -498,8 +594,22 @@ mod tests {
     }
 
     #[test]
-    fn test_no_anomaly_on_small_deviation() {
+    fn test_anomaly_detected_event_emitted() {
         let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let nonce = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &1_000_000, &env.ledger().timestamp(), &registry_id, &nonce);
+        // Clear events from first update
+        let events_before = env.events().all().events().len();
+        let nonce2 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &1_500_000, &env.ledger().timestamp(), &registry_id, &nonce2);
+        let all_events = env.events().all();
+        // After anomalous update: MrvUpd + AnomalyDetected — total must be 2 more than before.
+        assert_eq!(all_events.events().len(), events_before + 2);
+    }
+
+    #[test]
+    fn test_no_anomaly_on_small_deviation() {        let (env, client, oracle, registry_id, _admin) = setup();
         let proj = String::from_str(&env, "PROJ-001");
         let nonce = client.get_nonce(&oracle);
         client.update_mrv_data(&oracle, &proj, &1_000_000, &env.ledger().timestamp(), &registry_id, &nonce);
@@ -559,7 +669,7 @@ mod tests {
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         client.initialize(&admin);
-        let newly_added = client.register_oracle(&admin, &oracle);
+        let newly_added = client.register_oracle(&admin, &oracle, &0u64);
         assert!(newly_added);
     }
 
@@ -572,9 +682,9 @@ mod tests {
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         client.initialize(&admin);
-        client.register_oracle(&admin, &oracle);
+        client.register_oracle(&admin, &oracle, &0u64);
         // Second registration of the same oracle must return false.
-        let newly_added = client.register_oracle(&admin, &oracle);
+        let newly_added = client.register_oracle(&admin, &oracle, &1u64);
         assert!(!newly_added);
     }
 
@@ -587,14 +697,26 @@ mod tests {
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         client.initialize(&admin);
-        client.register_oracle(&admin, &oracle);
+        client.register_oracle(&admin, &oracle, &0u64);
         // Duplicate registration must emit exactly one event: orc_dup.
         let events_after = env.events().all();
         assert_eq!(events_after.events().len(), 1);
     }
 
-    // ── Pause tests ──────────────────────────────────────────────────────────
+    #[test]
+    fn test_register_oracle_invalid_nonce_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        client.initialize(&admin);
+        // Wrong nonce (1 instead of 0) must be rejected.
+        assert!(client.try_register_oracle(&admin, &oracle, &1u64).is_err());
+    }
 
+    // ── Pause tests ──────────────────────────────────────────────────────────
     #[test]
     fn test_pause_blocks_update_mrv_data() {
         let (env, client, oracle, registry_id, admin) = setup();
@@ -621,6 +743,14 @@ mod tests {
         let (env, client, _, _, _) = setup();
         let rando = Address::generate(&env);
         assert!(client.try_pause(&rando).is_err());
+    }
+
+    #[test]
+    fn test_negative_tonnes_rejected() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let nonce = client.get_nonce(&oracle);
+        assert!(client.try_update_mrv_data(&oracle, &proj, &-1, &env.ledger().timestamp(), &registry_id, &nonce).is_err());
     }
 
     #[test]
@@ -656,5 +786,90 @@ mod tests {
         let (sum, avg) = client.get_mrv_aggregate(&proj, &0, &1);
         assert_eq!(sum, 0);
         assert_eq!(avg, 0);
+    }
+
+    // ── Issue #242: get_history_range ────────────────────────────────────────
+
+    #[test]
+    fn test_get_history_range_partial() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let base_ts = env.ledger().timestamp();
+
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &1_000_000, &base_ts, &registry_id, &n1);
+        let n2 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &2_000_000, &base_ts, &registry_id, &n2);
+        let n3 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &3_000_000, &base_ts, &registry_id, &n3);
+
+        // All three share the same timestamp; query the exact range
+        let range = client.get_history_range(&proj, &base_ts, &base_ts);
+        assert_eq!(range.len(), 3);
+    }
+
+    #[test]
+    fn test_get_history_range_empty_result() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+        let base_ts = env.ledger().timestamp();
+
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(&oracle, &proj, &1_000_000, &base_ts, &registry_id, &n1);
+
+        // Query a range that contains no recorded points
+        let range = client.get_history_range(&proj, &(base_ts + 1), &(base_ts + 100));
+        assert_eq!(range.len(), 0);
+    }
+
+    // ── Issue #243: get_oracle_count and list_oracles ────────────────────────
+
+    #[test]
+    fn test_get_oracle_count() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        assert_eq!(client.get_oracle_count(), 0);
+        client.register_oracle(&admin, &Address::generate(&env));
+        client.register_oracle(&admin, &Address::generate(&env));
+        assert_eq!(client.get_oracle_count(), 2);
+    }
+
+    #[test]
+    fn test_list_oracles_pagination() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        for _ in 0..5 {
+            client.register_oracle(&admin, &Address::generate(&env));
+        }
+        // page 0, size 3 → 3 results
+        assert_eq!(client.list_oracles(&0, &3).len(), 3);
+        // page 1, size 3 → 2 remaining
+        assert_eq!(client.list_oracles(&1, &3).len(), 2);
+    }
+
+    #[test]
+    fn test_list_oracles_page_size_capped_at_50() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        for _ in 0..5 {
+            client.register_oracle(&admin, &Address::generate(&env));
+        }
+        // page_size=100 is capped to 50 internally; only 5 exist so returns 5
+        assert_eq!(client.list_oracles(&0, &100).len(), 5);
     }
 }

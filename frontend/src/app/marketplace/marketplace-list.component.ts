@@ -40,12 +40,15 @@ import { signal, computed } from '@angular/core';
             @for (offer of offers(); track offer.id) {
               <tr class="offer-row" (click)="offerSelected.emit(offer)" style="cursor:pointer">
                 <td class="mono">{{ offer.id }}</td>
-                <td class="mono">{{ offer.credit_id | slice:0:12 }}…</td>
-                <td class="mono">{{ offer.seller | slice:0:8 }}…</td>
+                <td class="mono">{{ offer.credit_id | slice: 0 : 12 }}…</td>
+                <td class="mono">{{ offer.seller | slice: 0 : 8 }}…</td>
                 <td>{{ formatTonnes(offer.tonnes_available) }}</td>
                 <td>{{ formatXlm(offer.price_xlm) }}</td>
                 <td>
-                  <button class="btn btn-sm btn-primary" (click)="$event.stopPropagation(); offerSelected.emit(offer)">
+                  <button
+                    class="btn btn-sm btn-primary"
+                    (click)="$event.stopPropagation(); offerSelected.emit(offer)"
+                  >
                     View
                   </button>
                 </td>
@@ -56,22 +59,68 @@ import { signal, computed } from '@angular/core';
       }
     </div>
   `,
-  styles: [`
-    .listings { width: 100%; }
-    .listings__toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-    h2 { margin: 0; }
-    .status { color: #888; }
-    .error { color: #e53935; }
-    .offer-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    .offer-table th, .offer-table td { padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; text-align: left; }
-    .offer-table th { background: #f5f5f5; font-weight: 600; }
-    .offer-row:hover { background: #f9f9f9; }
-    .mono { font-family: monospace; }
-    .btn { padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; border: none; font-size: 0.85rem; }
-    .btn-primary { background: #4caf50; color: #fff; }
-    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-    .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
-  `],
+  styles: [
+    `
+      .listings {
+        width: 100%;
+      }
+      .listings__toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0;
+      }
+      .status {
+        color: #888;
+      }
+      .error {
+        color: #e53935;
+      }
+      .offer-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      .offer-table th,
+      .offer-table td {
+        padding: 0.6rem 0.8rem;
+        border-bottom: 1px solid #eee;
+        text-align: left;
+      }
+      .offer-table th {
+        background: #f5f5f5;
+        font-weight: 600;
+      }
+      .offer-row:hover {
+        background: #f9f9f9;
+      }
+      .mono {
+        font-family: monospace;
+      }
+      .btn {
+        padding: 0.4rem 1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-size: 0.85rem;
+      }
+      .btn-primary {
+        background: #4caf50;
+        color: #fff;
+      }
+      .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .btn-sm {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+      }
+    `,
+  ],
 })
 export class MarketplaceListComponent implements OnInit {
   private readonly api = inject(ApiService);
@@ -104,6 +153,9 @@ export class MarketplaceListComponent implements OnInit {
   }
 
   formatXlm(stroops: string): string {
-    return (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' XLM';
+    return (
+      (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
+      ' XLM'
+    );
   }
 }

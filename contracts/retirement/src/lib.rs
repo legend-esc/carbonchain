@@ -2,10 +2,14 @@
 pub mod types;
 pub mod errors;
 
-use crate::types::{DataKey, RetirementRecord, MIN_TTL, TTL_THRESHOLD};
+use crate::types::{DataKey, RetirementRecord, CreditMetadata, CreditStatus, MIN_TTL, TTL_THRESHOLD};
 use crate::errors::RetirementError;
+
+/// Maximum number of credits allowed in a single `batch_retire` call.
+/// Exceeding this limit causes the Soroban instruction budget to be exhausted.
+const MAX_BATCH_SIZE: u32 = 20;
 use soroban_sdk::{
-    contract, contractimpl, symbol_short,
+    contract, contractimpl, contractevent,
     Address, BytesN, Env, String, Symbol, Vec,
     IntoVal,
 };
@@ -24,6 +28,26 @@ fn consume_nonce(env: &Env, addr: &Address, expected: u64) -> bool {
     true
 }
 
+#[contractevent]
+#[derive(Clone)]
+pub struct Paused {
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct Unpaused {
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct Retire {
+    pub buyer: Address,
+    pub credit_id: BytesN<32>,
+    pub retirement_id: BytesN<32>,
+}
+
 #[contract]
 pub struct Retirement;
 
@@ -36,6 +60,9 @@ impl Retirement {
     /// # Errors
     /// - [`RetirementError::AlreadyInitialized`] — contract has already been initialised.
     pub fn initialize(env: Env, admin: Address) -> Result<(), RetirementError> {
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(RetirementError::AlreadyInitialized);
+        }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         Ok(())
@@ -49,7 +76,7 @@ impl Retirement {
     pub fn pause(env: Env, admin: Address) -> Result<(), RetirementError> {
         Self::require_admin(&env, &admin)?;
         env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((symbol_short!("paused"),), admin);
+        Paused { admin }.publish(&env);
         Ok(())
     }
 
@@ -61,7 +88,7 @@ impl Retirement {
     pub fn unpause(env: Env, admin: Address) -> Result<(), RetirementError> {
         Self::require_admin(&env, &admin)?;
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("unpaused"),), admin);
+        Unpaused { admin }.publish(&env);
         Ok(())
     }
 
@@ -105,13 +132,13 @@ impl Retirement {
         }
 
         // Validate credit exists and caller owns it
-        let credit: carbonchain_credit_registry::types::CreditMetadata = env.invoke_contract(
+        let credit: CreditMetadata = env.invoke_contract(
             &registry_id,
             &Symbol::new(&env, "get_credit"),
             (credit_id.clone(),).into_val(&env),
         );
         
-        if credit.status != carbonchain_credit_registry::types::CreditStatus::Active {
+        if credit.status != CreditStatus::Active {
             return Err(RetirementError::CreditNotActive);
         }
         
@@ -120,7 +147,7 @@ impl Retirement {
         }
 
         if tonnes <= 0 {
-            panic!("tonnes must be greater than zero");
+            return Err(RetirementError::InvalidTonnes);
         }
         let mut preimage = credit_id.clone().to_xdr(&env);
         preimage.append(&reason.clone().to_xdr(&env));
@@ -162,10 +189,7 @@ impl Retirement {
         env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
         // Emit retirement event
-        env.events().publish(
-            (symbol_short!("retire"), buyer),
-            (credit_id, retirement_id.clone()),
-        );
+        Retire { buyer, credit_id, retirement_id: retirement_id.clone() }.publish(&env);
 
         Ok(retirement_id)
     }
@@ -196,7 +220,34 @@ impl Retirement {
         }
 
         if credit_ids.len() != tonnes.len() {
-            panic!("credit_ids and tonnes must have same length");
+            return Err(RetirementError::InvalidInput);
+        }
+
+        if credit_ids.len() > MAX_BATCH_SIZE {
+            return Err(RetirementError::InvalidInput);
+        }
+
+        // Pre-validation pass: check ownership, active status, and positive tonnes
+        // for ALL credits before writing anything (prevents partial state on failure).
+        for i in 0..credit_ids.len() {
+            let credit_id = credit_ids.get(i).unwrap();
+            let tonne_amount = tonnes.get(i).unwrap();
+
+            if tonne_amount <= 0 {
+                panic!("tonnes must be greater than zero");
+            }
+
+            let credit: CreditMetadata = env.invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "get_credit"),
+                (credit_id.clone(),).into_val(&env),
+            );
+            if credit.status != CreditStatus::Active {
+                return Err(RetirementError::CreditNotActive);
+            }
+            if credit.owner != buyer {
+                return Err(RetirementError::Unauthorized);
+            }
         }
 
         let mut retirement_ids: Vec<BytesN<32>> = Vec::new(&env);
@@ -212,7 +263,7 @@ impl Retirement {
             let tonne_amount = tonnes.get(i).unwrap();
 
             if tonne_amount <= 0 {
-                panic!("tonnes must be greater than zero");
+                return Err(RetirementError::InvalidTonnes);
             }
 
             // Derive a deterministic retirement ID
@@ -248,16 +299,29 @@ impl Retirement {
             );
 
             // Emit individual retirement event
-            env.events().publish(
-                (symbol_short!("retire"), buyer.clone()),
-                (credit_id.clone(), retirement_id),
-            );
+            Retire { buyer: buyer.clone(), credit_id: credit_id.clone(), retirement_id }.publish(&env);
         }
 
         env.storage().persistent().set(&acct_key, &list);
         env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
         Ok(retirement_ids)
+    }
+
+    /// Returns the sum of all `tonnes_retired` across all retirement records for `account`.
+    pub fn get_total_retired_by_account(env: Env, account: Address) -> i128 {
+        let ids: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccountRetirements(account))
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut total: i128 = 0;
+        for id in ids.iter() {
+            if let Some(record) = env.storage().persistent().get::<_, RetirementRecord>(&DataKey::Retirement(id)) {
+                total += record.tonnes_retired;
+            }
+        }
+        total
     }
 
     pub fn get_nonce(env: Env, address: Address) -> u64 {
@@ -380,37 +444,36 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::{Env, String};
-    use carbonchain_credit_registry::CreditRegistry;
+    use carbonchain_credit_registry::test_helpers::RegistryHelper;
 
-    /// Returns (retirement_contract_id, registry_id, credit_id, retirement_admin, credit_owner)
-    fn setup(env: &Env) -> (Address, Address, BytesN<32>, Address, Address) {
+    /// Returns (retirement_contract_id, registry, credit_id, retirement_admin, credit_owner)
+    fn setup(env: &Env) -> (Address, RegistryHelper, BytesN<32>, Address, Address) {
+        env.budget().reset_unlimited();
         env.ledger().set_timestamp(1735689600);
         let retirement_id = env.register(Retirement, ());
-        let registry_id = env.register(CreditRegistry, ());
-        let registry_client =
-            carbonchain_credit_registry::CreditRegistryClient::new(env, &registry_id);
+        let registry = RegistryHelper::deploy(env);
 
         let admin = Address::generate(env);
         let verifier = Address::generate(env);
         let issuer = Address::generate(env);
         let retirement_admin = Address::generate(env);
 
-        registry_client.initialize(&admin, &retirement_id, &1);
-        let nonce = registry_client.get_nonce(&admin);
-        registry_client.register_verifier(&admin, &verifier, &nonce);
+        registry.initialize(&admin, &retirement_id, 1);
+        let nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &verifier, nonce);
 
-        let anonce = registry_client.get_nonce(&admin);
-        registry_client.register_issuer(&admin, &issuer, &anonce);
-        let vnonce_issuer = registry_client.get_nonce(&admin);
-        registry_client.register_verifier(&admin, &issuer, &vnonce_issuer);
-        let anonce2 = registry_client.get_nonce(&admin);
-        registry_client.register_methodology(
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let vnonce_issuer = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &issuer, vnonce_issuer);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
             &admin,
             &String::from_str(env, "VCS"),
             &String::from_str(env, "Verified Carbon Standard"),
-            &anonce2,
+            anonce2,
         );
-        registry_client.register_project(
+        registry.register_project(
             &admin,
             &String::from_str(env, "PROJ-001"),
             &String::from_str(env, "Test Project"),
@@ -418,24 +481,24 @@ mod tests {
             &String::from_str(env, "NG"),
         );
 
-        let inonce = registry_client.get_nonce(&issuer);
-        let credit_id = registry_client.submit_credit(
+        let inonce = registry.get_nonce(&issuer);
+        let credit_id = registry.submit_credit(
             &issuer,
             &String::from_str(env, "PROJ-001"),
-            &2024,
+            2024,
             &String::from_str(env, "VCS"),
             &String::from_str(env, "NG"),
-            &1_000_000,
+            1_000_000,
             &String::from_str(env, "bafybei123"),
-            &inonce,
+            inonce,
         );
-        let vnonce = registry_client.get_nonce(&verifier);
-        registry_client.approve_and_mint(&verifier, &credit_id, &vnonce);
+        let vnonce = registry.get_nonce(&verifier);
+        registry.approve_and_mint(&verifier, &credit_id, vnonce);
 
         let retirement_client = RetirementClient::new(env, &retirement_id);
         retirement_client.initialize(&retirement_admin);
 
-        (retirement_id, registry_id, credit_id, retirement_admin, issuer)
+        (retirement_id, registry, credit_id, retirement_admin, issuer)
     }
 
     #[test]
@@ -443,7 +506,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, _, credit_owner) = setup(&env);
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         let nonce = client.get_nonce(&credit_owner);
 
@@ -452,7 +515,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "2024 Scope 3 offset"),
-            &registry_id,
+            &registry.id,
             &nonce,
         );
 
@@ -467,7 +530,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, _, credit_owner) = setup(&env);
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         let nonce = client.get_nonce(&credit_owner);
 
@@ -476,7 +539,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
-            &registry_id,
+            &registry.id,
             &nonce,
         );
 
@@ -490,9 +553,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, _, credit_owner) = setup(&env);
-        let registry_client =
-            carbonchain_credit_registry::CreditRegistryClient::new(&env, &registry_id);
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         let nonce = client.get_nonce(&credit_owner);
 
@@ -501,29 +562,60 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
-            &registry_id,
+            &registry.id,
             &nonce,
         );
     }
 
     #[test]
-    #[should_panic]
     fn test_retire_zero_tonnes_fails() {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, _, credit_owner) = setup(&env);
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         let nonce = client.get_nonce(&credit_owner);
 
-        client.retire(
-            &credit_owner,
-            &credit_id,
-            &0,
-            &String::from_str(&env, "offset"),
-            &registry_id,
-            &nonce,
-        );
+        let err = client
+            .try_retire(
+                &credit_owner,
+                &credit_id,
+                &0,
+                &String::from_str(&env, "offset"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidTonnes);
+    }
+
+    #[test]
+    fn test_batch_retire_mismatched_lengths_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        credit_ids.push_back(credit_id);
+        // tonnes vec intentionally empty — length mismatch
+        let tonnes: Vec<i128> = Vec::new(&env);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let err = client
+            .try_batch_retire(
+                &credit_owner,
+                &credit_ids,
+                &tonnes,
+                &String::from_str(&env, "offset"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidInput);
     }
 
     // ── Pause tests ──────────────────────────────────────────────────────────
@@ -533,7 +625,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         client.pause(&retirement_admin);
         assert!(client.paused());
@@ -545,7 +637,7 @@ mod tests {
                 &credit_id,
                 &1_000_000,
                 &String::from_str(&env, "offset"),
-                &registry_id,
+                &registry.id,
                 &nonce,
             )
             .is_err());
@@ -556,7 +648,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         client.pause(&retirement_admin);
         client.unpause(&retirement_admin);
@@ -569,7 +661,7 @@ mod tests {
                 &credit_id,
                 &1_000_000,
                 &String::from_str(&env, "offset"),
-                &registry_id,
+                &registry.id,
                 &nonce,
             )
             .is_ok());
@@ -589,7 +681,7 @@ mod tests {
 
     fn submit_credit_for_batch(
         env: &Env,
-        registry: &carbonchain_credit_registry::CreditRegistryClient,
+        registry: &RegistryHelper,
         issuer: &Address,
         verifier: &Address,
         vintage: u32,
@@ -599,15 +691,15 @@ mod tests {
         let cid = registry.submit_credit(
             issuer,
             &String::from_str(env, "PROJ-001"),
-            &vintage,
+            vintage,
             &String::from_str(env, "VCS"),
             &String::from_str(env, "NG"),
-            &1_000_000,
+            1_000_000,
             &String::from_str(env, ipfs_suffix),
-            &inonce,
+            inonce,
         );
         let vnonce = registry.get_nonce(verifier);
-        registry.approve_and_mint(verifier, &cid, &vnonce);
+        registry.approve_and_mint(verifier, &cid, vnonce);
         cid
     }
 
@@ -616,9 +708,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, _, issuer) = setup(&env);
-        let registry_client =
-            carbonchain_credit_registry::CreditRegistryClient::new(&env, &registry_id);
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         let buyer = Address::generate(&env);
 
@@ -630,7 +720,7 @@ mod tests {
         tonnes.push_back(1_000_000);
         for (suffix, vintage) in [("b1", 2025u32), ("b2", 2026u32), ("b3", 2022u32), ("b4", 2023u32)] {
             let cid = submit_credit_for_batch(
-                &env, &registry_client, &issuer, &issuer, vintage, suffix,
+                &env, &registry, &issuer, &issuer, vintage, suffix,
             );
             credit_ids.push_back(cid);
             tonnes.push_back(1_000_000);
@@ -638,8 +728,8 @@ mod tests {
 
         // Transfer credits to buyer so they can retire
         for cid in credit_ids.clone() {
-            let nnonce = registry_client.get_nonce(&issuer);
-            registry_client.transfer_credit(&issuer, &buyer, &cid, &nnonce);
+            let nnonce = registry.get_nonce(&issuer);
+            registry.transfer_credit(&issuer, &buyer, &cid, nnonce);
         }
 
         let nonce = client.get_nonce(&buyer);
@@ -648,7 +738,7 @@ mod tests {
             &credit_ids,
             &tonnes,
             &String::from_str(&env, "batch offset"),
-            &registry_id,
+            &registry.id,
             &nonce,
         );
 
@@ -660,9 +750,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (contract_id, registry_id, credit_id, _, issuer) = setup(&env);
-        let registry_client =
-            carbonchain_credit_registry::CreditRegistryClient::new(&env, &registry_id);
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
         let client = RetirementClient::new(&env, &contract_id);
         let buyer = Address::generate(&env);
 
@@ -674,7 +762,7 @@ mod tests {
         tonnes.push_back(1_000_000);
         for (suffix, vintage) in [("f1", 2025u32), ("f2", 2022u32)] {
             let cid = submit_credit_for_batch(
-                &env, &registry_client, &issuer, &issuer, vintage, suffix,
+                &env, &registry, &issuer, &issuer, vintage, suffix,
             );
             credit_ids.push_back(cid);
             tonnes.push_back(1_000_000);
@@ -682,8 +770,8 @@ mod tests {
 
         // Transfer credits to buyer so they can retire
         for cid in credit_ids.clone() {
-            let nnonce = registry_client.get_nonce(&issuer);
-            registry_client.transfer_credit(&issuer, &buyer, &cid, &nnonce);
+            let nnonce = registry.get_nonce(&issuer);
+            registry.transfer_credit(&issuer, &buyer, &cid, nnonce);
         }
 
         let nonce = client.get_nonce(&buyer);
@@ -692,11 +780,146 @@ mod tests {
             &credit_ids,
             &tonnes,
             &String::from_str(&env, "batch offset"),
-            &registry_id,
+            &registry.id,
             &nonce,
         );
 
         let ids = client.get_retirements_by_account(&buyer);
         assert_eq!(ids.len(), 3);
     }
+
+    // ── Issue #355: batch_retire MAX_BATCH_SIZE guard ────────────────────────
+
+    #[test]
+    fn test_batch_retire_oversized_batch_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, _, _, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        // Build 21 credit IDs (all zeros — we only need the size check to trigger,
+        // which happens before any cross-contract call).
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut tonnes_vec: Vec<i128> = Vec::new(&env);
+        for _ in 0..21u32 {
+            credit_ids.push_back(BytesN::from_array(&env, &[0u8; 32]));
+            tonnes_vec.push_back(1_000_000);
+        }
+
+        let nonce = client.get_nonce(&buyer);
+        let err = client
+            .try_batch_retire(
+                &buyer,
+                &credit_ids,
+                &tonnes_vec,
+                &String::from_str(&env, "oversized"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidInput);
+    }
+
+    // ── Issue #234: double initialize guard ──────────────────────────────────
+
+    #[test]
+    fn test_double_initialize_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, _, _, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        // setup already called initialize once; a second call must fail
+        let result = client.try_initialize(&retirement_admin);
+        assert_eq!(result, Err(Ok(RetirementError::AlreadyInitialized)));
+    }
+
+    // ── Issue #232: batch_retire no partial state on failure ─────────────────
+
+    #[test]
+    fn test_batch_retire_no_partial_state_on_invalid_credit() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        // Two valid credits
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "p1");
+        let cid3 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2026, "p2");
+
+        // Transfer only the first two to buyer; cid3 stays with issuer → ownership check fails
+        let n1 = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &buyer, &credit_id, n1);
+        let n2 = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &buyer, &cid2, n2);
+        // cid3 intentionally NOT transferred — buyer does not own it
+
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut tonnes_vec: Vec<i128> = Vec::new(&env);
+        credit_ids.push_back(credit_id.clone());
+        tonnes_vec.push_back(1_000_000);
+        credit_ids.push_back(cid2.clone());
+        tonnes_vec.push_back(1_000_000);
+        credit_ids.push_back(cid3.clone()); // invalid: buyer doesn't own this
+        tonnes_vec.push_back(1_000_000);
+
+        let nonce = client.get_nonce(&buyer);
+        let result = client.try_batch_retire(
+            &buyer,
+            &credit_ids,
+            &tonnes_vec,
+            &String::from_str(&env, "batch offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        // The whole batch must fail
+        assert!(result.is_err());
+        // No retirements should have been written for buyer
+        let ids = client.get_retirements_by_account(&buyer);
+        assert_eq!(ids.len(), 0);
+    }
+
+    // ── Issue #233: get_total_retired_by_account ──────────────────────────────
+
+    #[test]
+    fn test_get_total_retired_by_account_sums_multiple() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        // Create a second credit and retire both independently
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "s1");
+
+        let n1 = client.get_nonce(&issuer);
+        client.retire(
+            &issuer,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset 1"),
+            &registry.id,
+            &n1,
+        );
+
+        let n2 = client.get_nonce(&issuer);
+        client.retire(
+            &issuer,
+            &cid2,
+            &1_000_000,
+            &String::from_str(&env, "offset 2"),
+            &registry.id,
+            &n2,
+        );
+
+        let total = client.get_total_retired_by_account(&issuer);
+        assert_eq!(total, 2_000_000);
+    }
 }
+

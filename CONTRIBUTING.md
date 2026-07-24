@@ -256,11 +256,13 @@ ng test --code-coverage
 
 ### Rust
 
-Format your code with rustfmt:
+Format your code with rustfmt before every commit — this is enforced by CI (`cargo fmt --all -- --check`):
 
 ```bash
-cargo fmt
+cd contracts && cargo fmt --all
 ```
+
+Project style is configured in `contracts/rustfmt.toml` (100-char line width, 2021 edition, grouped imports). CI will fail if any contract is not formatted.
 
 Lint with clippy:
 
@@ -274,11 +276,20 @@ cargo clippy -- -D warnings
 
 ### NestJS (TypeScript)
 
-Lint:
+Lint and format are enforced by CI. Run these before every commit:
 
 ```bash
 cd api
-npm run lint
+npm run lint          # ESLint check (no auto-fix)
+npm run format:check  # Prettier check (no auto-fix)
+```
+
+To auto-fix locally:
+
+```bash
+cd api
+npm run lint:fix  # ESLint with --fix
+npm run format    # Prettier with --write
 ```
 
 Type check:
@@ -288,13 +299,6 @@ cd api
 npm run type-check
 ```
 
-Format:
-
-```bash
-cd api
-npm run format
-```
-
 - Use NestJS decorators consistently — no raw Express patterns
 - All Stellar interactions go through `StellarService` — never call the SDK directly from controllers
 - Inject dependencies via constructor injection, not property injection
@@ -302,11 +306,19 @@ npm run format
 
 ### Angular (TypeScript)
 
-Lint:
+Lint and format are enforced by CI. Run these before every commit:
 
 ```bash
 cd frontend
-ng lint
+npm run lint          # Angular ESLint via ng lint (eslint.config.mjs)
+npm run format:check  # Prettier check (no auto-fix)
+```
+
+To auto-fix locally:
+
+```bash
+cd frontend
+npx prettier --write "src/**/*.ts" "src/**/*.html" "src/*.html"
 ```
 
 Type check:
@@ -470,6 +482,49 @@ git push origin feature/your-feature-name
 
 ---
 
+## Branch Protection Rules
+
+The `main` branch is protected to ensure code quality and project stability. All pull requests must comply with the following requirements before they can be merged.
+
+### Required Status Checks
+
+All of the following CI checks must pass before a PR can be merged:
+
+| Check | Purpose |
+|---|---|
+| `contracts-test` | Rust contract test suite (runs `cargo test` on all Soroban contracts) |
+| `api-lint` | TypeScript linting for the NestJS API (runs `npm run lint`) |
+| `api-test` | NestJS unit and integration tests (runs `npm run test` and `npm run test:e2e`) |
+| `api-type-check` | TypeScript type checking for the NestJS API (runs `npm run type-check`) |
+| `frontend-lint` | Angular linting (runs `ng lint`) |
+| `frontend-test` | Angular unit tests (runs `ng test --watch=false`) |
+
+Failing checks indicate bugs, style violations, or missing tests. Address all failures before requesting review.
+
+### Direct Pushes to `main` Are Blocked
+
+All changes to `main` **must** go through a pull request. Direct pushes to `main` are blocked at the repository level. This ensures:
+
+- Every change is reviewed and tested
+- CI checks run on all code before merge
+- A clear record of all changes exists in PR history
+
+### Minimum Review Requirement
+
+Each PR requires **at least one approval** from a maintainer or code owner before merge. Reviewers will check:
+
+- Code quality and adherence to style guidelines
+- Test coverage for new functionality
+- Documentation updates
+- Compliance with security best practices
+- Alignment with project architecture and patterns
+
+### Bypassing Protections
+
+Maintainers can force-merge a PR in exceptional cases (e.g., critical security fixes, broken main branch recovery). These bypasses are logged and should be extremely rare.
+
+---
+
 ## Issue and PR Templates
 
 ### Issue Template
@@ -499,8 +554,8 @@ When creating a PR, please include:
 - [ ] Tests added or updated
 - [ ] Documentation updated
 - [ ] Rust: `cargo fmt` and `cargo clippy` pass
-- [ ] API: `npm run lint` and `npm run test` pass
-- [ ] Frontend: `ng lint` and `ng test` pass
+- [ ] API: `npm run lint`, `npm run format:check`, and `npm run test` pass
+- [ ] Frontend: `npm run lint`, `npm run format:check`, and `ng test` pass
 - [ ] No secrets or private keys committed
 - [ ] `CHANGELOG.md` updated if this is a user-facing change
 

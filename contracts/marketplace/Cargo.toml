@@ -10,7 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 soroban-sdk = "26.0.1"
-carbonchain-credit-registry = { path = "../credit_registry", features = ["library"] }
 
 [dev-dependencies]
 soroban-sdk = { version = "26.0.1", features = ["testutils"] }

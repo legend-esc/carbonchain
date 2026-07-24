@@ -1,3 +1,7 @@
+@if (!onlineStatus.online()) {
+  <div class="offline-banner" role="status">You're offline — showing cached data.</div>
+}
+
 <header class="app-header">
   <span class="logo">🌿 CarbonChain</span>
   <nav>
@@ -7,10 +11,14 @@
     <a routerLink="/admin">Admin</a>
   </nav>
   <app-locale-switcher />
-  <button class="theme-toggle" (click)="theme.toggle()" [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'">
+  <button
+    class="theme-toggle"
+    (click)="theme.toggle()"
+    [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'"
+  >
     {{ theme.icon() }}
   </button>
-  <app-connect-wallet />
+  <app-connect-wallet [compact]="true" />
 </header>
 
 <main>

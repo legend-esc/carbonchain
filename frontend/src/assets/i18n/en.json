@@ -7,6 +7,11 @@
   "wallet.disconnect": "Disconnect",
   "wallet.connecting": "Connecting…",
   "wallet.install": "Install Freighter",
+  "wallet.pageTitle": "Connect Your Wallet",
+  "wallet.pageDescription": "CarbonChain uses the Stellar blockchain to issue, trade, and retire carbon credits. To get started, you need to connect a Stellar wallet.",
+  "wallet.step1": "Install the Freighter browser extension from freighter.app",
+  "wallet.step2": "Create or import a Stellar account in Freighter",
+  "wallet.step3": "Click \"Connect Wallet\" below to authenticate with this app",
 
   "dashboard.title": "Carbon Credit Portfolio",
   "dashboard.totalCredits": "Total Credits",

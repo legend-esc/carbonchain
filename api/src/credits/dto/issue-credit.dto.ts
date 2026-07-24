@@ -8,6 +8,7 @@ import {
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsValidMethodology } from '../validators/methodology.validator';
+import { IsTonnesMultiple } from '../validators/tonnes.validator';
 import { VALID_METHODOLOGIES } from '../methodologies';
 
 export class IssueCreditDto {
@@ -47,9 +48,10 @@ export class IssueCreditDto {
   @IsNotEmpty()
   geography: string;
 
-  @ApiProperty({ example: '1000000', description: '1 tonne = 1_000_000 units' })
+  @ApiProperty({ example: '100000000', description: 'tonnes value must be a multiple of 100,000 (1 tonne = 1_000_000 units)' })
   @IsNumberString()
   @IsNotEmpty()
+  @IsTonnesMultiple({ message: 'tonnes must be a multiple of 100,000' })
   tonnes: string;
 
   @ApiProperty({
