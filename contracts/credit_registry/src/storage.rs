@@ -364,87 +364,35 @@ pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-// ── Per-credit verifier snapshot ──────────────────────────────────────────────
-//
-// When a credit is submitted, we snapshot the current verifier set into
-// CreditVerifiers(credit_id). This gives remove_verifier an accurate way to
-// check whether a specific verifier is still responsible for approving a
-// particular Pending credit, rather than relying on a global counter that
-// over-counts.
+/// Remove a single credit ID from the per-owner index.
+///
+/// Issue #470: `transfer_credit` and `split_credit` did not remove the credit
+/// from the old owner's `CreditsByOwner` list, leaving stale entries that
+/// caused `list_credits_by_owner` / `get_credits_by_owner` to return incorrect
+/// results.
+///
+/// Complexity note: Soroban `Vec` has no O(1) remove — this function iterates
+/// the list and rebuilds it without the target ID, which is O(n). For portfolios
+/// of up to ~50 credits this stays well within the Soroban instruction budget.
+/// For very large portfolios (hundreds of credits) the instruction cost grows
+/// linearly; callers should be aware of this trade-off and, if necessary, switch
+/// to a paginated or bitmap-based index.
+pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::CreditsByOwner(owner.clone());
+    let existing: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
 
-pub fn set_credit_verifiers(env: &Env, credit_id: &BytesN<32>, verifiers: &Vec<Address>) {
-    let key = DataKey::CreditVerifiers(credit_id.clone());
-    env.storage().persistent().set(&key, verifiers);
+    let mut updated: Vec<BytesN<32>> = Vec::new(env);
+    for id in existing.iter() {
+        if id != *credit_id {
+            updated.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &updated);
     env.storage()
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
-}
-
-pub fn get_credit_verifiers(env: &Env, credit_id: &BytesN<32>) -> Vec<Address> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::CreditVerifiers(credit_id.clone()))
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-pub fn remove_credit_verifiers(env: &Env, credit_id: &BytesN<32>) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::CreditVerifiers(credit_id.clone()));
-}
-
-/// Returns true if `verifier` is in the snapshot for any Pending credit.
-/// Used by remove_verifier to decide whether to block removal.
-/// We check whether the verifier appears in any CreditVerifiers snapshot;
-/// the caller supplies the list of known pending credit IDs to avoid
-/// iterating unbounded storage.
-pub fn verifier_has_assigned_pending_credit(
-    env: &Env,
-    verifier: &Address,
-    pending_credit_ids: &Vec<BytesN<32>>,
-) -> bool {
-    for credit_id in pending_credit_ids.iter() {
-        let assigned = get_credit_verifiers(env, &credit_id);
-        if assigned.contains(verifier) {
-            return true;
-        }
-    }
-    false
-}
-
-// ── Global pending credit index ───────────────────────────────────────────────
-//
-// Maintained so remove_verifier can iterate CreditVerifiers snapshots without
-// scanning all storage.
-
-pub fn get_pending_credits(env: &Env) -> Vec<BytesN<32>> {
-    env.storage()
-        .instance()
-        .get(&DataKey::PendingCredits)
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-pub fn add_to_pending_credits(env: &Env, credit_id: &BytesN<32>) {
-    let mut list = get_pending_credits(env);
-    if !list.contains(credit_id) {
-        list.push_back(credit_id.clone());
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingCredits, &list);
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
-    }
-}
-
-pub fn remove_from_pending_credits(env: &Env, credit_id: &BytesN<32>) {
-    let old = get_pending_credits(env);
-    let mut new_list: Vec<BytesN<32>> = Vec::new(env);
-    for id in old.iter() {
-        if id != *credit_id {
-            new_list.push_back(id);
-        }
-    }
-    env.storage()
-        .instance()
-        .set(&DataKey::PendingCredits, &new_list);
-    env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
 }

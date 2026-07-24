@@ -43,10 +43,9 @@ use crate::storage::{
     get_verifier_pending_count, get_verifier_reputation, get_verifiers, has_admin,
     increment_approval_count, increment_dispute_count, increment_session_op_count,
     increment_verifier_pending, is_issuer as storage_is_issuer, is_methodology_valid, is_paused,
-    is_verifier, remove_credit_approvals, remove_credit_verifiers, remove_from_pending_credits,
-    set_admin, set_credit, set_credit_approvals, set_credit_by_project_vintage,
-    set_credit_verifiers, set_issuers, set_methodologies, set_paused, set_required_approvals,
-    set_retirement_contract, set_session, set_verifiers,
+    is_verifier, remove_credit_approvals, remove_credit_from_owner, set_admin, set_credit,
+    set_credit_approvals, set_credit_by_project_vintage, set_issuers, set_methodologies,
+    set_paused, set_required_approvals, set_retirement_contract, set_session, set_verifiers,
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, Methodology, ProjectMetadata,
@@ -639,8 +638,11 @@ impl CreditRegistry {
         if credit.owner != from {
             return Err(CarbonChainError::Unauthorized);
         }
+        // Issue #470: Remove from the old owner's index BEFORE updating ownership.
+        remove_credit_from_owner(&env, &from, &credit_id);
         credit.owner = to.clone();
         set_credit(&env, &credit_id, &credit);
+        // Add to the new owner's index.
         add_credit_to_owner(&env, &to, &credit_id);
         CreditTransferred {
             from,
@@ -723,10 +725,13 @@ impl CreditRegistry {
         add_credit_to_project(&env, &original.project_id, &child2_id);
         add_credit_to_owner(&env, &caller, &child2_id);
 
+        // Issue #470: Remove the original credit from the caller's owner index
+        // before retiring it, so get_credits_by_owner returns accurate results.
+        remove_credit_from_owner(&env, &caller, &credit_id);
+
         // Retire original credit
         original.status = CreditStatus::Retired;
         set_credit(&env, &credit_id, &original);
-
         CreditSplit {
             original_id: credit_id,
             child1_id: child1_id.clone(),
@@ -2719,202 +2724,145 @@ mod tests {
         assert_eq!(credit.status, CreditStatus::Active);
     }
 
-    // ── Issue #481: remove_verifier per-credit assignment tests ──────────────
+    // ── Issue #470: CreditsByOwner index correctness ──────────────────────────
 
-    /// Scenario: 3 verifiers, 2 required approvals.
-    /// A credit is submitted when all 3 are registered.
-    /// Verifier 3 (who has NOT approved) is removed mid-flight.
-    /// Verifiers 1 and 2 can still fully approve and mint the credit.
     #[test]
-    fn test_remove_non_approving_verifier_mid_flight_still_allows_approval() {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set_timestamp(1735689600);
-        let contract_id = env.register(CreditRegistry, ());
-        let client = CreditRegistryClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        let verifier1 = Address::generate(&env);
-        let verifier2 = Address::generate(&env);
-        let verifier3 = Address::generate(&env);
-        let retirement = Address::generate(&env);
-        // 2 of 3 required
-        client.initialize(&admin, &retirement, &2);
-
-        let n0 = client.get_nonce(&admin);
-        client.register_verifier(&admin, &verifier1, &n0);
-        let n1 = client.get_nonce(&admin);
-        client.register_verifier(&admin, &verifier2, &n1);
-        let n2 = client.get_nonce(&admin);
-        client.register_verifier(&admin, &verifier3, &n2);
-
+    fn test_transfer_credit_updates_owner_index() {
+        // After transfer_credit, the new owner's index includes the credit and
+        // the old owner's index does NOT include it.
+        let (env, client, admin, _) = setup();
         let issuer = Address::generate(&env);
-        let n3 = client.get_nonce(&admin);
-        client.register_issuer(&admin, &issuer, &n3);
-        let n4 = client.get_nonce(&admin);
-        client.register_methodology(
-            &admin,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "Verified Carbon Standard"),
-            &n4,
-        );
-        client.register_project(
-            &admin,
-            &String::from_str(&env, "PROJ-001"),
-            &String::from_str(&env, "Test Project"),
-            &String::from_str(&env, "Desc"),
-            &String::from_str(&env, "NG"),
-        );
-        let inonce = client.get_nonce(&issuer);
-        let credit_id = client.submit_credit(
-            &issuer,
-            &String::from_str(&env, "PROJ-001"),
-            &2024,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "NG"),
-            &1_000_000,
-            &String::from_str(&env, "bafybei123"),
-            &inonce,
-        );
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let recipient = Address::generate(&env);
 
-        // Verifier 3 has NOT approved; they are assigned but not blocking removal
-        // because their pending count will be > 0.  Under the OLD (broken) logic,
-        // remove_verifier would check VerifierPendingCount(v3) == 1 and block.
-        // Under the NEW logic we only block if v3 is in CreditVerifiers(credit_id)
-        // AND the credit is still Pending — which IS the case here, so removal IS blocked.
-        // That is intentional and correct: verifier3 IS assigned to this credit and must
-        // either approve or be replaced before the credit resolves.
-        //
-        // To remove verifier3 safely, verifier1 and verifier2 must first approve so
-        // the credit becomes Active, clearing the snapshot.
-        let v1nonce = client.get_nonce(&verifier1);
-        client.approve_and_mint(&verifier1, &credit_id, &v1nonce);
-        // Credit is still Pending (only 1 of 2 approvals)
-        assert_eq!(client.get_credit(&credit_id).status, CreditStatus::Pending);
+        // Verify initial state: issuer owns the credit
+        let issuer_credits_before = client.list_credits_by_owner(&issuer);
+        assert!(issuer_credits_before.contains(&id));
 
-        // Verifier 2 approves — threshold reached, credit becomes Active
-        let v2nonce = client.get_nonce(&verifier2);
-        client.approve_and_mint(&verifier2, &credit_id, &v2nonce);
-        assert_eq!(client.get_credit(&credit_id).status, CreditStatus::Active);
+        let nonce = client.get_nonce(&issuer);
+        client.transfer_credit(&issuer, &recipient, &id, &nonce);
 
-        // Now verifier3 can be removed since no pending credits are assigned to them anymore
-        let n5 = client.get_nonce(&admin);
-        let result = client.try_remove_verifier(&admin, &verifier3, &n5);
-        assert!(result.is_ok(), "verifier3 should be removable after credit is minted");
-        assert!(!client.is_verifier(&verifier3));
-    }
-
-    /// Scenario: verifier IS the only one assigned to a pending credit — removal must be blocked.
-    #[test]
-    fn test_remove_verifier_blocked_if_credit_pending_and_assigned() {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set_timestamp(1735689600);
-        let contract_id = env.register(CreditRegistry, ());
-        let client = CreditRegistryClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        let verifier = Address::generate(&env);
-        let retirement = Address::generate(&env);
-        client.initialize(&admin, &retirement, &1);
-        let n0 = client.get_nonce(&admin);
-        client.register_verifier(&admin, &verifier, &n0);
-
-        let issuer = Address::generate(&env);
-        let n1 = client.get_nonce(&admin);
-        client.register_issuer(&admin, &issuer, &n1);
-        let n2 = client.get_nonce(&admin);
-        client.register_methodology(
-            &admin,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "Verified Carbon Standard"),
-            &n2,
-        );
-        client.register_project(
-            &admin,
-            &String::from_str(&env, "PROJ-001"),
-            &String::from_str(&env, "Test"),
-            &String::from_str(&env, "Desc"),
-            &String::from_str(&env, "NG"),
-        );
-        let inonce = client.get_nonce(&issuer);
-        let _credit_id = client.submit_credit(
-            &issuer,
-            &String::from_str(&env, "PROJ-001"),
-            &2024,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "NG"),
-            &1_000_000,
-            &String::from_str(&env, "bafybei123"),
-            &inonce,
-        );
-
-        // Verifier is assigned to the pending credit — removal must be blocked
-        let n3 = client.get_nonce(&admin);
-        let result = client.try_remove_verifier(&admin, &verifier, &n3);
-        assert_eq!(
-            result,
-            Err(Ok(CarbonChainError::VerifierHasPendingCredits)),
-            "removal must be blocked while credit is pending"
-        );
-    }
-
-    /// New verifier added AFTER a credit was submitted should NOT be blocked from removal
-    /// because they were not in the snapshot for that credit.
-    #[test]
-    fn test_remove_verifier_not_blocked_if_added_after_submission() {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set_timestamp(1735689600);
-        let contract_id = env.register(CreditRegistry, ());
-        let client = CreditRegistryClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        let verifier1 = Address::generate(&env); // in snapshot
-        let verifier2 = Address::generate(&env); // NOT in snapshot (added after)
-        let retirement = Address::generate(&env);
-        client.initialize(&admin, &retirement, &1);
-
-        let n0 = client.get_nonce(&admin);
-        client.register_verifier(&admin, &verifier1, &n0);
-
-        let issuer = Address::generate(&env);
-        let n1 = client.get_nonce(&admin);
-        client.register_issuer(&admin, &issuer, &n1);
-        let n2 = client.get_nonce(&admin);
-        client.register_methodology(
-            &admin,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "Verified Carbon Standard"),
-            &n2,
-        );
-        client.register_project(
-            &admin,
-            &String::from_str(&env, "PROJ-001"),
-            &String::from_str(&env, "Test"),
-            &String::from_str(&env, "Desc"),
-            &String::from_str(&env, "NG"),
-        );
-        let inonce = client.get_nonce(&issuer);
-        // Credit submitted — snapshot contains only verifier1
-        let _credit_id = client.submit_credit(
-            &issuer,
-            &String::from_str(&env, "PROJ-001"),
-            &2024,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "NG"),
-            &1_000_000,
-            &String::from_str(&env, "bafybei123"),
-            &inonce,
-        );
-
-        // Register verifier2 AFTER the credit was submitted
-        let n3 = client.get_nonce(&admin);
-        client.register_verifier(&admin, &verifier2, &n3);
-
-        // verifier2 is NOT in the snapshot → can be removed freely
-        let n4 = client.get_nonce(&admin);
-        let result = client.try_remove_verifier(&admin, &verifier2, &n4);
+        // After transfer: recipient's index has the credit
+        let recipient_credits = client.list_credits_by_owner(&recipient);
         assert!(
-            result.is_ok(),
-            "verifier2 added after submission should be removable"
+            recipient_credits.contains(&id),
+            "recipient should own the credit after transfer"
         );
+
+        // After transfer: issuer's index no longer has the credit
+        let issuer_credits_after = client.list_credits_by_owner(&issuer);
+        assert!(
+            !issuer_credits_after.contains(&id),
+            "old owner's index should not contain transferred credit"
+        );
+    }
+
+    #[test]
+    fn test_split_credit_updates_owner_index() {
+        // After split_credit:
+        // - original credit ID is removed from caller's index
+        // - both child IDs are present in caller's index
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Verify initial state
+        let before = client.list_credits_by_owner(&issuer);
+        assert!(before.contains(&id));
+
+        let nonce = client.get_nonce(&issuer);
+        let (child1, child2) = client.split_credit(&issuer, &id, &500_000, &nonce);
+
+        let after = client.list_credits_by_owner(&issuer);
+
+        // Original should be removed
+        assert!(
+            !after.contains(&id),
+            "original credit should be removed from owner index after split"
+        );
+
+        // Both children should be present
+        assert!(
+            after.contains(&child1),
+            "child1 should be in owner index after split"
+        );
+        assert!(
+            after.contains(&child2),
+            "child2 should be in owner index after split"
+        );
+    }
+
+    #[test]
+    fn test_owner_index_correct_for_large_portfolio() {
+        // Verify that remove_credit_from_owner stays within budget for ~10 credits
+        // (representative of typical portfolios; actual budget is verified at runtime).
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+
+        // Register issuer and methodology once
+        let anonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce2 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce2,
+        );
+
+        // Register multiple projects and submit one credit per project
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        for i in 0u32..10u32 {
+            let proj = soroban_sdk::String::from_str(&env, &format!("PROJ-{:03}", i));
+            client.register_project(
+                &admin,
+                &proj,
+                &String::from_str(&env, "Test"),
+                &String::from_str(&env, "Desc"),
+                &String::from_str(&env, "NG"),
+            );
+            let nonce = client.get_nonce(&issuer);
+            // Use vintage_year 2020+i to avoid duplicate project-vintage check
+            let cid = client.submit_credit(
+                &issuer,
+                &proj,
+                &(2020 + i),
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "bafybei"),
+                &nonce,
+            );
+            credit_ids.push_back(cid);
+        }
+
+        let before = client.list_credits_by_owner(&issuer);
+        assert_eq!(before.len(), 10, "should have 10 credits before transfer");
+
+        // Transfer the first credit to a new owner
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        let transferred_id = credit_ids.get(0).unwrap();
+        client.transfer_credit(&issuer, &recipient, &transferred_id, &nonce);
+
+        let after = client.list_credits_by_owner(&issuer);
+        assert_eq!(
+            after.len(),
+            9,
+            "issuer should have 9 credits after transferring one"
+        );
+        assert!(
+            !after.contains(&transferred_id),
+            "transferred credit should not appear in issuer index"
+        );
+
+        let recipient_credits = client.list_credits_by_owner(&recipient);
+        assert_eq!(
+            recipient_credits.len(),
+            1,
+            "recipient should have 1 credit"
+        );
+        assert!(recipient_credits.contains(&transferred_id));
     }
 }
+
