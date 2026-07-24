@@ -512,17 +512,48 @@ export class CreditsService {
       ? Buffer.from(native.child2).toString('hex')
       : '';
 
+    // Mark the original as retired in the off-chain index
     const originalEntity = await this.creditRepo.findById(creditId);
     if (originalEntity) {
       originalEntity.status = CreditStatus.Retired;
       await this.creditRepo.save(originalEntity);
     }
 
+    // Issue #471: Read the on-chain child metadata to get the authoritative
+    // owner field rather than inferring it from `caller`.
+    // The contract's split_credit sets child.owner = caller, but we must not
+    // assume that here — we read back from chain so the off-chain index always
+    // reflects the on-chain truth.
+    let child1OnChain: CreditMetadata | null = null;
+    let child2OnChain: CreditMetadata | null = null;
+
+    if (childCredit1) {
+      try {
+        child1OnChain = await this.getCredit(childCredit1);
+      } catch {
+        this.logger.warn(
+          `Could not read child1 ${childCredit1} from chain, falling back to caller`,
+        );
+      }
+    }
+    if (childCredit2) {
+      try {
+        child2OnChain = await this.getCredit(childCredit2);
+      } catch {
+        this.logger.warn(
+          `Could not read child2 ${childCredit2} from chain, falling back to caller`,
+        );
+      }
+    }
+
+    const child1Owner = child1OnChain?.owner ?? caller;
+    const child2Owner = child2OnChain?.owner ?? caller;
+
     const child1 = new CreditEntity();
     child1.id = childCredit1;
     child1.projectId = credit.project_id;
     child1.issuer = credit.issuer;
-    child1.owner = caller;
+    child1.owner = child1Owner;
     child1.vintageYear = credit.vintage_year;
     child1.methodology = credit.methodology;
     child1.geography = credit.geography;
@@ -537,7 +568,7 @@ export class CreditsService {
     child2.id = childCredit2;
     child2.projectId = credit.project_id;
     child2.issuer = credit.issuer;
-    child2.owner = caller;
+    child2.owner = child2Owner;
     child2.vintageYear = credit.vintage_year;
     child2.methodology = credit.methodology;
     child2.geography = credit.geography;

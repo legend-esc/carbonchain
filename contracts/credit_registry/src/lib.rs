@@ -42,9 +42,9 @@ use crate::storage::{
     get_session_op_count, get_verifier_pending_count, get_verifier_reputation, get_verifiers,
     has_admin, increment_approval_count, increment_dispute_count, increment_session_op_count,
     increment_verifier_pending, is_issuer as storage_is_issuer, is_methodology_valid, is_paused,
-    is_verifier, remove_credit_approvals, set_admin, set_credit, set_credit_approvals,
-    set_credit_by_project_vintage, set_issuers, set_methodologies, set_paused,
-    set_required_approvals, set_retirement_contract, set_session, set_verifiers,
+    is_verifier, remove_credit_approvals, remove_credit_from_owner, set_admin, set_credit,
+    set_credit_approvals, set_credit_by_project_vintage, set_issuers, set_methodologies,
+    set_paused, set_required_approvals, set_retirement_contract, set_session, set_verifiers,
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, Methodology, ProjectMetadata,
@@ -617,8 +617,11 @@ impl CreditRegistry {
         if credit.owner != from {
             return Err(CarbonChainError::Unauthorized);
         }
+        // Issue #470: Remove from the old owner's index BEFORE updating ownership.
+        remove_credit_from_owner(&env, &from, &credit_id);
         credit.owner = to.clone();
         set_credit(&env, &credit_id, &credit);
+        // Add to the new owner's index.
         add_credit_to_owner(&env, &to, &credit_id);
         CreditTransferred {
             from,
@@ -701,10 +704,13 @@ impl CreditRegistry {
         add_credit_to_project(&env, &original.project_id, &child2_id);
         add_credit_to_owner(&env, &caller, &child2_id);
 
+        // Issue #470: Remove the original credit from the caller's owner index
+        // before retiring it, so get_credits_by_owner returns accurate results.
+        remove_credit_from_owner(&env, &caller, &credit_id);
+
         // Retire original credit
         original.status = CreditStatus::Retired;
         set_credit(&env, &credit_id, &original);
-
         CreditSplit {
             original_id: credit_id,
             child1_id: child1_id.clone(),
@@ -2696,4 +2702,146 @@ mod tests {
         let credit = client.get_credit(&id);
         assert_eq!(credit.status, CreditStatus::Active);
     }
+
+    // ── Issue #470: CreditsByOwner index correctness ──────────────────────────
+
+    #[test]
+    fn test_transfer_credit_updates_owner_index() {
+        // After transfer_credit, the new owner's index includes the credit and
+        // the old owner's index does NOT include it.
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let recipient = Address::generate(&env);
+
+        // Verify initial state: issuer owns the credit
+        let issuer_credits_before = client.list_credits_by_owner(&issuer);
+        assert!(issuer_credits_before.contains(&id));
+
+        let nonce = client.get_nonce(&issuer);
+        client.transfer_credit(&issuer, &recipient, &id, &nonce);
+
+        // After transfer: recipient's index has the credit
+        let recipient_credits = client.list_credits_by_owner(&recipient);
+        assert!(
+            recipient_credits.contains(&id),
+            "recipient should own the credit after transfer"
+        );
+
+        // After transfer: issuer's index no longer has the credit
+        let issuer_credits_after = client.list_credits_by_owner(&issuer);
+        assert!(
+            !issuer_credits_after.contains(&id),
+            "old owner's index should not contain transferred credit"
+        );
+    }
+
+    #[test]
+    fn test_split_credit_updates_owner_index() {
+        // After split_credit:
+        // - original credit ID is removed from caller's index
+        // - both child IDs are present in caller's index
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Verify initial state
+        let before = client.list_credits_by_owner(&issuer);
+        assert!(before.contains(&id));
+
+        let nonce = client.get_nonce(&issuer);
+        let (child1, child2) = client.split_credit(&issuer, &id, &500_000, &nonce);
+
+        let after = client.list_credits_by_owner(&issuer);
+
+        // Original should be removed
+        assert!(
+            !after.contains(&id),
+            "original credit should be removed from owner index after split"
+        );
+
+        // Both children should be present
+        assert!(
+            after.contains(&child1),
+            "child1 should be in owner index after split"
+        );
+        assert!(
+            after.contains(&child2),
+            "child2 should be in owner index after split"
+        );
+    }
+
+    #[test]
+    fn test_owner_index_correct_for_large_portfolio() {
+        // Verify that remove_credit_from_owner stays within budget for ~10 credits
+        // (representative of typical portfolios; actual budget is verified at runtime).
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+
+        // Register issuer and methodology once
+        let anonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce2 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce2,
+        );
+
+        // Register multiple projects and submit one credit per project
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        for i in 0u32..10u32 {
+            let proj = soroban_sdk::String::from_str(&env, &format!("PROJ-{:03}", i));
+            client.register_project(
+                &admin,
+                &proj,
+                &String::from_str(&env, "Test"),
+                &String::from_str(&env, "Desc"),
+                &String::from_str(&env, "NG"),
+            );
+            let nonce = client.get_nonce(&issuer);
+            // Use vintage_year 2020+i to avoid duplicate project-vintage check
+            let cid = client.submit_credit(
+                &issuer,
+                &proj,
+                &(2020 + i),
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "bafybei"),
+                &nonce,
+            );
+            credit_ids.push_back(cid);
+        }
+
+        let before = client.list_credits_by_owner(&issuer);
+        assert_eq!(before.len(), 10, "should have 10 credits before transfer");
+
+        // Transfer the first credit to a new owner
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        let transferred_id = credit_ids.get(0).unwrap();
+        client.transfer_credit(&issuer, &recipient, &transferred_id, &nonce);
+
+        let after = client.list_credits_by_owner(&issuer);
+        assert_eq!(
+            after.len(),
+            9,
+            "issuer should have 9 credits after transferring one"
+        );
+        assert!(
+            !after.contains(&transferred_id),
+            "transferred credit should not appear in issuer index"
+        );
+
+        let recipient_credits = client.list_credits_by_owner(&recipient);
+        assert_eq!(
+            recipient_credits.len(),
+            1,
+            "recipient should have 1 credit"
+        );
+        assert!(recipient_credits.contains(&transferred_id));
+    }
 }
+

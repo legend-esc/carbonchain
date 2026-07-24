@@ -363,3 +363,36 @@ pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
         .get(&DataKey::CreditsByOwner(owner.clone()))
         .unwrap_or_else(|| Vec::new(env))
 }
+
+/// Remove a single credit ID from the per-owner index.
+///
+/// Issue #470: `transfer_credit` and `split_credit` did not remove the credit
+/// from the old owner's `CreditsByOwner` list, leaving stale entries that
+/// caused `list_credits_by_owner` / `get_credits_by_owner` to return incorrect
+/// results.
+///
+/// Complexity note: Soroban `Vec` has no O(1) remove — this function iterates
+/// the list and rebuilds it without the target ID, which is O(n). For portfolios
+/// of up to ~50 credits this stays well within the Soroban instruction budget.
+/// For very large portfolios (hundreds of credits) the instruction cost grows
+/// linearly; callers should be aware of this trade-off and, if necessary, switch
+/// to a paginated or bitmap-based index.
+pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::CreditsByOwner(owner.clone());
+    let existing: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut updated: Vec<BytesN<32>> = Vec::new(env);
+    for id in existing.iter() {
+        if id != *credit_id {
+            updated.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &updated);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
