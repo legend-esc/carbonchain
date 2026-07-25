@@ -53,4 +53,39 @@ export class AdminController {
   ): Promise<{ flagged: boolean; creditId: string; status: CreditStatus }> {
     return this.adminService.flagCredit(id);
   }
+
+  /**
+   * POST /admin/methodologies — register a new carbon credit methodology.
+   * Body: { name: string; description: string }
+   */
+  @Post('methodologies')
+  registerMethodology(
+    @Body() body: { name: string; description: string },
+  ): { registered: boolean; name: string; description: string } {
+    return this.adminService.registerMethodology(body.name, body.description);
+  }
+
+  /**
+   * GET /admin/nonce/:address — fetch the current replay-protection nonce for an address.
+   * The frontend must call this before every mutating action and include the returned nonce
+   * in the transaction to prevent replay attacks.
+   */
+  @Get('nonce/:address')
+  getNonce(
+    @Param('address') address: string,
+  ): { address: string; nonce: number } {
+    return this.adminService.getNonce(address);
+  }
+
+  /**
+   * POST /admin/required-approvals — set the minimum number of verifier approvals
+   * required to mint a credit.
+   * Body: { threshold: number }
+   */
+  @Post('required-approvals')
+  setRequiredApprovals(
+    @Body() body: { threshold: number },
+  ): { requiredApprovals: number } {
+    return this.adminService.setRequiredApprovals(body.threshold);
+  }
 }

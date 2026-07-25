@@ -1,5 +1,5 @@
 use crate::types::{
-    AuditLogEntry, CreditMetadata, DataKey, Methodology, Session, VerifierReputation,
+    AuditLogEntry, CreditMetadata, DataKey, Methodology, ServiceType, Session, VerifierReputation,
 };
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
@@ -403,4 +403,49 @@ pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<3
     env.storage()
         .persistent()
         .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+// ── Verifier services ─────────────────────────────────────────────────────────
+
+/// Persist `services` for `verifier` with a long-lived TTL (~1 year).
+pub fn set_verifier_services(env: &Env, verifier: &Address, services: &Vec<ServiceType>) {
+    let key = DataKey::VerifierServices(verifier.clone());
+    env.storage().persistent().set(&key, services);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+/// Returns the configured services for `verifier`, or an empty Vec if none
+/// have been configured yet.
+pub fn get_verifier_services_for(env: &Env, verifier: &Address) -> Vec<ServiceType> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VerifierServices(verifier.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Returns `true` if the verifier has at least one service configured AND
+/// `ServiceType::CreditApproval` is among them, OR if the verifier has no
+/// service configuration at all (open-capability assumption).
+///
+/// The "no config → allow all" semantic lets existing verifiers continue to
+/// work before they have configured their services.
+pub fn verifier_has_credit_approval(env: &Env, verifier: &Address) -> bool {
+    let key = DataKey::VerifierServices(verifier.clone());
+    // No entry at all → open capability: allow everything
+    if !env.storage().persistent().has(&key) {
+        return true;
+    }
+    let services: Vec<ServiceType> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    // Empty list stored → open capability (shouldn't happen via the contract API,
+    // but guard defensively)
+    if services.is_empty() {
+        return true;
+    }
+    services.contains(ServiceType::CreditApproval)
 }

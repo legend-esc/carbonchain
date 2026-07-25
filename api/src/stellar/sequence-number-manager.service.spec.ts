@@ -269,4 +269,118 @@ describe('SequenceNumberManager', () => {
       expect(m.getNextSequenceNumber(PK_B)).toBe(99);
     });
   });
+
+  // ── Issue #510: getNextSequenceNumberAtomic — concurrent-access tests ─────
+
+  describe('getNextSequenceNumberAtomic (#510)', () => {
+    it('returns cached value when cache is warm', async () => {
+      manager.cacheSequenceNumber(PK_A, 42);
+      const fetchFn = jest.fn<Promise<number>, []>();
+      const seq = await manager.getNextSequenceNumberAtomic(PK_A, fetchFn);
+      expect(seq).toBe(42);
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('calls fetchFn once on cache miss and caches the result', async () => {
+      const fetchFn = jest.fn<Promise<number>, []>().mockResolvedValue(100);
+      const seq = await manager.getNextSequenceNumberAtomic(PK_A, fetchFn);
+      expect(seq).toBe(100);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      // Second call uses the cached value — fetchFn NOT called again
+      const fetchFn2 = jest.fn<Promise<number>, []>();
+      const seq2 = await manager.getNextSequenceNumberAtomic(PK_A, fetchFn2);
+      expect(seq2).toBe(101);
+      expect(fetchFn2).not.toHaveBeenCalled();
+    });
+
+    it('serialises concurrent callers so each gets a unique sequence number', async () => {
+      const CONCURRENCY = 10;
+      const START_SEQ = 50;
+      manager.cacheSequenceNumber(PK_A, START_SEQ);
+
+      const fetchFn = jest.fn<Promise<number>, []>();
+      // Fire all concurrent calls at once — they must NOT interleave.
+      const results = await Promise.all(
+        Array.from({ length: CONCURRENCY }, () =>
+          manager.getNextSequenceNumberAtomic(PK_A, fetchFn),
+        ),
+      );
+
+      // Every sequence number must be unique.
+      const unique = new Set(results);
+      expect(unique.size).toBe(CONCURRENCY);
+
+      // Numbers should be exactly START_SEQ through START_SEQ + CONCURRENCY - 1.
+      const sorted = [...results].sort((a, b) => a - b);
+      expect(sorted[0]).toBe(START_SEQ);
+      expect(sorted[CONCURRENCY - 1]).toBe(START_SEQ + CONCURRENCY - 1);
+
+      // fetchFn should never have been called (cache was warm).
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('calls fetchFn exactly once even under concurrent cache-miss', async () => {
+      // Cache is cold — all concurrent callers hit cache miss simultaneously.
+      let fetchCount = 0;
+      const fetchFn = jest.fn<Promise<number>, []>().mockImplementation(async () => {
+        fetchCount++;
+        // Simulate async Horizon latency.
+        await new Promise((r) => setTimeout(r, 0));
+        return 200;
+      });
+
+      const CONCURRENCY = 5;
+      const results = await Promise.all(
+        Array.from({ length: CONCURRENCY }, () =>
+          manager.getNextSequenceNumberAtomic(PK_A, fetchFn),
+        ),
+      );
+
+      // fetchFn must be called exactly once (first caller fetches, rest queue).
+      expect(fetchCount).toBe(1);
+
+      // All results must be unique and monotonically increasing.
+      const unique = new Set(results);
+      expect(unique.size).toBe(CONCURRENCY);
+      const sorted = [...results].sort((a, b) => a - b);
+      expect(sorted[0]).toBe(200);
+      expect(sorted[CONCURRENCY - 1]).toBe(200 + CONCURRENCY - 1);
+    });
+
+    it('isolates queues across different public keys', async () => {
+      manager.cacheSequenceNumber(PK_A, 1);
+      manager.cacheSequenceNumber(PK_B, 100);
+      const fetchFn = jest.fn<Promise<number>, []>();
+
+      const [a0, b0, a1, b1] = await Promise.all([
+        manager.getNextSequenceNumberAtomic(PK_A, fetchFn),
+        manager.getNextSequenceNumberAtomic(PK_B, fetchFn),
+        manager.getNextSequenceNumberAtomic(PK_A, fetchFn),
+        manager.getNextSequenceNumberAtomic(PK_B, fetchFn),
+      ]);
+
+      expect(a0).toBe(1);
+      expect(a1).toBe(2);
+      expect(b0).toBe(100);
+      expect(b1).toBe(101);
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('resets TTL after fetch on cache miss', async () => {
+      const m = await buildManager(100 /* ms */);
+
+      jest.useFakeTimers();
+      jest.setSystemTime(Date.now());
+
+      const fetchFn = jest.fn<Promise<number>, []>().mockResolvedValue(77);
+      const seq = await m.getNextSequenceNumberAtomic(PK_A, fetchFn);
+      expect(seq).toBe(77);
+
+      // Within TTL window — should still be in cache.
+      jest.setSystemTime(Date.now() + 50);
+      const seq2 = await m.getNextSequenceNumberAtomic(PK_A, jest.fn());
+      expect(seq2).toBe(78);
+      expect(fetchFn).toHaveBeenCalledTimes(1); // only the first fetch
+    });
+  });
 });

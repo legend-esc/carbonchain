@@ -8,8 +8,9 @@ import {
   Query,
   ParseIntPipe,
   DefaultValuePipe,
-  Response,
   NotFoundException,
+  StreamableFile,
+  Header,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Response as ExpressResponse } from 'express';
@@ -25,6 +26,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { Throttle } from '../common/throttler.guard';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -96,7 +98,9 @@ export class RetirementController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @UseGuards(JwtAuthGuard)
-  @Get('certificates/:id/download')
+  @Throttle({ limit: 10, ttl: 60_000 })
+  @Get(':id/certificate')
+  @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
     @Response() res: ExpressResponse,
@@ -110,7 +114,7 @@ export class RetirementController {
       );
     }
 
-    // Generate the PDF
+    // Generate the PDF buffer (CPU-intensive; bounded by worker thread pool).
     const pdfBuffer = await this.certificateService.generatePdf({
       retirementId: certificateId,
       creditId: retirement.credit_id,
@@ -120,13 +124,10 @@ export class RetirementController {
       timestamp: retirement.retired_at,
     });
 
-    // Set response headers and stream the PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="certificate-${certificateId}.pdf"`,
-    );
-    res.send(pdfBuffer);
+    return new StreamableFile(pdfBuffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="retirement-certificate-${certificateId}.pdf"`,
+    });
   }
 
   @ApiOperation({ summary: 'Verify retirement certificate authenticity' })

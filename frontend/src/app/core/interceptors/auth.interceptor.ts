@@ -6,28 +6,43 @@ import { AuthService } from '../services/auth.service';
 import { ToastService } from '../services/toast.service';
 
 /**
- * Attaches the JWT (from sessionStorage via AuthService) to every outgoing
- * request as a Bearer token, and handles 401 responses by clearing the session
- * and redirecting to the home page with a toast notification.
+ * Issue #507: Angular HTTP interceptor that automatically attaches the stored
+ * JWT as `Authorization: Bearer <token>` on every request to the API origin.
+ *
+ * Rules:
+ * - Only attaches the header to requests whose URL starts with `/api` (the
+ *   configured API base path).  External requests to Horizon or IPFS gateways
+ *   are left untouched.
+ * - On a 401 response the stored token is cleared and the user is redirected
+ *   to the wallet-connect page.
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const auth = inject(AuthService);
   const toast = inject(ToastService);
   const router = inject(Router);
 
-  const token = auth.token();
-  const authReq = token
-    ? req.clone({ setHeaders: { Authorization: `Bearer ${token}` } })
-    : req;
+  // Only attach the JWT to requests aimed at our own API (relative paths
+  // starting with /api, or absolute URLs containing /api/).
+  const isApiRequest =
+    req.url.startsWith('/api') || req.url.includes('/api/');
 
-  return next(authReq).pipe(
+  const token = auth.token();
+
+  const authorizedReq =
+    isApiRequest && token
+      ? req.clone({
+          setHeaders: { Authorization: `Bearer ${token}` },
+        })
+      : req;
+
+  return next(authorizedReq).pipe(
     catchError((err) => {
       if (err.status === 401) {
         auth.clearSession();
         toast.show('Session expired, please reconnect', 'error');
-        router.navigate(['/']);
+        void router.navigate(['/']);
       }
-      return throwError(() => err);
+      return throwError(() => err as unknown);
     }),
   );
 };

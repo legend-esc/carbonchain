@@ -6,12 +6,14 @@ import {
   Body,
   Query,
   UseGuards,
+  UseInterceptors,
   DefaultValuePipe,
   ParseIntPipe,
   Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
+import { ETagCacheInterceptor } from './etag-cache.interceptor';
 import { IssueCreditDto } from './dto/issue-credit.dto';
 import { TransferCreditDto } from './dto/transfer-credit.dto';
 import { SplitCreditDto } from './dto/split-credit.dto';
@@ -78,7 +80,9 @@ export class CreditsController {
 
   @ApiOperation({ summary: 'Get credit by ID' })
   @ApiResponse({ status: 200, description: 'Credit metadata' })
+  @ApiResponse({ status: 304, description: 'Not Modified (ETag match)' })
   @ApiResponse({ status: 404, description: 'Credit not found' })
+  @UseInterceptors(ETagCacheInterceptor)
   @Get(':id')
   async getCredit(@Param('id') id: string): Promise<CreditMetadata> {
     return this.creditsService.getCredit(id);

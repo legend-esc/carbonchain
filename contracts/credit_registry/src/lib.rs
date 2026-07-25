@@ -33,7 +33,7 @@ use crate::events::{
     ContractInitialized, ContractPaused, ContractUnpaused, CreditDisputed, CreditExpired,
     CreditFlagged, CreditMinted, CreditSplit, CreditSubmitted, CreditTransferred, CreditsMerged,
     DisputeResolved, ProjectRegistered, RetirementContractUpdated, SessionNew, VerifierRegistered,
-    VerifierRemoved,
+    VerifierRemoved, VerifierServicesConfigured,
 };
 use crate::storage::{
     add_credit_to_owner, add_credit_to_project, add_to_pending_credits, append_audit_log,
@@ -47,6 +47,7 @@ use crate::storage::{
     is_verifier, remove_credit_approvals, remove_credit_from_owner, set_admin, set_credit,
     set_credit_approvals, set_credit_by_project_vintage, set_issuers, set_methodologies,
     set_paused, set_required_approvals, set_retirement_contract, set_session, set_verifiers,
+    get_verifier_services_for, set_verifier_services, verifier_has_credit_approval,
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, Methodology, ProjectMetadata,
@@ -491,6 +492,12 @@ impl CreditRegistry {
         if !is_verifier(&env, &verifier) {
             return Err(CarbonChainError::Unauthorized);
         }
+        // Issue #509: if this verifier has configured their service capabilities,
+        // CreditApproval must be among them. If no services are configured, the
+        // verifier retains all capabilities (backwards-compatible open assumption).
+        if !verifier_has_credit_approval(&env, &verifier) {
+            return Err(CarbonChainError::Unauthorized);
+        }
         if !consume_nonce(&env, &verifier, nonce) {
             return Err(CarbonChainError::InvalidNonce);
         }
@@ -859,127 +866,126 @@ impl CreditRegistry {
 
     // ── Verifier Services ────────────────────────────────────────────────────
 
-    /// Replace all capabilities for a verifier. This overwrites any existing services.
+    /// Set the service capabilities for the calling verifier.
     ///
-    /// Consumes **one admin nonce**. When sequencing multiple service-config calls, fetch
-    /// the current nonce with `get_nonce(admin)` before each call — do not reuse the same
-    /// nonce across calls, as each invocation increments it by one.
+    /// Only the verifier themselves can configure their own services — this is
+    /// intentionally NOT an admin operation so verifiers retain autonomy over
+    /// their declared capabilities.
+    ///
+    /// Passing an empty `services` list is allowed and means the verifier has
+    /// not yet declared specific capabilities; the open-capability assumption
+    /// applies (all operations are permitted). To explicitly restrict a verifier
+    /// to no capabilities, pass a list that omits the capability in question.
+    ///
+    /// Consumes **one verifier nonce** to prevent replay attacks.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::ContractPaused`] — contract is paused.
+    /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
+    /// - [`CarbonChainError::VerifierNotFound`] — caller is not a registered verifier.
+    /// - [`CarbonChainError::InvalidNonce`] — nonce mismatch.
     ///
     /// # Example
     /// ```ignore
-    /// let n = contract.get_nonce(&admin);
-    /// contract.configure_verifier_services(&admin, &verifier, &services, n);
-    /// // nonce is now n+1; fetch again before the next admin call
+    /// let n = contract.get_nonce(&verifier);
+    /// let services = vec![ServiceType::CreditApproval, ServiceType::MRVReview];
+    /// contract.configure_verifier_services(&verifier, &services, n);
     /// ```
     pub fn configure_verifier_services(
         env: Env,
-        admin: Address,
         verifier: Address,
         services: Vec<ServiceType>,
         nonce: u64,
     ) -> Result<(), CarbonChainError> {
-        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
-        admin.require_auth();
-        if admin != stored_admin {
-            return Err(CarbonChainError::Unauthorized);
+        if is_paused(&env) {
+            return Err(CarbonChainError::ContractPaused);
         }
-        if !consume_nonce(&env, &admin, nonce) {
-            return Err(CarbonChainError::InvalidNonce);
-        }
+        // Ensure the contract has been initialised (admin must exist).
+        get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        verifier.require_auth();
         if !is_verifier(&env, &verifier) {
             return Err(CarbonChainError::VerifierNotFound);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::VerifierServices(verifier), &services);
+        if !consume_nonce(&env, &verifier, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        let service_count = services.len();
+        set_verifier_services(&env, &verifier, &services);
+        VerifierServicesConfigured {
+            verifier,
+            service_count,
+        }
+        .publish(&env);
         Ok(())
     }
 
-    /// Add a single service to a verifier's capabilities.
+    /// Add a single service capability to the calling verifier's configuration.
     ///
-    /// Consumes **one admin nonce**. Always call `get_nonce(admin)` immediately before
-    /// this function; passing a stale nonce (e.g. one used by a preceding
-    /// `configure_verifier_services` call) will return `InvalidNonce`.
+    /// This is a convenience alternative to `configure_verifier_services` when the
+    /// verifier wants to add one capability without overwriting the others.
+    /// Consumes **one verifier nonce**.
     pub fn add_verifier_service(
         env: Env,
-        admin: Address,
         verifier: Address,
         service: ServiceType,
         nonce: u64,
     ) -> Result<(), CarbonChainError> {
-        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
-        admin.require_auth();
-        if admin != stored_admin {
-            return Err(CarbonChainError::Unauthorized);
+        if is_paused(&env) {
+            return Err(CarbonChainError::ContractPaused);
         }
-        if !consume_nonce(&env, &admin, nonce) {
-            return Err(CarbonChainError::InvalidNonce);
-        }
+        get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        verifier.require_auth();
         if !is_verifier(&env, &verifier) {
             return Err(CarbonChainError::VerifierNotFound);
         }
+        if !consume_nonce(&env, &verifier, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
 
-        let mut services: Vec<ServiceType> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::VerifierServices(verifier.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
-
+        let mut services = get_verifier_services_for(&env, &verifier);
         if !services.contains(service) {
             services.push_back(service);
-            env.storage()
-                .persistent()
-                .set(&DataKey::VerifierServices(verifier), &services);
+            set_verifier_services(&env, &verifier, &services);
         }
         Ok(())
     }
 
-    /// Remove a single service from a verifier's capabilities.
+    /// Remove a single service capability from the calling verifier's configuration.
     ///
-    /// Consumes **one admin nonce**. Always call `get_nonce(admin)` immediately before
-    /// this function; passing a stale nonce will return `InvalidNonce`.
+    /// Consumes **one verifier nonce**.
     pub fn remove_verifier_service(
         env: Env,
-        admin: Address,
         verifier: Address,
         service: ServiceType,
         nonce: u64,
     ) -> Result<(), CarbonChainError> {
-        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
-        admin.require_auth();
-        if admin != stored_admin {
-            return Err(CarbonChainError::Unauthorized);
+        if is_paused(&env) {
+            return Err(CarbonChainError::ContractPaused);
         }
-        if !consume_nonce(&env, &admin, nonce) {
-            return Err(CarbonChainError::InvalidNonce);
-        }
+        get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        verifier.require_auth();
         if !is_verifier(&env, &verifier) {
             return Err(CarbonChainError::VerifierNotFound);
         }
+        if !consume_nonce(&env, &verifier, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
 
-        let old_services: Vec<ServiceType> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::VerifierServices(verifier.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
-
+        let old_services = get_verifier_services_for(&env, &verifier);
         let mut new_services: Vec<ServiceType> = Vec::new(&env);
         for s in old_services.iter() {
             if s != service {
                 new_services.push_back(s);
             }
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::VerifierServices(verifier), &new_services);
+        set_verifier_services(&env, &verifier, &new_services);
         Ok(())
     }
 
+    /// Public read — returns the list of services the verifier has configured.
+    /// Returns an empty Vec if no services have been configured yet.
     pub fn get_verifier_services(env: Env, verifier: Address) -> Vec<ServiceType> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::VerifierServices(verifier))
-            .unwrap_or_else(|| Vec::new(&env))
+        get_verifier_services_for(&env, &verifier)
     }
 
     // ── Issue #91: Project Registry ──────────────────────────────────────────
@@ -2171,10 +2177,10 @@ mod tests {
         assert_eq!(result, Err(Ok(CarbonChainError::SessionNotFound)));
     }
 
-    // ── Tests for Issue #164: configure_verifier_services auth ───────────────
+    // ── Tests for Issue #509: configure_verifier_services self-auth ──────────
 
     #[test]
-    fn test_admin_can_configure_verifier_services() {
+    fn test_verifier_can_self_configure_services() {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().set_timestamp(1735689600);
@@ -2188,13 +2194,155 @@ mod tests {
         client.register_verifier(&admin, &verifier, &nonce);
         let mut services = soroban_sdk::Vec::new(&env);
         services.push_back(ServiceType::CreditApproval);
+        // Verifier uses their own nonce to configure their own services
+        let vnonce = client.get_nonce(&verifier);
+        let result = client.try_configure_verifier_services(&verifier, &services, &vnonce);
+        assert!(result.is_ok());
+        // Verify the services were stored
+        let stored = client.get_verifier_services(&verifier);
+        assert_eq!(stored.len(), 1);
+        assert!(stored.contains(ServiceType::CreditApproval));
+    }
+
+    #[test]
+    fn test_non_verifier_cannot_configure_services() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let non_verifier = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+        let mut services = soroban_sdk::Vec::new(&env);
+        services.push_back(ServiceType::CreditApproval);
+        let nonce = client.get_nonce(&non_verifier);
+        let result =
+            client.try_configure_verifier_services(&non_verifier, &services, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::VerifierNotFound)));
+    }
+
+    #[test]
+    fn test_approve_and_mint_blocked_without_credit_approval_service() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
         let nonce2 = client.get_nonce(&admin);
-        let result = client.try_configure_verifier_services(&admin, &verifier, &services, &nonce2);
+        client.register_issuer(&admin, &issuer, &nonce2);
+        let nonce3 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &soroban_sdk::String::from_str(&env, "VCS"),
+            &soroban_sdk::String::from_str(&env, "Verified Carbon Standard"),
+            &nonce3,
+        );
+        let admin_nonce4 = client.get_nonce(&admin);
+        client.register_project(
+            &admin,
+            &soroban_sdk::String::from_str(&env, "PROJ-001"),
+            &soroban_sdk::String::from_str(&env, "Test Project"),
+            &soroban_sdk::String::from_str(&env, "A test project"),
+            &soroban_sdk::String::from_str(&env, "NG"),
+        );
+        let _ = admin_nonce4;
+
+        // Configure verifier with only MRVReview (no CreditApproval)
+        let mut services = soroban_sdk::Vec::new(&env);
+        services.push_back(ServiceType::MRVReview);
+        let vnonce = client.get_nonce(&verifier);
+        client.configure_verifier_services(&verifier, &services, &vnonce);
+
+        // Submit a credit
+        let inonce = client.get_nonce(&issuer);
+        let credit_id = client.submit_credit(
+            &issuer,
+            &soroban_sdk::String::from_str(&env, "PROJ-001"),
+            &2024u32,
+            &soroban_sdk::String::from_str(&env, "VCS"),
+            &soroban_sdk::String::from_str(&env, "NG"),
+            &1_000_000i128,
+            &soroban_sdk::String::from_str(&env, "bafybei"),
+            &inonce,
+        );
+
+        // Verifier without CreditApproval should be rejected
+        let vnonce2 = client.get_nonce(&verifier);
+        let result = client.try_approve_and_mint(&verifier, &credit_id, &vnonce2);
+        assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_approve_and_mint_succeeds_with_credit_approval_service() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let nonce2 = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &nonce2);
+        let nonce3 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &soroban_sdk::String::from_str(&env, "VCS"),
+            &soroban_sdk::String::from_str(&env, "Verified Carbon Standard"),
+            &nonce3,
+        );
+        let admin_nonce4 = client.get_nonce(&admin);
+        client.register_project(
+            &admin,
+            &soroban_sdk::String::from_str(&env, "PROJ-001"),
+            &soroban_sdk::String::from_str(&env, "Test Project"),
+            &soroban_sdk::String::from_str(&env, "A test project"),
+            &soroban_sdk::String::from_str(&env, "NG"),
+        );
+        let _ = admin_nonce4;
+
+        // Configure verifier with CreditApproval
+        let mut services = soroban_sdk::Vec::new(&env);
+        services.push_back(ServiceType::CreditApproval);
+        let vnonce = client.get_nonce(&verifier);
+        client.configure_verifier_services(&verifier, &services, &vnonce);
+
+        // Submit a credit
+        let inonce = client.get_nonce(&issuer);
+        let credit_id = client.submit_credit(
+            &issuer,
+            &soroban_sdk::String::from_str(&env, "PROJ-001"),
+            &2024u32,
+            &soroban_sdk::String::from_str(&env, "VCS"),
+            &soroban_sdk::String::from_str(&env, "NG"),
+            &1_000_000i128,
+            &soroban_sdk::String::from_str(&env, "bafybei"),
+            &inonce,
+        );
+
+        // Verifier with CreditApproval should succeed
+        let vnonce2 = client.get_nonce(&verifier);
+        let result = client.try_approve_and_mint(&verifier, &credit_id, &vnonce2);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_verifier_cannot_self_configure_services() {
+    fn test_approve_and_mint_succeeds_with_no_services_configured() {
+        // Backwards-compatibility: verifier with no configured services should
+        // still be able to call approve_and_mint (open-capability assumption).
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().set_timestamp(1735689600);
@@ -2202,16 +2350,46 @@ mod tests {
         let client = CreditRegistryClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let verifier = Address::generate(&env);
+        let issuer = Address::generate(&env);
         let retirement = Address::generate(&env);
         client.initialize(&admin, &retirement, &1);
         let nonce = client.get_nonce(&admin);
         client.register_verifier(&admin, &verifier, &nonce);
-        let mut services = soroban_sdk::Vec::new(&env);
-        services.push_back(ServiceType::CreditApproval);
+        let nonce2 = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &nonce2);
+        let nonce3 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &soroban_sdk::String::from_str(&env, "VCS"),
+            &soroban_sdk::String::from_str(&env, "Verified Carbon Standard"),
+            &nonce3,
+        );
+        let admin_nonce4 = client.get_nonce(&admin);
+        client.register_project(
+            &admin,
+            &soroban_sdk::String::from_str(&env, "PROJ-001"),
+            &soroban_sdk::String::from_str(&env, "Test Project"),
+            &soroban_sdk::String::from_str(&env, "A test project"),
+            &soroban_sdk::String::from_str(&env, "NG"),
+        );
+        let _ = admin_nonce4;
+        // No configure_verifier_services call — open capability
+
+        let inonce = client.get_nonce(&issuer);
+        let credit_id = client.submit_credit(
+            &issuer,
+            &soroban_sdk::String::from_str(&env, "PROJ-001"),
+            &2024u32,
+            &soroban_sdk::String::from_str(&env, "VCS"),
+            &soroban_sdk::String::from_str(&env, "NG"),
+            &1_000_000i128,
+            &soroban_sdk::String::from_str(&env, "bafybei"),
+            &inonce,
+        );
+
         let vnonce = client.get_nonce(&verifier);
-        let result =
-            client.try_configure_verifier_services(&verifier, &verifier, &services, &vnonce);
-        assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+        let result = client.try_approve_and_mint(&verifier, &credit_id, &vnonce);
+        assert!(result.is_ok());
     }
 
     #[test]

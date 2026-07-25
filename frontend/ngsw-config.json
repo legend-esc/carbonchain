@@ -26,16 +26,5 @@
         ]
       }
     }
-  ],
-  "dataGroups": [
-    {
-      "name": "certificate-and-credit-pages",
-      "urls": ["/credits/**", "/certificates/**", "/retirement/**"],
-      "cacheConfig": {
-        "strategy": "performance",
-        "maxSize": 100,
-        "maxAge": "7d"
-      }
-    }
   ]
 }

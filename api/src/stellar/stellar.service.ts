@@ -99,14 +99,12 @@ export class StellarService implements OnModuleInit {
   }
 
   private async getNextSequenceNumber(publicKey: string): Promise<number> {
-    const cached = this.seqNoManager.getNextSequenceNumber(publicKey);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const account = await this.horizonServer.loadAccount(publicKey);
-    const seq = Number(account.sequenceNumber);
-    this.seqNoManager.cacheSequenceNumber(publicKey, seq);
-    return this.seqNoManager.getNextSequenceNumber(publicKey)!;
+    // Issue #510: use the per-account promise queue so concurrent callers for
+    // the same account never receive the same sequence number.
+    return this.seqNoManager.getNextSequenceNumberAtomic(publicKey, async () => {
+      const account = await this.horizonServer.loadAccount(publicKey);
+      return Number(account.sequenceNumber);
+    });
   }
 
   /**

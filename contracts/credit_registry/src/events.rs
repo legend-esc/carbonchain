@@ -128,3 +128,11 @@ pub struct RetirementContractUpdated {
     pub admin: Address,
     pub new_address: Address,
 }
+
+/// Emitted when a verifier configures their own service capabilities.
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierServicesConfigured {
+    pub verifier: Address,
+    pub service_count: u32,
+}
