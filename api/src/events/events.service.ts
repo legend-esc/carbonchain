@@ -5,6 +5,7 @@ import { WebhooksService } from '../webhooks/webhooks.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { rpc } from '@stellar/stellar-sdk';
 import { CacheService } from '../common/cache.service';
+import { EventFilterBuilder, EventFilterConfig } from '../common/filters';
 
 export interface SorobanEvent {
   id: string;
@@ -156,6 +157,38 @@ export class EventsService implements OnModuleInit {
 
     const limit = Math.min(take, 200);
     return filtered.slice(skip, skip + limit);
+  }
+
+  getEventsWithFilter(config: EventFilterConfig): SorobanEvent[] {
+    let filtered = Array.from(this.events.values());
+
+    if (config.contractIds) {
+      filtered = config.contractIds.apply(filtered);
+    }
+
+    if (config.eventTypes) {
+      filtered = config.eventTypes.apply(filtered);
+    }
+
+    if (config.dateRange) {
+      filtered = config.dateRange.apply(filtered);
+    }
+
+    if (config.customPredicate) {
+      filtered = filtered.filter(config.customPredicate);
+    }
+
+    if (config.pagination) {
+      const { page, limit } = config.pagination;
+      const start = (page - 1) * limit;
+      filtered = filtered.slice(start, start + limit);
+    }
+
+    return filtered;
+  }
+
+  filterEvents(): EventFilterBuilder {
+    return EventFilterBuilder.create();
   }
 
   getEventById(eventId: string): SorobanEvent | undefined {
