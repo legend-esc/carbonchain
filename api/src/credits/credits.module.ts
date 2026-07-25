@@ -8,6 +8,7 @@ import {
   InMemoryCreditRepository,
   CREDIT_REPOSITORY,
 } from './credit.repository';
+import { ETagCacheInterceptor } from './etag-cache.interceptor';
 
 @Module({
   imports: [ConfigModule, StellarModule, AuthModule],
@@ -15,6 +16,7 @@ import {
   providers: [
     CreditsService,
     { provide: CREDIT_REPOSITORY, useClass: InMemoryCreditRepository },
+    ETagCacheInterceptor,
   ],
   exports: [CreditsService, CREDIT_REPOSITORY],
 })
