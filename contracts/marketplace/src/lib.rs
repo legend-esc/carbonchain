@@ -88,6 +88,9 @@ pub enum MarketplaceError {
     AlreadyInitialized = 126,
     /// Buyer does not hold enough XLM to cover the offer price.
     InsufficientFunds = 127,
+    /// Escrow transfer succeeded but the offer record failed to persist;
+    /// the credit was returned to the seller to avoid a stuck escrow.
+    EscrowFailed = 128,
 }
 
 #[contractevent]
@@ -328,6 +331,31 @@ impl Marketplace {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+
+        // Atomic-escrow guard: confirm the offer actually persisted after the
+        // cross-contract transfer_credit call. If the storage write did not
+        // take effect, return the credit to the seller instead of leaving it
+        // stuck in escrow with no corresponding offer.
+        let stored: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(offer_id));
+        if stored.is_none() {
+            let seller_nonce: u64 = env.invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "get_nonce"),
+                (escrow_account.clone(),).into_val(&env),
+            );
+            let _: () = env.invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "transfer_credit"),
+                (
+                    escrow_account.clone(),
+                    seller.clone(),
+                    offer.credit_id.clone(),
+                    seller_nonce,
+                )
+                    .into_val(&env),
+            );
+            return Err(MarketplaceError::EscrowFailed);
+        }
 
         OfferNew { seller, offer_id }.publish(&env);
         Ok(offer_id)
