@@ -92,7 +92,7 @@ export class ApiService {
   /** POST /projects */
   createProject(data: Omit<ProjectProfile, 'id'>, token: string): Observable<ProjectProfile> {
     return this.http.post<ProjectProfile>(`${this.baseUrl}/projects`, data, {
-      headers: this.authHeaders(token),
+      headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()),
     });
   }
 
@@ -138,7 +138,7 @@ export class ApiService {
     token: string,
   ): Observable<{ retirementId: string }> {
     return this.http.post<{ retirementId: string }>(`${this.baseUrl}/retirement`, body, {
-      headers: this.authHeaders(token),
+      headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()),
     });
   }
 
@@ -161,7 +161,7 @@ export class ApiService {
     token: string,
   ): Observable<{ offerId: string }> {
     return this.http.post<{ offerId: string }>(`${this.baseUrl}/marketplace/offer`, body, {
-      headers: this.authHeaders(token),
+      headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()),
     });
   }
 

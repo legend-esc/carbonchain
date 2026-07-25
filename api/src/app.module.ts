@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
@@ -7,6 +8,7 @@ import { envValidationSchema } from './env-validation';
 import { CacheModule } from './common/cache.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingMiddleware } from './common/request-logging.middleware';
+import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { HealthModule } from './health/health.module';
 import { StellarModule } from './stellar/stellar.module';
 import { CreditsModule } from './credits/credits.module';
@@ -45,7 +47,10 @@ import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
     MetricsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
