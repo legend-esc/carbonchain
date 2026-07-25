@@ -17,7 +17,7 @@ jobs:
         with:
           toolchain: "1.91.0"
           targets: wasm32v1-none
-          components: rustfmt
+          components: rustfmt, clippy
       # #193 — enforce consistent formatting across all four contracts
       - name: Check Rust formatting
         run: cd contracts && cargo fmt --all -- --check
@@ -32,8 +32,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      # Build WASM first — test_helpers.rs uses include_bytes! which requires the
+      # wasm32v1-none artifact to exist before clippy or cargo test compiles test targets
       - name: Build Contracts
         run: cd contracts && cargo build --target wasm32v1-none --release
+      # #192 — zero-warning clippy policy across all four contracts (after WASM build)
+      - name: Clippy
+        run: cd contracts && cargo clippy --all-targets -- -D warnings
       # #47 — run credit_registry tests standalone (avoids workspace feature unification)
       - name: Run Credit Registry Tests
         run: cd contracts/credit_registry && cargo test
@@ -86,11 +91,13 @@ jobs:
         run: cd api && npm run test:e2e
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
-          JWT_SECRET: ci-test-secret
+          JWT_SECRET: ci-test-secret-for-e2e-testing-32chars
           ADMIN_SECRET_KEY: SCI7YTM2J5ZQOQ4SI5L5ZCXZDTXSMONGDFFHGQCPWAP6CCRBPYRCIATS
           STELLAR_NETWORK: testnet
           STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
           STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+          IPFS_API_KEY: ci-test-ipfs-api-key
+          IPFS_SECRET_KEY: ci-test-ipfs-secret-key
       # #249 — generate test coverage report
       - name: Generate Coverage Report
         run: cd api && npm run test:cov

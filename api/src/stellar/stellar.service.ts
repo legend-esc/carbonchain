@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Account,
@@ -15,12 +16,31 @@ import {
 import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RequestContextStore } from '../common/request-context';
 
+/**
+ * Default fee-buffer multiplier applied on top of the simulated minResourceFee.
+ * Configurable via FEE_BUFFER_MULTIPLIER environment variable.
+ * e.g. 1.1 = 10% headroom above the minimum.
+ */
+const DEFAULT_FEE_BUFFER_MULTIPLIER = 1.1;
+
+/** Base fee used as a fallback when Horizon fetchBaseFee fails. */
+const FALLBACK_BASE_FEE = 100; // stroops
+
+/** TTL for the Horizon base fee cache (ms). */
+const BASE_FEE_CACHE_TTL_MS = 60_000;
+
+/** Mandatory delay before re-fetching sequence number after tx_bad_seq (ms). */
+const BAD_SEQ_RETRY_DELAY_MS = 200;
+
 @Injectable()
 export class StellarService implements OnModuleInit {
   private readonly logger = new Logger(StellarService.name);
   private horizonServer: Horizon.Server;
   private sorobanRpcServer: rpc.Server;
   private networkPassphrase: string;
+
+  /** Fee buffer multiplier (default 1.1). Configurable via FEE_BUFFER_MULTIPLIER. */
+  private readonly feeBufferMultiplier: number;
 
   /** In-process cache for account info. Key: Stellar address. */
   private readonly accountInfoCache = new Map<
@@ -29,10 +49,23 @@ export class StellarService implements OnModuleInit {
   >();
   private static readonly ACCOUNT_INFO_TTL_MS = 30_000;
 
+  /**
+   * Cached Horizon base fee.
+   * Issue #472: fetchBaseFee() is called at most once per BASE_FEE_CACHE_TTL_MS.
+   */
+  private baseFeeCache: { value: number; expiresAt: number } | null = null;
+
   constructor(
     private configService: ConfigService,
     private seqNoManager: SequenceNumberManager,
-  ) {}
+  ) {
+    const rawMultiplier = configService.get<string>('FEE_BUFFER_MULTIPLIER');
+    const parsed =
+      rawMultiplier !== undefined ? parseFloat(rawMultiplier) : NaN;
+    this.feeBufferMultiplier = Number.isFinite(parsed)
+      ? parsed
+      : DEFAULT_FEE_BUFFER_MULTIPLIER;
+  }
 
   onModuleInit() {
     const horizonUrl =
@@ -66,14 +99,59 @@ export class StellarService implements OnModuleInit {
   }
 
   private async getNextSequenceNumber(publicKey: string): Promise<number> {
-    const cached = this.seqNoManager.getNextSequenceNumber(publicKey);
-    if (cached !== undefined) {
-      return cached;
+    // Issue #510: use the per-account promise queue so concurrent callers for
+    // the same account never receive the same sequence number.
+    return this.seqNoManager.getNextSequenceNumberAtomic(publicKey, async () => {
+      const account = await this.horizonServer.loadAccount(publicKey);
+      return Number(account.sequenceNumber);
+    });
+  }
+
+  /**
+   * Issue #472: Fetch the Horizon network base fee with a 60-second TTL cache.
+   * Falls back to FALLBACK_BASE_FEE (100 stroops) if the call fails.
+   */
+  private async getHorizonBaseFee(): Promise<number> {
+    const now = Date.now();
+    if (this.baseFeeCache && this.baseFeeCache.expiresAt > now) {
+      return this.baseFeeCache.value;
     }
-    const account = await this.horizonServer.loadAccount(publicKey);
-    const seq = Number(account.sequenceNumber);
-    this.seqNoManager.cacheSequenceNumber(publicKey, seq);
-    return this.seqNoManager.getNextSequenceNumber(publicKey)!;
+    try {
+      const feeStats = await this.horizonServer.feeStats();
+      // Use the p50 (median) accepted base fee for a reliable estimate.
+      const baseFee =
+        parseInt(feeStats.fee_charged?.p50 ?? String(FALLBACK_BASE_FEE), 10) ||
+        FALLBACK_BASE_FEE;
+      this.baseFeeCache = { value: baseFee, expiresAt: now + BASE_FEE_CACHE_TTL_MS };
+      return baseFee;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch Horizon base fee, using fallback ${FALLBACK_BASE_FEE}: ${(err as Error).message}`,
+      );
+      return FALLBACK_BASE_FEE;
+    }
+  }
+
+  /**
+   * Issue #472: Compute the Soroban transaction fee from the simulation result.
+   * Uses `simulation.minResourceFee` with the configured buffer multiplier.
+   * The fee is ceiled to the nearest integer stroop.
+   *
+   * Note: `rpc.assembleTransaction` sets the fee internally from the simulation,
+   * but the subsequent `.build()` call can override it if a fee is passed to the
+   * original TransactionBuilder. We therefore apply the fee AFTER assembleTransaction
+   * by reading it back from `simulation.minResourceFee`.
+   */
+  private computeSorobanFee(
+    simulation: rpc.Api.SimulateTransactionSuccessResponse,
+  ): string {
+    const minResourceFee = parseInt(
+      String(simulation.minResourceFee ?? '0'),
+      10,
+    );
+    const withBuffer = Math.ceil(minResourceFee * this.feeBufferMultiplier);
+    // Ensure we always pay at least the minimum base fee (100 stroops).
+    return String(Math.max(withBuffer, FALLBACK_BASE_FEE));
   }
 
   async invokeContract(
@@ -87,8 +165,10 @@ export class StellarService implements OnModuleInit {
     const seq = await this.getNextSequenceNumber(pk);
     const account = new Account(pk, seq.toString());
 
+    // Issue #472: Use a placeholder fee for the simulation step.
+    // The real fee is derived from simulation.minResourceFee after assembly.
     const tx = new TransactionBuilder(account, {
-      fee: '1000',
+      fee: String(FALLBACK_BASE_FEE),
       networkPassphrase: this.networkPassphrase,
     })
       .addOperation(
@@ -109,12 +189,30 @@ export class StellarService implements OnModuleInit {
     const simulation = await this.simulateTransaction(tx);
 
     if (rpc.Api.isSimulationSuccess(simulation)) {
-      const preparedTx = rpc.assembleTransaction(tx, simulation).build();
+      // assembleTransaction sets the resource fee from the simulation.
+      // We then override the fee field on the built transaction to apply our buffer.
+      const assembledBuilder = rpc.assembleTransaction(tx, simulation);
+
+      // Compute the final fee with buffer AFTER assembly so it accounts for
+      // the simulation's minResourceFee recommendation.
+      const fee = this.computeSorobanFee(simulation);
+
+      // Build the transaction; assembleTransaction already set resourceFee
+      // internally — we apply our fee as the base fee override.
+      const preparedTx = assembledBuilder.setBaseFee(fee).build();
       preparedTx.sign(signerKeypair);
 
+      this.logger.debug(
+        `Submitting Soroban tx: method=${method} fee=${fee} hash=${preparedTx.hash().toString('hex').slice(0, 16)}...`,
+      );
+      this.logger.verbose(
+        `Full XDR for method=${method}: ${preparedTx.toEnvelope().toXDR('base64')}`,
+      );
+
       try {
-        const response =
-          await this.sorobanRpcServer.sendTransaction(preparedTx);
+        const response = await this.submitTransactionWithRetry(() =>
+          this.sorobanRpcServer.sendTransaction(preparedTx),
+        );
 
         if ((response.status as string) === 'PENDING') {
           const result = await this.pollTransactionStatus(response.hash);
@@ -125,17 +223,23 @@ export class StellarService implements OnModuleInit {
       } catch (error: unknown) {
         const isBadSeq =
           (error as Error).message?.toLowerCase().includes('tx_bad_seq') ||
-          (error as any)?.response?.data?.extras?.result_codes?.transaction ===
-            'tx_bad_seq';
-      const response = await this.submitTransactionWithRetry(() =>
-        this.sorobanRpcServer.sendTransaction(preparedTx),
-      );
+          (
+            error as {
+              response?: {
+                data?: { extras?: { result_codes?: { transaction?: string } } };
+              };
+            }
+          )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
 
         if (isBadSeq && retries > 0) {
           this.logger.warn(
-            `tx_bad_seq for ${pk} (sig:${method}), resetting cache and retrying`,
+            `tx_bad_seq for ${pk} (sig:${method}), waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
           );
           this.seqNoManager.reset(pk);
+          // Issue #473: mandatory delay before re-fetching to allow Horizon to catch up.
+          await new Promise((resolve) =>
+            setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
+          );
           return this.invokeContract(
             contractId,
             method,
@@ -160,8 +264,14 @@ export class StellarService implements OnModuleInit {
     const seq = await this.getNextSequenceNumber(pk);
     const account = new Account(pk, seq.toString());
 
+    // Issue #472: Fetch the Horizon network base fee with a 60s TTL cache.
+    const baseFee = await this.getHorizonBaseFee();
+    const feeWithBuffer = String(
+      Math.ceil(baseFee * this.feeBufferMultiplier),
+    );
+
     const txBuilder = new TransactionBuilder(account, {
-      fee: '1000',
+      fee: feeWithBuffer,
       networkPassphrase: this.networkPassphrase,
     });
 
@@ -172,25 +282,40 @@ export class StellarService implements OnModuleInit {
     const tx = txBuilder.setTimeout(30).build();
     tx.sign(signerKeypair);
 
+    this.logger.debug(
+      `Submitting Horizon tx: fee=${feeWithBuffer} hash=${tx.hash().toString('hex').slice(0, 16)}...`,
+    );
+    this.logger.verbose(`Full XDR: ${tx.toEnvelope().toXDR('base64')}`);
+
     try {
-      const result = await this.horizonServer.submitTransaction(tx);
+      const result = await this.submitTransactionWithRetry(() =>
+        this.horizonServer.submitTransaction(tx),
+      );
       this.invalidateAccountInfoCache(pk);
       return result;
     } catch (error: unknown) {
-      const err = error as any;
       const isBadSeq =
-        err?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
+        (
+          error as {
+            response?: {
+              data?: { extras?: { result_codes?: { transaction?: string } } };
+            };
+          }
+        )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
 
       if (isBadSeq && retries > 0) {
-        this.logger.warn(`tx_bad_seq for ${pk}, resetting cache and retrying`);
+        this.logger.warn(
+          `tx_bad_seq for ${pk}, waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
+        );
         this.seqNoManager.reset(pk);
+        // Issue #473: mandatory delay before re-fetching to allow Horizon to catch up.
+        await new Promise((resolve) =>
+          setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
+        );
         return this.buildAndSubmit(operations, signerKeypair, retries - 1);
       }
       throw error;
     }
-    return this.submitTransactionWithRetry(() =>
-      this.horizonServer.submitTransaction(tx),
-    );
   }
 
   async getContractData(
@@ -263,7 +388,8 @@ export class StellarService implements OnModuleInit {
         lastError = error instanceof Error ? error : new Error(String(error));
 
         // Extract status code from error response
-        const statusCode = error?.response?.status;
+        const statusCode = (error as { response?: { status?: number } })
+          ?.response?.status;
 
         // Fail immediately on non-retryable errors
         if (statusCode === 400 || statusCode === 404) {

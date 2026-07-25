@@ -14,6 +14,8 @@ describe('Environment Variable Validation (#46, #255)', () => {
     STELLAR_NETWORK: 'testnet',
     STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
     STELLAR_SOROBAN_RPC: 'https://soroban-testnet.stellar.org',
+    IPFS_API_KEY: 'test-ipfs-api-key',
+    IPFS_SECRET_KEY: 'test-ipfs-secret-key',
   };
 
   it('passes with all required vars present', () => {
@@ -70,5 +72,19 @@ describe('Environment Variable Validation (#46, #255)', () => {
     const { error } = envValidationSchema.validate(invalidEnv);
     expect(error).toBeDefined();
     expect(error!.message).toContain('LOG_LEVEL');
+  });
+
+  it('fails when IPFS_API_KEY is missing', () => {
+    const { IPFS_API_KEY: _, ...rest } = validEnv;
+    const { error } = envValidationSchema.validate(rest);
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('IPFS_API_KEY');
+  });
+
+  it('fails when IPFS_SECRET_KEY is missing', () => {
+    const { IPFS_SECRET_KEY: _, ...rest } = validEnv;
+    const { error } = envValidationSchema.validate(rest);
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('IPFS_SECRET_KEY');
   });
 });

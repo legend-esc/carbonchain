@@ -103,6 +103,19 @@ export class ApiService {
     return this.http.get<CreditMetadata>(`${this.baseUrl}/credits/${id}`);
   }
 
+  /** POST /credits/:id/split */
+  splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Observable<{ childCredit1: string; childCredit2: string }> {
+    return this.http.post<{ childCredit1: string; childCredit2: string }>(
+      `${this.baseUrl}/credits/${creditId}/split`,
+      { splitTonnes },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
   /** GET /credits/:id/provenance */
   getCreditProvenance(id: string): Observable<ProvenanceEvent[]> {
     return this.http.get<ProvenanceEvent[]>(`${this.baseUrl}/credits/${id}/provenance`);
@@ -145,6 +158,19 @@ export class ApiService {
   /** GET /retirement/:id */
   getRetirement(id: string): Observable<import('@shared').RetirementRecord> {
     return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/retirement/${id}`);
+  }
+
+  /** GET /certificates/:id — fetch a retirement certificate by ID */
+  getCertificate(id: string): Observable<import('@shared').RetirementRecord> {
+    return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/certificates/${id}`);
+  }
+
+  /** GET /certificates/:id/download — returns a PDF blob */
+  downloadCertificate(id: string, token: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/certificates/${id}/download`, {
+      headers: this.authHeaders(token),
+      responseType: 'blob',
+    });
   }
 
   /** POST /marketplace/offer */
@@ -203,6 +229,51 @@ export class ApiService {
     return this.http.post<{ configured: boolean; verifierId: string }>(
       `${this.baseUrl}/admin/verifiers/${id}/configure`,
       config,
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * POST /admin/methodologies — register a new carbon credit methodology.
+   * Requires admin JWT.
+   */
+  registerMethodology(
+    name: string,
+    description: string,
+    token: string,
+  ): Observable<{ registered: boolean; name: string; description: string }> {
+    return this.http.post<{ registered: boolean; name: string; description: string }>(
+      `${this.baseUrl}/admin/methodologies`,
+      { name, description },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * GET /admin/nonce/:address — fetch the current replay-protection nonce.
+   * Must be called before every mutating admin action.
+   */
+  getAdminNonce(
+    address: string,
+    token: string,
+  ): Observable<{ address: string; nonce: number }> {
+    return this.http.get<{ address: string; nonce: number }>(
+      `${this.baseUrl}/admin/nonce/${address}`,
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * POST /admin/required-approvals — set the minimum verifier approval threshold.
+   * Requires admin JWT.
+   */
+  setRequiredApprovals(
+    threshold: number,
+    token: string,
+  ): Observable<{ requiredApprovals: number }> {
+    return this.http.post<{ requiredApprovals: number }>(
+      `${this.baseUrl}/admin/required-approvals`,
+      { threshold },
       { headers: this.authHeaders(token) },
     );
   }

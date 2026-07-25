@@ -1,5 +1,12 @@
 use soroban_sdk::contracterror;
 
+/// Stable error codes for the CarbonChain credit registry contract.
+///
+/// All error codes (100–126) are defined here in the credit registry.
+/// The retirement contract (errors 200–209) and marketplace contract
+/// (errors 300–309) define their own separate error enums.
+///
+/// Codes are intentionally stable — do not renumber existing variants.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -33,4 +40,6 @@ pub enum CarbonChainError {
     InvalidApprovalThreshold = 124,
     /// Returned when a verifier tries to approve a credit they already approved.
     AlreadyApproved = 125,
+    /// Returned when no retirement contract has been registered.
+    NoRetirementContract = 126,
 }

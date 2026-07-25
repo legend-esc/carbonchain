@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Worker } from 'worker_threads';
 import { join } from 'path';
@@ -145,14 +144,8 @@ export class CertificateService {
       });
 
       worker.once('exit', (code) => {
-        if (code !== 0) {
-          reject(
-            new InternalServerErrorException({
-              error: 'Certificate generation failed',
-              detail: `PDF worker exited with code ${code}`,
-            }),
-          );
-        }
+        if (code !== 0)
+          reject(new Error(`PDF worker exited with code ${code}`));
       });
     });
   }

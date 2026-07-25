@@ -30,7 +30,8 @@ describe('CertificateService', () => {
 
   it('generates a PDF buffer with non-zero length', async () => {
     const buf = await service.generatePdf(SAMPLE_DATA);
-    expect(buf).toBeInstanceOf(Buffer);
+    // In Node 22+ worker threads transfer Uint8Array; Buffer is a subclass of Uint8Array.
+    expect(buf instanceof Uint8Array).toBe(true);
     expect(buf.length).toBeGreaterThan(0);
   });
 

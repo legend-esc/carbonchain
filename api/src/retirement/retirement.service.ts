@@ -1,31 +1,30 @@
-import { Injectable, Logger, NotFoundException, ServiceUnavailableException, BadRequestException, Inject, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+  BadRequestException,
+  ConflictException,
+  Inject,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { RetirementRecord } from '../shared';
+import { CreditStatus, RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
-import { PageResult } from '../credits/credit.repository';
-import { CertificateService } from './certificate.service';
+import type { ICreditRepository } from '../credits/credit.repository';
+import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
+import { RetireDto, FullRetireDto } from './dto/retire.dto';
+import { BatchRetireDto } from './dto/batch-retire.dto';
 
-export const CERTIFICATE_SERVICE = 'CERTIFICATE_SERVICE';
+export const MAX_BATCH_SIZE = 10;
 
-export const MAX_BATCH_SIZE = 20;
-
-export class RetireDto {
-  buyerPublicKey: string;
-  creditId: string;
-  tonnes: string;
-  reason: string;
-}
-
-export class BatchRetireDto {
-  buyerPublicKey: string;
-  creditIds: string[];
-  tonnes: string[];
-  reason: string;
+export interface BatchRetireResult {
+  succeeded: string[];
+  failed: { id: string; reason: string }[];
 }
 
 export interface CertificateVerification {
@@ -72,6 +71,8 @@ export class RetirementService {
     private readonly configService: ConfigService,
     @Inject(RETIREMENT_REPOSITORY)
     private readonly retirementRepo: IRetirementRepository,
+    @Inject(CREDIT_REPOSITORY)
+    private readonly creditRepo: ICreditRepository,
     @Inject(EVENT_EMITTER) private readonly eventEmitter: IEventEmitter,
     @Optional() private readonly certificateService?: CertificateService,
   ) {
@@ -83,6 +84,39 @@ export class RetirementService {
       'CREDIT_REGISTRY_CONTRACT_ID',
       '',
     );
+  }
+
+  /**
+   * Retire a credit via POST /credits/:id/retire.
+   * Validates off-chain index state before submitting the on-chain transaction.
+   */
+  async retireCredit(
+    creditId: string,
+    dto: RetireDto,
+    buyerPublicKey: string,
+  ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    const credit = await this.creditRepo.findById(creditId);
+    if (!credit) {
+      throw new NotFoundException(`Credit ${creditId} not found`);
+    }
+    if (credit.status !== CreditStatus.Active) {
+      throw new ConflictException(
+        `Credit ${creditId} is not active (status: ${credit.status})`,
+      );
+    }
+
+    const result = await this.retire({
+      buyerPublicKey,
+      creditId,
+      tonnes: credit.tonnes,
+      reason: dto.reason,
+      nonce: dto.nonce,
+    });
+
+    credit.status = CreditStatus.Retired;
+    await this.creditRepo.save(credit);
+
+    return result;
   }
 
   /**
@@ -101,7 +135,7 @@ export class RetirementService {
    *   3. Emit the `CreditRetired` application event.
    */
   async retire(
-    dto: RetireDto,
+    dto: FullRetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
     this.logger.log(
       `Retiring credit ${dto.creditId} for ${dto.buyerPublicKey}`,
@@ -113,6 +147,7 @@ export class RetirementService {
       nativeToScVal(BigInt(dto.tonnes), { type: 'i128' }),
       nativeToScVal(dto.reason, { type: 'string' }),
       nativeToScVal(this.registryContractId, { type: 'address' }),
+      nativeToScVal(BigInt(dto.nonce ?? 0), { type: 'u64' }),
     ];
 
     const signer = this.keypairService.getAdminKeypair();
@@ -201,17 +236,26 @@ export class RetirementService {
   /**
    * Retire multiple credits in a single on-chain call.
    * Enforces MAX_BATCH_SIZE before invoking the contract.
+   *
+   * Persists one RetirementEntity per successful retirement and returns
+   * a partial-success shape so callers can distinguish which credits
+   * succeeded and which failed.
+   *
+   * All DB writes are wrapped in a single transaction via saveAll().
+   * If the contract reverts, no DB writes occur. If the DB transaction
+   * fails after a successful contract call, the entire batch is marked
+   * as failed and no events are emitted.
    */
-  async batchRetire(
-    dto: BatchRetireDto,
-  ): Promise<{ retirementIds: string[] }> {
+  async batchRetire(dto: BatchRetireDto): Promise<BatchRetireResult> {
     if (dto.creditIds.length > MAX_BATCH_SIZE) {
       throw new BadRequestException(
         `Batch size ${dto.creditIds.length} exceeds maximum allowed (${MAX_BATCH_SIZE})`,
       );
     }
     if (dto.creditIds.length !== dto.tonnes.length) {
-      throw new BadRequestException('creditIds and tonnes arrays must have the same length');
+      throw new BadRequestException(
+        'creditIds and tonnes arrays must have the same length',
+      );
     }
 
     this.logger.log(
@@ -232,6 +276,7 @@ export class RetirementService {
       tonnesVal,
       nativeToScVal(dto.reason, { type: 'string' }),
       nativeToScVal(this.registryContractId, { type: 'address' }),
+      nativeToScVal(BigInt(dto.nonce), { type: 'u64' }),
     ];
 
     const signer = this.keypairService.getAdminKeypair();
@@ -246,19 +291,74 @@ export class RetirementService {
     } catch (error: unknown) {
       const msg = (error as Error).message || '';
       if (msg.includes('123') || msg.includes('paused')) {
-        throw new ServiceUnavailableException({ error: 'Contract is currently paused' });
+        throw new ServiceUnavailableException({
+          error: 'Contract is currently paused',
+        });
       }
       throw error;
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
     const retirementIds: string[] = rv
-      ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as Uint8Array[]).map(
-          (b) => Buffer.from(b).toString('hex'),
-        )
+      ? (
+          scValToNative(
+            rv as Parameters<typeof scValToNative>[0],
+          ) as Uint8Array[]
+        ).map((b) => Buffer.from(b).toString('hex'))
       : [];
 
-    return { retirementIds };
+    const now = Math.floor(Date.now() / 1000);
+
+    // Build all entities upfront
+    const entities: RetirementEntity[] = retirementIds.map((retirementId, i) => {
+      const entity = new RetirementEntity();
+      entity.id = retirementId;
+      entity.creditId = dto.creditIds[i];
+      entity.buyer = dto.buyerPublicKey;
+      entity.tonnesRetired = dto.tonnes[i];
+      entity.reason = dto.reason;
+      entity.retiredAt = now;
+      entity.txHash = '';
+      return entity;
+    });
+
+    // Wrap all DB writes in a single transaction via saveAll().
+    // If the saveAll() call fails, no records are persisted and no events are emitted.
+    try {
+      await this.retirementRepo.saveAll(entities);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Batch DB transaction failed: ${(error as Error).message}. ` +
+          `On-chain transaction succeeded but ${entities.length} records were not persisted.`,
+      );
+      // Return all as failed — the on-chain state succeeded but off-chain state is inconsistent.
+      // Callers should reconcile by re-querying on-chain state.
+      return {
+        succeeded: [],
+        failed: dto.creditIds.map((id, i) => ({
+          id,
+          reason: `DB transaction failed: ${(error as Error).message}`,
+        })),
+      };
+    }
+
+    // Emit events only after all records are persisted successfully.
+    // The contract emits a single BatchRetired event on full success,
+    // so we never emit partial CreditRetired events.
+    const succeeded: string[] = [];
+    for (let i = 0; i < entities.length; i++) {
+      const event: CreditRetiredEvent = {
+        retirementId: entities[i].id,
+        creditId: entities[i].creditId,
+        buyer: entities[i].buyer,
+        tonnesRetired: entities[i].tonnesRetired,
+        retiredAt: entities[i].retiredAt,
+      };
+      this.eventEmitter.emit('CreditRetired', event);
+      succeeded.push(entities[i].id);
+    }
+
+    return { succeeded, failed: [] };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {

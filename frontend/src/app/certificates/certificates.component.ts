@@ -19,13 +19,20 @@ import { AuthService } from '../core/services/auth.service';
       } @else if (record()) {
         <h1>Retirement Certificate</h1>
         <dl>
-          <dt>Certificate ID</dt><dd>{{ record()!.id }}</dd>
-          <dt>Credit ID</dt><dd>{{ record()!.credit_id }}</dd>
-          <dt>Retired By</dt><dd class="mono">{{ record()!.buyer }}</dd>
-          <dt>Tonnes Retired</dt><dd>{{ tonnesDisplay() }}</dd>
-          <dt>Reason</dt><dd>{{ record()!.reason }}</dd>
-          <dt>Retired At</dt><dd>{{ record()!.retired_at | date:'medium' }}</dd>
-          <dt>Transaction</dt><dd class="mono">{{ record()!.tx_hash }}</dd>
+          <dt>Certificate ID</dt>
+          <dd>{{ record()!.id }}</dd>
+          <dt>Credit ID</dt>
+          <dd>{{ record()!.credit_id }}</dd>
+          <dt>Retired By</dt>
+          <dd class="mono">{{ record()!.buyer }}</dd>
+          <dt>Tonnes Retired</dt>
+          <dd>{{ tonnesDisplay() }}</dd>
+          <dt>Reason</dt>
+          <dd>{{ record()!.reason }}</dd>
+          <dt>Retired At</dt>
+          <dd>{{ record()!.retired_at | date: 'medium' }}</dd>
+          <dt>Transaction</dt>
+          <dd class="mono">{{ record()!.tx_hash }}</dd>
         </dl>
         <button [disabled]="downloading()" (click)="download()">
           {{ downloading() ? 'Downloading…' : 'Download Certificate (PDF)' }}
@@ -33,15 +40,45 @@ import { AuthService } from '../core/services/auth.service';
       }
     </main>
   `,
-  styles: [`
-    .certificate { padding: 2rem; max-width: 680px; margin: auto; }
-    dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin-bottom: 1.5rem; }
-    dt { font-weight: 600; color: #555; }
-    .mono { font-family: monospace; font-size: 0.85rem; word-break: break-all; }
-    button { padding: 0.5rem 1.25rem; background: #4caf50; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .error { color: #e53935; }
-  `],
+  styles: [
+    `
+      .certificate {
+        padding: 2rem;
+        max-width: 680px;
+        margin: auto;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.4rem 1rem;
+        margin-bottom: 1.5rem;
+      }
+      dt {
+        font-weight: 600;
+        color: #555;
+      }
+      .mono {
+        font-family: monospace;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+      button {
+        padding: 0.5rem 1.25rem;
+        background: #4caf50;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .error {
+        color: #e53935;
+      }
+    `,
+  ],
 })
 export class CertificatesComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
@@ -74,9 +111,7 @@ export class CertificatesComponent implements OnInit {
     const id = this.record()!.id;
     this.downloading.set(true);
     try {
-      const blob = await firstValueFrom(
-        this.api.downloadCertificate(id, this.auth.token() ?? ''),
-      );
+      const blob = await firstValueFrom(this.api.downloadCertificate(id, this.auth.token() ?? ''));
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

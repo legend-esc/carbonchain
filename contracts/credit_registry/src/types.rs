@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, String};
 
 /// Unit convention: all `tonnes` fields are stored as fixed-point integers
 /// where 1 tonne = 1_000_000 units (0.1 tonne resolution = 100_000 units).
@@ -85,6 +85,8 @@ pub struct AuditLogEntry {
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
+    /// Contract schema version, used by migrate() to run sequential upgrades.
+    Version,
     Admin,
     VerifierSet,
     Credit(BytesN<32>),
@@ -101,8 +103,6 @@ pub enum DataKey {
     VerifierReputation(Address),
     /// Tracks how many Pending credits are assigned to a verifier for approval.
     VerifierPendingCount(Address),
-    /// Tracks which verifier is assigned to approve a given credit.
-    CreditAssignedVerifier(BytesN<32>),
     /// Required number of verifier approvals before a credit is minted.
     RequiredApprovals,
     /// Set of verifier addresses that have already approved a given credit.
@@ -119,4 +119,14 @@ pub enum DataKey {
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
     VerifierServices(Address),
+    /// Credit IDs indexed by owner address.
+    CreditsByOwner(Address),
+    /// Per-credit snapshot of verifiers assigned at submission time.
+    /// Used by remove_verifier to correctly block removal only when
+    /// the verifier is specifically assigned to a pending credit.
+    CreditVerifiers(BytesN<32>),
+    /// Global list of all credit IDs currently in Pending status.
+    /// Maintained by submit_credit (add) and approve_and_mint/flag_credit (remove).
+    /// Used by remove_verifier to iterate per-credit snapshots efficiently.
+    PendingCredits,
 }

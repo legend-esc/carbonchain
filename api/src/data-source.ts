@@ -22,4 +22,12 @@ export const AppDataSource = new DataSource({
   entities: [__dirname + '/**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/migrations/*{.ts,.js}'],
   migrationsTableName: 'typeorm_migrations',
+  // Pool config: without this, pg creates a new connection per request and
+  // never returns it, exhausting Postgres's max_connections under load.
+  poolSize: 20,
+  extra: {
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  },
 });

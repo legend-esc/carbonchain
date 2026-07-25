@@ -33,19 +33,35 @@
   <!-- Stats bar -->
   @if (wallet.isConnected()) {
     <section class="stats" role="region" aria-label="Portfolio summary">
-      <div class="stat-card" tabindex="0" [attr.aria-label]="'Total credits: ' + store.credits().length">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Total credits: ' + store.credits().length"
+      >
         <span class="stat-card__label">{{ 'dashboard.totalCredits' | translate }}</span>
         <span class="stat-card__value">{{ store.credits().length }}</span>
       </div>
-      <div class="stat-card" tabindex="0" [attr.aria-label]="'Active credits: ' + store.activeCredits().length">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Active credits: ' + store.activeCredits().length"
+      >
         <span class="stat-card__label">{{ 'dashboard.active' | translate }}</span>
         <span class="stat-card__value">{{ store.activeCredits().length }}</span>
       </div>
-      <div class="stat-card" tabindex="0" [attr.aria-label]="'Retired credits: ' + store.retiredCredits().length">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Retired credits: ' + store.retiredCredits().length"
+      >
         <span class="stat-card__label">{{ 'dashboard.retired' | translate }}</span>
         <span class="stat-card__value">{{ store.retiredCredits().length }}</span>
       </div>
-      <div class="stat-card" tabindex="0" [attr.aria-label]="'Total tonnes: ' + store.totalTonnes().toLocaleString()">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Total tonnes: ' + store.totalTonnes().toLocaleString()"
+      >
         <span class="stat-card__label">{{ 'dashboard.totalTonnes' | translate }}</span>
         <span class="stat-card__value">{{ store.totalTonnes().toLocaleString() }}</span>
       </div>
