@@ -91,4 +91,56 @@ export class OracleService {
 
     return { anomaly };
   }
+
+  /**
+   * Set or clear a per-project anomaly threshold override.
+   * Pass thresholdBps=0 to clear the override and revert to global threshold.
+   */
+  async setProjectAnomalyThreshold(
+    projectId: string,
+    thresholdBps: number,
+  ): Promise<{ projectId: string; thresholdBps: number | null }> {
+    if (!Number.isInteger(thresholdBps) || thresholdBps < 0 || thresholdBps > 10000) {
+      throw new BadRequestException(
+        'thresholdBps must be an integer between 0 and 10000',
+      );
+    }
+
+    const signer = this.keypairService.getAdminKeypair();
+    const nonceResponse = await this.stellarService.invokeContract(
+      this.contractId,
+      'get_nonce',
+      [nativeToScVal(signer.publicKey(), { type: 'address' })],
+      signer,
+    );
+    const nonce = (
+      scValToNative(
+        (nonceResponse as unknown as Record<string, unknown>)
+          .returnValue as Parameters<typeof scValToNative>[0],
+      ) as bigint
+    ).toString();
+
+    const args = [
+      nativeToScVal(signer.publicKey(), { type: 'address' }),
+      nativeToScVal(projectId, { type: 'string' }),
+      nativeToScVal(BigInt(thresholdBps), { type: 'u32' }),
+      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+    ];
+
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'set_project_anomaly_threshold',
+      args,
+      signer,
+    );
+
+    this.logger.log(
+      `Set anomaly threshold for project ${projectId} to ${thresholdBps} bps`,
+    );
+
+    return {
+      projectId,
+      thresholdBps: thresholdBps === 0 ? null : thresholdBps,
+    };
+  }
 }
