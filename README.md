@@ -47,11 +47,13 @@ contract.initialize(&admin);
 // Register a verifier
 contract.register_verifier(&verifier);
 
-// Configure verifier capabilities
+// Verifier self-configures their own service capabilities
+// (verifier signs with their own key — this is NOT an admin operation)
+let nonce = contract.get_nonce(&verifier);
 let mut capabilities = Vec::new(&env);
 capabilities.push_back(ServiceType::CreditApproval);
 capabilities.push_back(ServiceType::MRVReview);
-contract.configure_verifier_services(&verifier, &capabilities);
+contract.configure_verifier_services(&verifier, &capabilities, nonce);
 
 // Submit a credit for approval
 let credit_id = contract.submit_credit(
@@ -67,6 +69,8 @@ let credit_id = contract.submit_credit(
 );
 
 // Verifier approves and triggers mint
+// (requires ServiceType::CreditApproval in configured services,
+//  or no services configured — open-capability assumption)
 contract.approve_and_mint(&verifier, &credit_id);
 
 // Retire a credit
