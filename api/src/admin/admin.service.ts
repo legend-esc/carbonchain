@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 
 export interface AdminStats {
   totalCredits: number;
@@ -30,7 +30,9 @@ export class AdminService {
     };
   }
 
-  registerVerifier(address: string): { registered: boolean; address: string } {
+  async registerVerifier(
+    address: string,
+  ): Promise<{ registered: boolean; address: string }> {
     return { registered: true, address };
   }
 

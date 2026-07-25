@@ -51,6 +51,13 @@ describe('JWT Auth Guard (e2e)', () => {
       .expect(HttpStatus.UNAUTHORIZED);
   });
 
+  it('POST /credits/:id/retire rejects unauthenticated request', () => {
+    return request(app.getHttpServer())
+      .post('/credits/abc123/retire')
+      .send({ reason: 'test' })
+      .expect(HttpStatus.UNAUTHORIZED);
+  });
+
   it('POST /marketplace/offer rejects unauthenticated request', () => {
     return request(app.getHttpServer())
       .post('/marketplace/offer')

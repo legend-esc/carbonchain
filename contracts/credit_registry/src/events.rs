@@ -2,6 +2,14 @@ use soroban_sdk::{contractevent, Address, BytesN, String};
 
 #[contractevent]
 #[derive(Clone)]
+pub struct ContractInitialized {
+    pub admin: Address,
+    pub retirement_contract: Address,
+    pub required_approvals: u32,
+}
+
+#[contractevent]
+#[derive(Clone)]
 pub struct ContractPaused {
     pub admin: Address,
 }
@@ -112,4 +120,11 @@ pub struct SessionNew {
 pub struct BatchRetired {
     pub buyer: Address,
     pub count: u32,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct RetirementContractUpdated {
+    pub admin: Address,
+    pub new_address: Address,
 }

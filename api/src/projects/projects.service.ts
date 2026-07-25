@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { ProjectProfile } from '../shared';
+import { ProjectProfile } from '../../../shared';
 
 @Injectable()
 export class ProjectsService {
@@ -39,7 +39,10 @@ export class ProjectsService {
       documents?: Record<string, unknown>;
     },
   ): Promise<ProjectProfile> {
-    const id = `proj_${Math.random().toString(36).substring(2, 11)}`;
+    // crypto.randomUUID() is available in Node.js 14.17+ (project minimum is Node 18).
+    // It produces a v4 UUID (36 chars, 122 bits of entropy) with a collision-resistant
+    // guarantee backed by the OS CSPRNG — no third-party dependency required.
+    const id = crypto.randomUUID();
 
     let documents_cid = '';
     if (data.documents) {

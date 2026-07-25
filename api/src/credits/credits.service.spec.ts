@@ -2,7 +2,7 @@ import { CacheService } from '../common/cache.service';
 import { InMemoryCreditRepository } from './credit.repository';
 import { CreditsService } from './credits.service';
 import { CreditEntity } from './credit.entity';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 import { NotFoundException } from '@nestjs/common';
 
 // Minimal ConfigService mock for CacheService and CreditsService
@@ -211,6 +211,8 @@ describe('CreditsService.getCreditProvenance', () => {
       new CacheService(mockConfig),
     );
 
-    await expect(svcWithNoEvents.getCreditProvenance('nonexistent')).rejects.toThrow();
+    await expect(
+      svcWithNoEvents.getCreditProvenance('nonexistent'),
+    ).rejects.toThrow();
   });
 });

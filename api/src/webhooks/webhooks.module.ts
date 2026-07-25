@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { WebhooksService } from './webhooks.service';
 import { WebhooksController } from './webhooks.controller';
+import { WebhookIpGuard } from './webhook-ip.guard';
 
 @Module({
-  providers: [WebhooksService],
+  imports: [ConfigModule],
+  providers: [WebhooksService, WebhookIpGuard],
   controllers: [WebhooksController],
   exports: [WebhooksService],
 })

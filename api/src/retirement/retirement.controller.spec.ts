@@ -3,7 +3,8 @@ import { StreamableFile, NotFoundException } from '@nestjs/common';
 import { RetirementController } from './retirement.controller';
 import { RetirementService } from './retirement.service';
 import { CertificateService } from './certificate.service';
-import { RetirementRecord } from '../shared';
+import { NotFoundException } from '@nestjs/common';
+import { RetirementRecord } from '../../../shared';
 
 const mockRetirementService = {
   retire: jest.fn(),

@@ -12,25 +12,21 @@ import {
   StreamableFile,
   Header,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
-import { RetirementService, RetireDto } from './retirement.service';
-import { RetirementRecord } from '../shared';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import type { Response as ExpressResponse } from 'express';
+import {
+  RetirementService,
+  BatchRetireResult,
+  CertificateVerification,
+} from './retirement.service';
+import { FullRetireDto } from './dto/retire.dto';
+import { BatchRetireDto } from './dto/batch-retire.dto';
+import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
 import { Throttle } from '../common/throttler.guard';
-
-export interface CertificateVerification {
-  id: string;
-  credit_id: string;
-  buyer: string;
-  tonnes_retired: string;
-  reason: string;
-  retired_at: number;
-  tx_hash: string;
-  verified: boolean;
-  ledger_sequence?: number;
-}
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -40,16 +36,33 @@ export class RetirementController {
     private readonly certificateService: CertificateService,
   ) {}
 
-  /** POST /retirement — protected: requires JWT */
+  @ApiOperation({ summary: 'Retire a carbon credit' })
+  @ApiResponse({ status: 201, description: 'Credit retired successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post()
   retire(
-    @Body() dto: RetireDto,
+    @Body() dto: FullRetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
     return this.retirementService.retire(dto);
   }
 
-  /** GET /retirement — paginated list */
+  @ApiOperation({ summary: 'Batch retire multiple credits at once' })
+  @ApiResponse({ status: 201, description: 'Credits retired in batch' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 429, description: 'Too Many Requests' })
+  @Throttle({ limit: 5, ttl: 60000 })
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Post('batch')
+  batchRetire(@Body() dto: BatchRetireDto): Promise<BatchRetireResult> {
+    return this.retirementService.batchRetire(dto);
+  }
+
+  @ApiOperation({ summary: 'List retirements (paginated)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list of retirement records',
+  })
   @Get()
   listRetirements(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
@@ -58,13 +71,19 @@ export class RetirementController {
     return this.retirementService.listRetirements(page, limit);
   }
 
-  /** GET /retirement/:id — fetch a retirement record */
+  @ApiOperation({ summary: 'Get retirement record by ID' })
+  @ApiResponse({ status: 200, description: 'Retirement record' })
+  @ApiResponse({ status: 404, description: 'Retirement not found' })
   @Get(':id')
   getRetirement(@Param('id') id: string): Promise<RetirementRecord> {
     return this.retirementService.getRetirement(id);
   }
 
-  /** GET /retirement/account/:address — paginated retirements for an account */
+  @ApiOperation({ summary: 'Get retirements by account address' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated retirements for account',
+  })
   @Get('account/:address')
   getByAccount(
     @Param('address') address: string,
@@ -74,26 +93,21 @@ export class RetirementController {
     return this.retirementService.getRetirementsByAccount(address, page, limit);
   }
 
-  /**
-   * GET /retirement/:id/certificate — stream retirement certificate as PDF.
-   *
-   * Uses `StreamableFile` so NestJS interceptors remain active (no raw `@Res()`).
-   * Rate limited to 10 downloads per user per minute to bound CPU usage from
-   * the synchronous PDF generation worker.
-   *
-   * Response headers:
-   *   Content-Type: application/pdf
-   *   Content-Disposition: attachment; filename="retirement-certificate-<id>.pdf"
-   */
+  @ApiOperation({ summary: 'Download retirement certificate as PDF' })
+  @ApiResponse({ status: 200, description: 'PDF certificate' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
   @UseGuards(JwtAuthGuard)
   @Throttle({ limit: 10, ttl: 60_000 })
   @Get(':id/certificate')
   @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
-  ): Promise<StreamableFile> {
-    // Retrieve the retirement record — throws NotFoundException if absent.
-    const retirement = await this.retirementService.getRetirement(certificateId);
+    @Response() res: ExpressResponse,
+  ): Promise<void> {
+    // Retrieve the retirement record to ensure it exists
+    const retirement =
+      await this.retirementService.getRetirement(certificateId);
     if (!retirement) {
       throw new NotFoundException(
         `Retirement record ${certificateId} not found`,
@@ -116,7 +130,9 @@ export class RetirementController {
     });
   }
 
-  /** GET /certificates/:id/verify — verify retirement certificate authenticity (public) */
+  @ApiOperation({ summary: 'Verify retirement certificate authenticity' })
+  @ApiResponse({ status: 200, description: 'Certificate verification result' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Get('certificates/:id/verify')
   verifyCertificate(
     @Param('id') certificateId: string,

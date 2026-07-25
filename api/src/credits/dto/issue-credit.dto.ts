@@ -48,7 +48,11 @@ export class IssueCreditDto {
   @IsNotEmpty()
   geography: string;
 
-  @ApiProperty({ example: '100000000', description: 'tonnes value must be a multiple of 100,000 (1 tonne = 1_000_000 units)' })
+  @ApiProperty({
+    example: '100000000',
+    description:
+      'tonnes value must be a multiple of 100,000 (1 tonne = 1_000_000 units)',
+  })
   @IsNumberString()
   @IsNotEmpty()
   @IsTonnesMultiple({ message: 'tonnes must be a multiple of 100,000' })

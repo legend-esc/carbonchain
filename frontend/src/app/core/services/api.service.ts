@@ -147,6 +147,14 @@ export class ApiService {
     return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/retirement/${id}`);
   }
 
+  /** GET /certificates/:id/download — returns a PDF blob */
+  downloadCertificate(id: string, token: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/certificates/${id}/download`, {
+      headers: this.authHeaders(token),
+      responseType: 'blob',
+    });
+  }
+
   /** POST /marketplace/offer */
   createOffer(
     body: { sellerPublicKey: string; creditId: string; priceXlm: string; tonnes: string },

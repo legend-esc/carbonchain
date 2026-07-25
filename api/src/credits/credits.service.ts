@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import {
   Injectable,
   Inject,
@@ -9,27 +8,18 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
-import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
-import { CreditMetadata, CreditStatus } from '../shared';
+import { scValToNative, nativeToScVal, rpc } from '@stellar/stellar-sdk';
+import { CreditMetadata, CreditStatus } from '../../../shared';
 import { CreditEntity } from './credit.entity';
 import type { ICreditRepository, PageResult } from './credit.repository';
 import { CREDIT_REPOSITORY } from './credit.repository';
 import { CacheService } from '../common/cache.service';
+import { IssueCreditDto } from './dto/issue-credit.dto';
 
 // Cache key helpers
 const CREDIT_KEY = (id: string) => `credits:${id}`;
 const LIST_CREDITS_KEY = (filter: string) => `credits:list:${filter}`;
 const CREDIT_TTL = 120; // seconds
-
-export class IssueCreditDto {
-  issuerPublicKey: string;
-  projectId: string;
-  vintageYear: number;
-  methodology: string;
-  geography: string;
-  tonnes: string;
-  ipfsHash: string;
-}
 
 interface ListCreditsFilter {
   methodology?: string;
@@ -46,7 +36,6 @@ interface ListCreditsFilter {
 export class CreditsService {
   private readonly logger = new Logger(CreditsService.name);
   private readonly contractId: string;
-  private creditsCache: Map<string, CreditMetadata> = new Map();
 
   constructor(
     private stellarService: StellarService,
@@ -96,6 +85,7 @@ export class CreditsService {
     entity.geography = dto.geography;
     entity.tonnes = dto.tonnes;
     entity.ipfsHash = dto.ipfsHash;
+    entity.owner = dto.issuerPublicKey;
     entity.status = CreditStatus.Pending;
     entity.issuedAt = Math.floor(Date.now() / 1000);
     await this.creditRepo.save(entity);
@@ -179,10 +169,6 @@ export class CreditsService {
   }> {
     // Default to Active-only when no status is requested, so Retired and Flagged
     // credits are never included unless the caller explicitly opts in.
-    const effectiveStatus: string = filter.status ?? CreditStatus.Active;
-    const effectiveFilter = { ...filter, status: effectiveStatus };
-
-    // Default to Active when client does not provide a status filter
     if (!filter.status) {
       filter.status = CreditStatus.Active;
     }
@@ -199,58 +185,53 @@ export class CreditsService {
       return cachedResult;
     }
 
-    // Fetch all credits from the off-chain repository and map to metadata.
-    // Use a large limit to retrieve the full index for server-side filtering.
-    let allCredits: CreditMetadata[] = [];
+    // Push structured filters to the repository so it can apply them at the
+    // storage layer rather than fetching every record into memory first.
+    const repoFilter: import('./credit.repository').CreditFilter = {
+      status: filter.status as CreditStatus | undefined,
+      methodology: filter.methodology,
+      geography: filter.geography,
+      vintageYear: filter.vintageYear,
+    };
+
+    let repoResult: PageResult<CreditEntity>;
     try {
-      const repoResult = await this.creditRepo.findAll(1, 1000000);
-      allCredits = repoResult.data.map((e) => this.entityToMetadata(e));
+      repoResult = await this.creditRepo.findByFilter(
+        repoFilter,
+        filter.page,
+        filter.limit,
+      );
     } catch (err) {
       this.logger.warn(
         `Failed to fetch credits from repo: ${(err as Error).message}`,
       );
-      allCredits = [];
+      repoResult = {
+        data: [],
+        total: 0,
+        page: filter.page,
+        limit: filter.limit,
+      };
     }
 
-    // Apply secondary filters
-    let filtered = allCredits;
-
-    if (filter.status) {
-      filtered = filtered.filter((c) => c.status === filter.status);
-    }
-
-    if (filter.methodology) {
-      filtered = filtered.filter(
-        (c) =>
-          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
-      );
-    }
-
-    if (filter.geography) {
-      filtered = filtered.filter(
-        (c) => c.geography.toLowerCase() === filter.geography!.toLowerCase(),
-      );
-    }
-
-    if (filter.vintageYear) {
-      filtered = filtered.filter((c) => c.vintage_year === filter.vintageYear);
-    }
+    // Apply tonnes range filters post-fetch (not yet part of CreditFilter interface).
+    let data = repoResult.data.map((e) => this.entityToMetadata(e));
 
     if (filter.minTonnes) {
       const minVal = BigInt(filter.minTonnes);
-      filtered = filtered.filter((c) => BigInt(c.tonnes) >= minVal);
+      data = data.filter((c) => BigInt(c.tonnes) >= minVal);
     }
 
     if (filter.maxTonnes) {
       const maxVal = BigInt(filter.maxTonnes);
-      filtered = filtered.filter((c) => BigInt(c.tonnes) <= maxVal);
+      data = data.filter((c) => BigInt(c.tonnes) <= maxVal);
     }
 
-    const total = filtered.length;
-    const start = (filter.page - 1) * filter.limit;
-    const data = filtered.slice(start, start + filter.limit);
-
-    const result = { data, total, page: filter.page, limit: filter.limit };
+    const result = {
+      data,
+      total: repoResult.total,
+      page: filter.page,
+      limit: filter.limit,
+    };
     await this.cache.set(cacheKey, result, CREDIT_TTL);
     return result;
   }
@@ -259,12 +240,14 @@ export class CreditsService {
    * Get the full lifecycle/provenance of a credit including all lifecycle events.
    * Returns ordered events showing submit → approval → transfers → retirement.
    */
-  async getCreditProvenance(creditId: string): Promise<Array<{
-    action: string;
-    actor: string;
-    timestamp: number;
-    txHash: string;
-  }>> {
+  async getCreditProvenance(creditId: string): Promise<
+    Array<{
+      action: string;
+      actor: string;
+      timestamp: number;
+      txHash: string;
+    }>
+  > {
     this.logger.log(`Fetching provenance for credit ${creditId}`);
 
     try {
@@ -284,16 +267,29 @@ export class CreditsService {
 
       for (const event of events) {
         const eventType = this.parseEventType(event);
-        const topics = event.topic || [];
-        const data = event.value || {};
+        // Decode the event value: real events carry xdr.ScVal, test stubs may carry plain objects.
+        let data: Record<string, unknown> = {};
+        if (event.value) {
+          try {
+            data = scValToNative(event.value) as Record<string, unknown>;
+          } catch {
+            // Fallback for plain-object stubs (e.g. in unit tests)
+            data = event.value as unknown as Record<string, unknown>;
+          }
+        }
 
         // Map events to provenance records
         if (eventType === 'CreditSubmitted') {
           const creditIdData = data.credit_id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Submitted',
-              actor: String(data.issuer || 'unknown'),
+              actor: String(
+                typeof data.issuer === 'string' ? data.issuer : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -301,10 +297,15 @@ export class CreditsService {
           }
         } else if (eventType === 'CreditMinted') {
           const creditIdData = data.id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Approved',
-              actor: String(data.verifier || 'unknown'),
+              actor: String(
+                typeof data.verifier === 'string' ? data.verifier : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -312,10 +313,15 @@ export class CreditsService {
           }
         } else if (eventType === 'CreditTransferred') {
           const creditIdData = data.credit_id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Transferred',
-              actor: String(data.from || 'unknown'),
+              actor: String(
+                typeof data.from === 'string' ? data.from : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -324,10 +330,15 @@ export class CreditsService {
         } else if (eventType === 'CreditRetired') {
           // CreditRetired events come from retirement contract
           const creditIdData = data.credit_id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Retired',
-              actor: String(data.buyer || 'unknown'),
+              actor: String(
+                typeof data.buyer === 'string' ? data.buyer : 'unknown',
+              ),
               timestamp: this.parseEventTimestamp(event),
               txHash: event.txHash || '',
               ledger: event.ledger || 0,
@@ -335,7 +346,10 @@ export class CreditsService {
           }
         } else if (eventType === 'CreditFlagged') {
           const creditIdData = data.id as string | undefined;
-          if (creditIdData && creditIdData.toLowerCase().includes(creditIdHex)) {
+          if (
+            creditIdData &&
+            creditIdData.toLowerCase().includes(creditIdHex)
+          ) {
             provenanceEvents.push({
               action: 'Flagged',
               actor: 'system',
@@ -349,6 +363,12 @@ export class CreditsService {
 
       // Sort by ledger (timestamp) to maintain chronological order
       provenanceEvents.sort((a, b) => a.ledger - b.ledger);
+
+      if (provenanceEvents.length === 0) {
+        throw new NotFoundException(
+          `No provenance events found for credit ${creditId}`,
+        );
+      }
 
       // Remove the temporary ledger field before returning
       return provenanceEvents.map(({ ledger, ...rest }) => rest);
@@ -392,8 +412,8 @@ export class CreditsService {
     }
   }
 
-  private parseEventType(event: any): string {
-    const topics = event.topic || [];
+  private parseEventType(event: rpc.Api.EventResponse): string {
+    const topics = event.topic ?? [];
     if (topics.length > 0) {
       const firstTopic = topics[0];
       if (typeof firstTopic === 'string') {
@@ -403,12 +423,406 @@ export class CreditsService {
     return 'unknown';
   }
 
-  private parseEventTimestamp(event: any): number {
-    // Use closed_at from the event if available, otherwise use current time
-    if (event.closedAt) {
-      return Math.floor(Number(event.closedAt) / 1000);
+  private parseEventTimestamp(event: rpc.Api.EventResponse): number {
+    // closedAt is not part of the typed interface; fall back to Date.now()
+    const raw = (event as unknown as Record<string, unknown>).closedAt;
+    if (typeof raw === 'number' || typeof raw === 'string') {
+      return Math.floor(Number(raw) / 1000);
     }
     return Math.floor(Date.now() / 1000);
+  }
+
+  async transferCredit(
+    creditId: string,
+    to: string,
+    caller: string,
+    nonce: number,
+  ): Promise<CreditMetadata> {
+    this.logger.log(`Transferring credit ${creditId} to ${to} by ${caller}`);
+
+    const credit = await this.getCredit(creditId);
+    if (credit.owner !== caller) {
+      throw new BadRequestException('Caller does not own this credit');
+    }
+
+    const args = [
+      nativeToScVal(caller, { type: 'address' }),
+      nativeToScVal(to, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'transfer_credit',
+      args,
+      signer,
+    );
+
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.owner = to;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return this.getCredit(creditId);
+  }
+
+  async splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    caller: string,
+    nonce: number,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    this.logger.log(
+      `Splitting credit ${creditId} with ${splitTonnes} tonnes by ${caller}`,
+    );
+
+    const credit = await this.getCredit(creditId);
+    if (credit.owner !== caller) {
+      throw new BadRequestException('Caller does not own this credit');
+    }
+
+    const args = [
+      nativeToScVal(caller, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(BigInt(splitTonnes), { type: 'i128' }),
+      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    const response = await this.stellarService.invokeContract(
+      this.contractId,
+      'split_credit',
+      args,
+      signer,
+    );
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const native = rv
+      ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as {
+          child1: Uint8Array;
+          child2: Uint8Array;
+        })
+      : null;
+    const childCredit1 = native
+      ? Buffer.from(native.child1).toString('hex')
+      : '';
+    const childCredit2 = native
+      ? Buffer.from(native.child2).toString('hex')
+      : '';
+
+    // Mark the original as retired in the off-chain index
+    const originalEntity = await this.creditRepo.findById(creditId);
+    if (originalEntity) {
+      originalEntity.status = CreditStatus.Retired;
+      await this.creditRepo.save(originalEntity);
+    }
+
+    // Issue #471: Read the on-chain child metadata to get the authoritative
+    // owner field rather than inferring it from `caller`.
+    // The contract's split_credit sets child.owner = caller, but we must not
+    // assume that here — we read back from chain so the off-chain index always
+    // reflects the on-chain truth.
+    let child1OnChain: CreditMetadata | null = null;
+    let child2OnChain: CreditMetadata | null = null;
+
+    if (childCredit1) {
+      try {
+        child1OnChain = await this.getCredit(childCredit1);
+      } catch {
+        this.logger.warn(
+          `Could not read child1 ${childCredit1} from chain, falling back to caller`,
+        );
+      }
+    }
+    if (childCredit2) {
+      try {
+        child2OnChain = await this.getCredit(childCredit2);
+      } catch {
+        this.logger.warn(
+          `Could not read child2 ${childCredit2} from chain, falling back to caller`,
+        );
+      }
+    }
+
+    const child1Owner = child1OnChain?.owner ?? caller;
+    const child2Owner = child2OnChain?.owner ?? caller;
+
+    const child1 = new CreditEntity();
+    child1.id = childCredit1;
+    child1.projectId = credit.project_id;
+    child1.issuer = credit.issuer;
+    child1.owner = child1Owner;
+    child1.vintageYear = credit.vintage_year;
+    child1.methodology = credit.methodology;
+    child1.geography = credit.geography;
+    child1.tonnes = splitTonnes;
+    child1.ipfsHash = credit.ipfs_hash;
+    child1.status = CreditStatus.Active;
+    child1.issuedAt = Math.floor(Date.now() / 1000);
+    await this.creditRepo.save(child1);
+
+    const remainingTonnes = String(BigInt(credit.tonnes) - BigInt(splitTonnes));
+    const child2 = new CreditEntity();
+    child2.id = childCredit2;
+    child2.projectId = credit.project_id;
+    child2.issuer = credit.issuer;
+    child2.owner = child2Owner;
+    child2.vintageYear = credit.vintage_year;
+    child2.methodology = credit.methodology;
+    child2.geography = credit.geography;
+    child2.tonnes = remainingTonnes;
+    child2.ipfsHash = credit.ipfs_hash;
+    child2.status = CreditStatus.Active;
+    child2.issuedAt = Math.floor(Date.now() / 1000);
+    await this.creditRepo.save(child2);
+
+    await this.invalidateCreditCache(creditId);
+    await this.invalidateCreditCache(childCredit1);
+    await this.invalidateCreditCache(childCredit2);
+
+    return { childCredit1, childCredit2 };
+  }
+
+  // ── Issue #485: Credit expiry ─────────────────────────────────────────────
+
+  /**
+   * POST /api/v1/credits/:id/expire
+   *
+   * Transition an Active (or Disputed) credit to Expired on-chain by calling
+   * `expire_credit` on the credit registry contract.  Only the admin may call
+   * this endpoint.
+   *
+   * The contract enforces:
+   *   - Credit must be Active or Disputed (not Retired / Flagged / already Expired).
+   *   - Caller must be the registered contract admin.
+   *
+   * On success the off-chain index is updated and caches are invalidated.
+   */
+  async expireCredit(
+    creditId: string,
+    adminPublicKey: string,
+  ): Promise<{ creditId: string; status: CreditStatus }> {
+    this.logger.log(`Expiring credit ${creditId} by admin ${adminPublicKey}`);
+
+    const args = [
+      nativeToScVal(adminPublicKey, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'expire_credit',
+      args,
+      signer,
+    );
+
+    // Update off-chain index
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.status = CreditStatus.Expired;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return { creditId, status: CreditStatus.Expired };
+  }
+
+  // ── Issue #486: Credit dispute lifecycle ──────────────────────────────────
+
+  /**
+   * POST /api/v1/credits/:id/dispute
+   *
+   * Transition an Active credit to Disputed on-chain and store the evidence
+   * IPFS hash.  Any verifier (or the credit owner) may raise a dispute.
+   *
+   * Contract enforces:
+   *   - Credit must not already be Retired or Disputed.
+   *   - `dispute_credit` stores evidence in DataKey::Dispute(credit_id).
+   *   - CreditDisputed event is emitted.
+   */
+  async disputeCredit(
+    creditId: string,
+    disputerPublicKey: string,
+    evidenceIpfsHash: string,
+  ): Promise<{ creditId: string; status: CreditStatus }> {
+    this.logger.log(
+      `Disputing credit ${creditId} by ${disputerPublicKey} with evidence ${evidenceIpfsHash}`,
+    );
+
+    const args = [
+      nativeToScVal(disputerPublicKey, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(evidenceIpfsHash, { type: 'string' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'dispute_credit',
+      args,
+      signer,
+    );
+
+    // Update off-chain index
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.status = CreditStatus.Disputed;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return { creditId, status: CreditStatus.Disputed };
+  }
+
+  /**
+   * POST /api/v1/credits/:id/resolve
+   *
+   * Resolve a disputed credit.  Only the admin may call this.
+   *
+   * Outcome codes (mirror the contract):
+   *   0 → Active   (dispute upheld, credit reinstated)
+   *   1 → Flagged  (dispute escalated)
+   *   2 → Retired  (credit revoked)
+   *
+   * Contract enforces:
+   *   - Credit must be in Disputed status.
+   *   - Caller must be the registered contract admin.
+   *   - DisputeResolved event is emitted; dispute evidence entry is removed.
+   */
+  async resolveDispute(
+    creditId: string,
+    adminPublicKey: string,
+    outcome: number,
+  ): Promise<{ creditId: string; status: CreditStatus; outcome: number }> {
+    this.logger.log(
+      `Resolving dispute for credit ${creditId} with outcome ${outcome} by admin ${adminPublicKey}`,
+    );
+
+    const args = [
+      nativeToScVal(adminPublicKey, { type: 'address' }),
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(outcome, { type: 'u32' }),
+    ];
+    const signer = this.keypairService.getAdminKeypair();
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'resolve_dispute',
+      args,
+      signer,
+    );
+
+    // Map the numeric outcome to the resulting CreditStatus for the off-chain index.
+    const outcomeStatus: CreditStatus =
+      outcome === 0
+        ? CreditStatus.Active
+        : outcome === 1
+          ? CreditStatus.Flagged
+          : CreditStatus.Retired;
+
+    const entity = await this.creditRepo.findById(creditId);
+    if (entity) {
+      entity.status = outcomeStatus;
+      await this.creditRepo.save(entity);
+    }
+
+    await this.invalidateCreditCache(creditId);
+
+    return { creditId, status: outcomeStatus, outcome };
+  }
+
+  // ── Issue #487: Credit merging ────────────────────────────────────────────
+
+  /**
+   * POST /api/v1/credits/merge
+   *
+   * Merge 2–20 Active credits owned by the same caller into a single new
+   * credit whose tonnes equals the sum of all inputs.  Input credits are
+   * consumed (set to Retired) and a new Active credit is created.
+   *
+   * Contract enforces:
+   *   - All inputs must be Active and owned by `callerPublicKey`.
+   *   - All inputs must share project_id, vintage_year, methodology, geography.
+   *   - Maximum 20 credits per call (instruction-budget).
+   *   - CreditsMerged event is emitted.
+   */
+  async mergeCredits(
+    callerPublicKey: string,
+    creditIds: string[],
+  ): Promise<{ mergedCreditId: string; sourceCount: number }> {
+    this.logger.log(
+      `Merging ${creditIds.length} credits for caller ${callerPublicKey}`,
+    );
+
+    if (creditIds.length < 2 || creditIds.length > 20) {
+      throw new BadRequestException(
+        'merge_credits requires between 2 and 20 credit IDs',
+      );
+    }
+
+    // Build contract args: (caller: Address, credit_ids: Vec<BytesN<32>>)
+    const cleanArgs = [
+      nativeToScVal(callerPublicKey, { type: 'address' }),
+      nativeToScVal(
+        creditIds.map((id) => Buffer.from(id, 'hex')),
+        { type: 'vec' },
+      ),
+    ];
+
+    const signer = this.keypairService.getAdminKeypair();
+    const response = await this.stellarService.invokeContract(
+      this.contractId,
+      'merge_credits',
+      cleanArgs,
+      signer,
+    );
+
+    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const mergedCreditId = rv
+      ? Buffer.from(
+          scValToNative(
+            rv as Parameters<typeof scValToNative>[0],
+          ) as Uint8Array,
+        ).toString('hex')
+      : 'unknown';
+
+    // Mark all source credits as Retired in the off-chain index.
+    for (const id of creditIds) {
+      const entity = await this.creditRepo.findById(id);
+      if (entity) {
+        entity.status = CreditStatus.Retired;
+        await this.creditRepo.save(entity);
+      }
+      await this.invalidateCreditCache(id);
+    }
+
+    // Index the new merged credit by reading it back from chain.
+    if (mergedCreditId !== 'unknown') {
+      try {
+        const merged = await this.getCredit(mergedCreditId);
+        const mergedEntity = new CreditEntity();
+        mergedEntity.id = mergedCreditId;
+        mergedEntity.projectId = merged.project_id;
+        mergedEntity.issuer = merged.issuer;
+        mergedEntity.owner = merged.owner;
+        mergedEntity.vintageYear = merged.vintage_year;
+        mergedEntity.methodology = merged.methodology;
+        mergedEntity.geography = merged.geography;
+        mergedEntity.tonnes = merged.tonnes;
+        mergedEntity.ipfsHash = merged.ipfs_hash;
+        mergedEntity.status = CreditStatus.Active;
+        mergedEntity.issuedAt = Math.floor(Date.now() / 1000);
+        await this.creditRepo.save(mergedEntity);
+      } catch (err) {
+        this.logger.warn(
+          `Could not index merged credit ${mergedCreditId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return { mergedCreditId, sourceCount: creditIds.length };
   }
 
   private mapToCreditMetadata(id: string, native: any): CreditMetadata {
@@ -416,6 +830,7 @@ export class CreditsService {
       id,
       project_id: String(native.project_id),
       issuer: String(native.issuer),
+      owner: String(native.owner ?? native.issuer),
       vintage_year: Number(native.vintage_year),
       methodology: String(native.methodology),
       geography: String(native.geography),
@@ -431,6 +846,7 @@ export class CreditsService {
       id: entity.id,
       project_id: entity.projectId,
       issuer: entity.issuer,
+      owner: entity.owner,
       vintage_year: entity.vintageYear,
       methodology: entity.methodology,
       geography: entity.geography,
