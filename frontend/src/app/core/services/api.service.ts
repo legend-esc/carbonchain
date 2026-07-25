@@ -103,6 +103,19 @@ export class ApiService {
     return this.http.get<CreditMetadata>(`${this.baseUrl}/credits/${id}`);
   }
 
+  /** POST /credits/:id/split */
+  splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Observable<{ childCredit1: string; childCredit2: string }> {
+    return this.http.post<{ childCredit1: string; childCredit2: string }>(
+      `${this.baseUrl}/credits/${creditId}/split`,
+      { splitTonnes },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
   /** GET /credits/:id/provenance */
   getCreditProvenance(id: string): Observable<ProvenanceEvent[]> {
     return this.http.get<ProvenanceEvent[]>(`${this.baseUrl}/credits/${id}/provenance`);
