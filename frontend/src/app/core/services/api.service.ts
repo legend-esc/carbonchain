@@ -147,6 +147,11 @@ export class ApiService {
     return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/retirement/${id}`);
   }
 
+  /** GET /certificates/:id — fetch a retirement certificate by ID */
+  getCertificate(id: string): Observable<import('@shared').RetirementRecord> {
+    return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/certificates/${id}`);
+  }
+
   /** GET /certificates/:id/download — returns a PDF blob */
   downloadCertificate(id: string, token: string): Observable<Blob> {
     return this.http.get(`${this.baseUrl}/certificates/${id}/download`, {
