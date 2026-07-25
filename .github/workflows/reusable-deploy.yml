@@ -1,0 +1,74 @@
+name: Reusable Deploy Workflow
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: string
+        enum: [testnet, staging, production]
+      rust-toolchain:
+        description: 'Rust toolchain version'
+        required: false
+        type: string
+        default: 'stable'
+      stellar-cli-version:
+        description: 'Stellar CLI version'
+        required: false
+        type: string
+        default: '26.1.0'
+      run-smoke-tests:
+        description: 'Run smoke tests after deployment'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      ADMIN_SECRET_KEY:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@008f31fc1bef098acda5bc0f83cc6714a485c3d8 # stable
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
+          targets: wasm32v1-none
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: contracts
+      - name: Install system deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev libudev-dev libssl-dev pkg-config
+      - name: Cache stellar-cli binary
+        id: cache-stellar-cli
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cargo/bin/stellar
+          key: ${{ runner.os }}-stellar-cli-${{ inputs.stellar-cli-version }}
+      - name: Install Stellar CLI
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
+        run: cargo install --locked stellar-cli@${{ inputs.stellar-cli-version }}
+      - name: Deploy contracts
+        env:
+          ADMIN_SECRET_KEY: ${{ secrets.ADMIN_SECRET_KEY }}
+        run: |
+          chmod +x scripts/deploy-${{ inputs.environment }}.sh
+          ./scripts/deploy-${{ inputs.environment }}.sh
+      - name: Run Smoke Tests
+        if: ${{ inputs.run-smoke-tests }}
+        env:
+          ADMIN_SECRET_KEY: ${{ secrets.ADMIN_SECRET_KEY }}
+        run: |
+          chmod +x scripts/smoke-test.sh
+          ./scripts/smoke-test.sh
+      - name: Upload contract IDs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contract-ids-${{ inputs.environment }}
+          path: scripts/contract-ids.${{ inputs.environment }}.json

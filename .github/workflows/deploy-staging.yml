@@ -1,0 +1,33 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      skip-contracts: false
+      skip-api: false
+      skip-frontend: false
+      run-e2e: true
+
+  build:
+    name: Build All
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      push-docker: true
+      docker-tag: staging-${{ github.sha }}
+
+  deploy:
+    name: Deploy Contracts
+    needs: [test, build]
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: staging
+      run-smoke-tests: true
+    secrets:
+      ADMIN_SECRET_KEY: ${{ secrets.STAGING_ADMIN_SECRET_KEY }}

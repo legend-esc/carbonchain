@@ -1,0 +1,168 @@
+name: Reusable Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      rust-toolchain:
+        description: 'Rust toolchain version'
+        required: false
+        type: string
+        default: '1.91.0'
+      node-version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      skip-contracts:
+        description: 'Skip contract tests'
+        required: false
+        type: boolean
+        default: false
+      skip-api:
+        description: 'Skip API tests'
+        required: false
+        type: boolean
+        default: false
+      skip-frontend:
+        description: 'Skip frontend tests'
+        required: false
+        type: boolean
+        default: false
+      run-e2e:
+        description: 'Run API e2e tests'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      DATABASE_URL:
+        required: false
+      JWT_SECRET:
+        required: false
+      ADMIN_SECRET_KEY:
+        required: false
+      STELLAR_NETWORK:
+        required: false
+      STELLAR_HORIZON_URL:
+        required: false
+      STELLAR_SOROBAN_RPC:
+        required: false
+      IPFS_API_KEY:
+        required: false
+      IPFS_SECRET_KEY:
+        required: false
+
+jobs:
+  contracts:
+    name: Smart Contracts (Soroban)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip-contracts }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@008f31fc1bef098acda5bc0f83cc6714a485c3d8 # stable (1.91.0)
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
+          targets: wasm32v1-none
+          components: rustfmt, clippy
+      - name: Check Rust formatting
+        run: cd contracts && cargo fmt --all -- --check
+      - name: Cache cargo dependencies
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Build Contracts
+        run: cd contracts && cargo build --target wasm32v1-none --release
+      - name: Clippy
+        run: cd contracts && cargo clippy --all-targets -- -D warnings
+      - name: Run Credit Registry Tests
+        run: cd contracts/credit_registry && cargo test
+      - name: Run Remaining Contract Tests
+        run: |
+          cd contracts && cargo test -p carbonchain-retirement \
+                                 -p carbonchain-marketplace \
+                                 -p carbonchain-mrv-oracle
+
+  api:
+    name: Backend API (NestJS)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip-api }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: carbonchain
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: "npm"
+          cache-dependency-path: api/package-lock.json
+      - name: Install Dependencies
+        run: cd api && npm ci --legacy-peer-deps
+      - name: Lint
+        run: cd api && npm run lint
+      - name: Check Formatting
+        run: cd api && npm run format:check
+      - name: Build
+        run: cd api && npm run build
+      - name: Run Unit Tests
+        run: cd api && npm run test
+      - name: Run E2E Tests
+        if: ${{ inputs.run-e2e }}
+        run: cd api && npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-for-e2e-testing-32chars' }}
+          ADMIN_SECRET_KEY: ${{ secrets.ADMIN_SECRET_KEY || 'SCI7YTM2J5ZQOQ4SI5L5ZCXZDTXSMONGDFFHGQCPWAP6CCRBPYRCIATS' }}
+          STELLAR_NETWORK: ${{ secrets.STELLAR_NETWORK || 'testnet' }}
+          STELLAR_HORIZON_URL: ${{ secrets.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org' }}
+          STELLAR_SOROBAN_RPC: ${{ secrets.STELLAR_SOROBAN_RPC || 'https://soroban-testnet.stellar.org' }}
+          IPFS_API_KEY: ${{ secrets.IPFS_API_KEY || 'ci-test-ipfs-api-key' }}
+          IPFS_SECRET_KEY: ${{ secrets.IPFS_SECRET_KEY || 'ci-test-ipfs-secret-key' }}
+      - name: Generate Coverage Report
+        run: cd api && npm run test:cov
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-coverage-report
+          path: api/coverage
+
+  frontend:
+    name: Frontend SPA (Angular)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip-frontend }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Dependencies
+        run: cd frontend && npm ci --legacy-peer-deps
+      - name: Lint
+        run: cd frontend && npm run lint
+      - name: Check Formatting
+        run: cd frontend && npm run format:check
+      - name: Build
+        run: cd frontend && npm run build
+      - name: Run Tests
+        run: cd frontend && npm run test:ci

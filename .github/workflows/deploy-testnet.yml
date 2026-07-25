@@ -1,0 +1,32 @@
+name: Deploy to Testnet
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      skip-contracts: false
+      skip-api: false
+      skip-frontend: true
+      run-e2e: false
+
+  build:
+    name: Build Contracts
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      push-docker: false
+
+  deploy:
+    name: Deploy Contracts
+    needs: [test, build]
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: testnet
+      run-smoke-tests: true
+    secrets:
+      ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
