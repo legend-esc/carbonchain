@@ -27,6 +27,13 @@ describe('AdminController', () => {
               creditId: 'abc',
               status: CreditStatus.Flagged,
             }),
+            registerMethodology: jest.fn().mockReturnValue({
+              registered: true,
+              name: 'VCS',
+              description: 'Verified Carbon Standard',
+            }),
+            getNonce: jest.fn().mockReturnValue({ address: 'GADMIN', nonce: 5 }),
+            setRequiredApprovals: jest.fn().mockReturnValue({ requiredApprovals: 2 }),
           },
         },
       ],
@@ -59,6 +66,34 @@ describe('AdminController', () => {
       status: CreditStatus.Flagged,
     });
     expect(service.flagCredit).toHaveBeenCalledWith('abc');
+  });
+
+  it('POST /admin/methodologies calls registerMethodology', () => {
+    const result = controller.registerMethodology({
+      name: 'VCS',
+      description: 'Verified Carbon Standard',
+    });
+    expect(result).toEqual({
+      registered: true,
+      name: 'VCS',
+      description: 'Verified Carbon Standard',
+    });
+    expect(service.registerMethodology).toHaveBeenCalledWith(
+      'VCS',
+      'Verified Carbon Standard',
+    );
+  });
+
+  it('GET /admin/nonce/:address calls getNonce', () => {
+    const result = controller.getNonce('GADMIN');
+    expect(result).toEqual({ address: 'GADMIN', nonce: 5 });
+    expect(service.getNonce).toHaveBeenCalledWith('GADMIN');
+  });
+
+  it('POST /admin/required-approvals calls setRequiredApprovals', () => {
+    const result = controller.setRequiredApprovals({ threshold: 2 });
+    expect(result).toEqual({ requiredApprovals: 2 });
+    expect(service.setRequiredApprovals).toHaveBeenCalledWith(2);
   });
 });
 

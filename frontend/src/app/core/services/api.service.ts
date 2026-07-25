@@ -207,6 +207,51 @@ export class ApiService {
     );
   }
 
+  /**
+   * POST /admin/methodologies — register a new carbon credit methodology.
+   * Requires admin JWT.
+   */
+  registerMethodology(
+    name: string,
+    description: string,
+    token: string,
+  ): Observable<{ registered: boolean; name: string; description: string }> {
+    return this.http.post<{ registered: boolean; name: string; description: string }>(
+      `${this.baseUrl}/admin/methodologies`,
+      { name, description },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * GET /admin/nonce/:address — fetch the current replay-protection nonce.
+   * Must be called before every mutating admin action.
+   */
+  getAdminNonce(
+    address: string,
+    token: string,
+  ): Observable<{ address: string; nonce: number }> {
+    return this.http.get<{ address: string; nonce: number }>(
+      `${this.baseUrl}/admin/nonce/${address}`,
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * POST /admin/required-approvals — set the minimum verifier approval threshold.
+   * Requires admin JWT.
+   */
+  setRequiredApprovals(
+    threshold: number,
+    token: string,
+  ): Observable<{ requiredApprovals: number }> {
+    return this.http.post<{ requiredApprovals: number }>(
+      `${this.baseUrl}/admin/required-approvals`,
+      { threshold },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private authHeaders(token: string): HttpHeaders {

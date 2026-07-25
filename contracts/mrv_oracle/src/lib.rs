@@ -41,17 +41,22 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum OracleError {
-    NotInitialized     = 119,
-    Unauthorized       = 120,
-    AlreadyInitialized = 121,
-    Overflow           = 122,
-    ContractPaused     = 123,
-    ProjectNotFound    = 124,
-    InvalidNonce       = 125,
-    InvalidProject     = 126,
-    InvalidTimestamp   = 127,
-    NoPendingAdmin     = 128,
-    InvalidReading     = 129,
+    // NOTE: codes were renumbered from 119–129 to 400–410 to match the
+    // documented range in docs/features/ERROR_CODES_REFERENCE.md and to
+    // eliminate the overlap with credit_registry errors (100–125).
+    // Any deployed instance will have the old codes in transaction history
+    // up to the next upgrade deployment.
+    NotInitialized     = 400,
+    Unauthorized       = 401,
+    AlreadyInitialized = 402,
+    Overflow           = 403,
+    ContractPaused     = 404,
+    ProjectNotFound    = 405,
+    InvalidNonce       = 406,
+    InvalidProject     = 407,
+    InvalidTimestamp   = 408,
+    NoPendingAdmin     = 409,
+    InvalidReading     = 410,
 }
 
 #[contractevent]

@@ -8,16 +8,17 @@ import {
   Query,
   ParseIntPipe,
   DefaultValuePipe,
-  Response,
   NotFoundException,
+  StreamableFile,
+  Header,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import type { Response as ExpressResponse } from 'express';
 import { RetirementService, RetireDto } from './retirement.service';
 import { RetirementRecord } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { Throttle } from '../common/throttler.guard';
 
 export interface CertificateVerification {
   id: string;
@@ -73,14 +74,25 @@ export class RetirementController {
     return this.retirementService.getRetirementsByAccount(address, page, limit);
   }
 
-  /** GET /certificates/:id/download — download retirement certificate as PDF (protected: requires JWT) */
+  /**
+   * GET /retirement/:id/certificate — stream retirement certificate as PDF.
+   *
+   * Uses `StreamableFile` so NestJS interceptors remain active (no raw `@Res()`).
+   * Rate limited to 10 downloads per user per minute to bound CPU usage from
+   * the synchronous PDF generation worker.
+   *
+   * Response headers:
+   *   Content-Type: application/pdf
+   *   Content-Disposition: attachment; filename="retirement-certificate-<id>.pdf"
+   */
   @UseGuards(JwtAuthGuard)
-  @Get('certificates/:id/download')
+  @Throttle({ limit: 10, ttl: 60_000 })
+  @Get(':id/certificate')
+  @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
-    @Response() res: ExpressResponse,
-  ): Promise<void> {
-    // Retrieve the retirement record to ensure it exists
+  ): Promise<StreamableFile> {
+    // Retrieve the retirement record — throws NotFoundException if absent.
     const retirement = await this.retirementService.getRetirement(certificateId);
     if (!retirement) {
       throw new NotFoundException(
@@ -88,7 +100,7 @@ export class RetirementController {
       );
     }
 
-    // Generate the PDF
+    // Generate the PDF buffer (CPU-intensive; bounded by worker thread pool).
     const pdfBuffer = await this.certificateService.generatePdf({
       retirementId: certificateId,
       creditId: retirement.credit_id,
@@ -98,13 +110,10 @@ export class RetirementController {
       timestamp: retirement.retired_at,
     });
 
-    // Set response headers and stream the PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="certificate-${certificateId}.pdf"`,
-    );
-    res.send(pdfBuffer);
+    return new StreamableFile(pdfBuffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="retirement-certificate-${certificateId}.pdf"`,
+    });
   }
 
   /** GET /certificates/:id/verify — verify retirement certificate authenticity (public) */

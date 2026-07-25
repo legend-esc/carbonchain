@@ -92,4 +92,44 @@ describe('AdminService', () => {
       );
     });
   });
+
+  describe('registerMethodology', () => {
+    it('should return registered: true with the provided name and description', () => {
+      const result = service.registerMethodology(
+        'Gold Standard',
+        'Gold Standard for the Global Goals',
+      );
+      expect(result).toEqual({
+        registered: true,
+        name: 'Gold Standard',
+        description: 'Gold Standard for the Global Goals',
+      });
+    });
+
+    it('should return the exact name and description passed in', () => {
+      const result = service.registerMethodology('CDM', 'Clean Development Mechanism');
+      expect(result.name).toBe('CDM');
+      expect(result.description).toBe('Clean Development Mechanism');
+    });
+  });
+
+  describe('getNonce', () => {
+    it('should return a nonce object with the requested address', () => {
+      const result = service.getNonce('GADMINPUBLICKEY');
+      expect(result.address).toBe('GADMINPUBLICKEY');
+      expect(typeof result.nonce).toBe('number');
+    });
+  });
+
+  describe('setRequiredApprovals', () => {
+    it('should return the threshold that was set', () => {
+      const result = service.setRequiredApprovals(2);
+      expect(result).toEqual({ requiredApprovals: 2 });
+    });
+
+    it('should return 1 when threshold is 1', () => {
+      const result = service.setRequiredApprovals(1);
+      expect(result.requiredApprovals).toBe(1);
+    });
+  });
 });
