@@ -55,6 +55,14 @@ pub struct Retire {
     pub retirement_id: BytesN<32>,
 }
 
+#[contractevent]
+#[derive(Clone)]
+pub struct BatchRetired {
+    pub buyer: Address,
+    pub count: u32,
+    pub total_tonnes: i128,
+}
+
 #[contract]
 pub struct Retirement;
 
@@ -279,6 +287,7 @@ impl Retirement {
         }
 
         let mut retirement_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut total_tonnes: i128 = 0;
         let acct_key = DataKey::AccountRetirements(buyer.clone());
         let mut list: Vec<BytesN<32>> = env
             .storage()
@@ -316,6 +325,7 @@ impl Retirement {
 
             list.push_back(retirement_id.clone());
             retirement_ids.push_back(retirement_id.clone());
+            total_tonnes += tonne_amount;
 
             // Cross-contract: mark the credit as retired in the registry
             let _: () = env.invoke_contract(
@@ -337,6 +347,15 @@ impl Retirement {
         env.storage()
             .persistent()
             .extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
+
+        // Summary event for off-chain indexers, in addition to the per-credit
+        // Retire events emitted above.
+        BatchRetired {
+            buyer,
+            count: credit_ids.len(),
+            total_tonnes,
+        }
+        .publish(&env);
 
         Ok(retirement_ids)
     }
