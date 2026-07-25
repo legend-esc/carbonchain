@@ -214,6 +214,11 @@ export class RetirementService {
    * Persists one RetirementEntity per successful retirement and returns
    * a partial-success shape so callers can distinguish which credits
    * succeeded and which failed.
+   *
+   * All DB writes are wrapped in a single transaction via saveAll().
+   * If the contract reverts, no DB writes occur. If the DB transaction
+   * fails after a successful contract call, the entire batch is marked
+   * as failed and no events are emitted.
    */
   async batchRetire(dto: BatchRetireDto): Promise<BatchRetireResult> {
     if (dto.creditIds.length > MAX_BATCH_SIZE) {
@@ -276,44 +281,58 @@ export class RetirementService {
         ).map((b) => Buffer.from(b).toString('hex'))
       : [];
 
-    const succeeded: string[] = [];
-    const failed: { id: string; reason: string }[] = [];
     const now = Math.floor(Date.now() / 1000);
 
-    for (let i = 0; i < retirementIds.length; i++) {
-      try {
-        const entity = new RetirementEntity();
-        entity.id = retirementIds[i];
-        entity.creditId = dto.creditIds[i];
-        entity.buyer = dto.buyerPublicKey;
-        entity.tonnesRetired = dto.tonnes[i];
-        entity.reason = dto.reason;
-        entity.retiredAt = now;
-        entity.txHash = '';
-        await this.retirementRepo.save(entity);
+    // Build all entities upfront
+    const entities: RetirementEntity[] = retirementIds.map((retirementId, i) => {
+      const entity = new RetirementEntity();
+      entity.id = retirementId;
+      entity.creditId = dto.creditIds[i];
+      entity.buyer = dto.buyerPublicKey;
+      entity.tonnesRetired = dto.tonnes[i];
+      entity.reason = dto.reason;
+      entity.retiredAt = now;
+      entity.txHash = '';
+      return entity;
+    });
 
-        const event: CreditRetiredEvent = {
-          retirementId: entity.id,
-          creditId: entity.creditId,
-          buyer: entity.buyer,
-          tonnesRetired: entity.tonnesRetired,
-          retiredAt: entity.retiredAt,
-        };
-        this.eventEmitter.emit('CreditRetired', event);
-
-        succeeded.push(retirementIds[i]);
-      } catch (error: unknown) {
-        this.logger.error(
-          `Failed to persist retirement for credit ${dto.creditIds[i]}: ${(error as Error).message}`,
-        );
-        failed.push({
-          id: dto.creditIds[i],
-          reason: (error as Error).message,
-        });
-      }
+    // Wrap all DB writes in a single transaction via saveAll().
+    // If the saveAll() call fails, no records are persisted and no events are emitted.
+    try {
+      await this.retirementRepo.saveAll(entities);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Batch DB transaction failed: ${(error as Error).message}. ` +
+          `On-chain transaction succeeded but ${entities.length} records were not persisted.`,
+      );
+      // Return all as failed — the on-chain state succeeded but off-chain state is inconsistent.
+      // Callers should reconcile by re-querying on-chain state.
+      return {
+        succeeded: [],
+        failed: dto.creditIds.map((id, i) => ({
+          id,
+          reason: `DB transaction failed: ${(error as Error).message}`,
+        })),
+      };
     }
 
-    return { succeeded, failed };
+    // Emit events only after all records are persisted successfully.
+    // The contract emits a single BatchRetired event on full success,
+    // so we never emit partial CreditRetired events.
+    const succeeded: string[] = [];
+    for (let i = 0; i < entities.length; i++) {
+      const event: CreditRetiredEvent = {
+        retirementId: entities[i].id,
+        creditId: entities[i].creditId,
+        buyer: entities[i].buyer,
+        tonnesRetired: entities[i].tonnesRetired,
+        retiredAt: entities[i].retiredAt,
+      };
+      this.eventEmitter.emit('CreditRetired', event);
+      succeeded.push(entities[i].id);
+    }
+
+    return { succeeded, failed: [] };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {

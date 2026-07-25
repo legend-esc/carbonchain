@@ -381,3 +381,139 @@ describe('RetirementService — retireCredit (issue #403)', () => {
     expect(credit!.status).toBe(CreditStatus.Retired);
   });
 });
+
+describe('RetirementService — batchRetire transaction safety', () => {
+  let service: RetirementService;
+  let repo: InMemoryRetirementRepository;
+  let creditRepo: InMemoryCreditRepository;
+  let emittedEvents: Array<{ event: string; payload: unknown }>;
+  let eventEmitter: IEventEmitter;
+
+  const buyer = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
+
+  beforeEach(async () => {
+    emittedEvents = [];
+    eventEmitter = {
+      emit(event: string, payload: unknown): boolean {
+        emittedEvents.push({ event, payload });
+        return true;
+      },
+    };
+
+    repo = new InMemoryRetirementRepository();
+    creditRepo = new InMemoryCreditRepository();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RetirementService,
+        { provide: StellarService, useValue: mockStellarService },
+        { provide: StellarKeypairService, useValue: mockKeypairService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: RETIREMENT_REPOSITORY, useValue: repo },
+        { provide: CREDIT_REPOSITORY, useValue: creditRepo },
+        { provide: EVENT_EMITTER, useValue: eventEmitter },
+      ],
+    }).compile();
+
+    service = module.get<RetirementService>(RetirementService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('creates zero DB records when contract call fails', async () => {
+    mockStellarService.invokeContract.mockRejectedValueOnce(
+      new Error('Contract reverted'),
+    );
+
+    const result = await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb'],
+      tonnes: ['1000000', '500000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(result.succeeded).toHaveLength(0);
+    expect(result.failed).toHaveLength(2);
+    const allRecords = await repo.findAll(1, 100);
+    expect(allRecords.total).toBe(0);
+    const creditRetiredEvents = emittedEvents.filter(
+      (e) => e.event === 'CreditRetired',
+    );
+    expect(creditRetiredEvents).toHaveLength(0);
+  });
+
+  it('rolls back all DB writes when saveAll fails', async () => {
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: ['ret1', 'ret2'],
+    });
+
+    repo.saveAll = jest
+      .fn()
+      .mockRejectedValue(new Error('DB transaction failed'));
+
+    const result = await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb'],
+      tonnes: ['1000000', '500000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(result.succeeded).toHaveLength(0);
+    expect(result.failed).toHaveLength(2);
+    const allRecords = await repo.findAll(1, 100);
+    expect(allRecords.total).toBe(0);
+    const creditRetiredEvents = emittedEvents.filter(
+      (e) => e.event === 'CreditRetired',
+    );
+    expect(creditRetiredEvents).toHaveLength(0);
+  });
+
+  it('never emits partial CreditRetired events', async () => {
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: ['ret1', 'ret2', 'ret3'],
+    });
+
+    await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb', 'cc'],
+      tonnes: ['1000000', '500000', '250000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    const creditRetiredEvents = emittedEvents.filter(
+      (e) => e.event === 'CreditRetired',
+    );
+    // All 3 should be emitted atomically (all or none)
+    expect(creditRetiredEvents).toHaveLength(3);
+  });
+
+  it('persists all records in a single transaction', async () => {
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: ['ret1', 'ret2'],
+    });
+
+    const saveAllSpy = jest.spyOn(repo, 'saveAll');
+
+    await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb'],
+      tonnes: ['1000000', '500000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(saveAllSpy).toHaveBeenCalledTimes(1);
+    expect(saveAllSpy).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ id: 'ret1' }),
+      expect.objectContaining({ id: 'ret2' }),
+    ]));
+
+    const allRecords = await repo.findAll(1, 100);
+    expect(allRecords.total).toBe(2);
+  });
+});
