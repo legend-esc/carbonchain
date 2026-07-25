@@ -45,7 +45,7 @@ test-results/
 .nyc_output/
 lcov.info
 *.lcov
-# Soroban test snapshots (auto-generated, not source)
+# Soroban test snapshots (auto-generated, not source — issue PR checklist)
 test_snapshots/
 # Karma / browser test output
 karma-test-results.xml

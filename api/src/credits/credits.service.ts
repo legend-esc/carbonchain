@@ -154,16 +154,34 @@ export class CreditsService {
       throw new BadRequestException('Maximum 100 credits per bulk request');
     }
 
-    this.logger.log(`Fetching ${creditIds.length} credits in bulk`);
-    const results: CreditMetadata[] = [];
+    // Issue #494: Filter out IDs that are not valid 64-char lowercase hex strings
+    // (BytesN<32> format). Invalid IDs are silently skipped — partial result semantics.
+    const HEX_64 = /^[0-9a-f]{64}$/i;
+    const validIds = creditIds.filter((id) => HEX_64.test(id));
 
-    for (const creditId of creditIds) {
-      try {
-        const credit = await this.getCredit(creditId);
-        results.push(credit);
-      } catch (error: unknown) {
+    if (validIds.length === 0) {
+      return [];
+    }
+
+    this.logger.log(`Fetching ${validIds.length} credits in bulk (parallel)`);
+
+    // Issue #494: Parallelise fetches with Promise.allSettled so all IDs are
+    // resolved concurrently. Failed individual fetches are logged and omitted
+    // from the result (partial-result semantics) — they do NOT abort the batch.
+    // getCredit() already writes each fetched credit to the individual cache key
+    // so subsequent single-credit GET /credits/:id requests hit the cache.
+    const settled = await Promise.allSettled(
+      validIds.map((creditId) => this.getCredit(creditId)),
+    );
+
+    const results: CreditMetadata[] = [];
+    for (let i = 0; i < settled.length; i++) {
+      const outcome = settled[i];
+      if (outcome.status === 'fulfilled') {
+        results.push(outcome.value);
+      } else {
         this.logger.warn(
-          `Failed to fetch credit ${creditId}: ${(error as Error).message}`,
+          `Bulk fetch: skipping credit ${validIds[i]} — ${(outcome.reason as Error).message}`,
         );
       }
     }

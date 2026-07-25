@@ -9,12 +9,15 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
   Request,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { CreditsService, IssueCreditDto } from './credits.service';
 import { CreditMetadata } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from './credit.repository';
+import { BulkCreditsDto } from './dto/bulk-credits.dto';
 
 @ApiTags('credits')
 @Controller('credits')
@@ -28,9 +31,23 @@ export class CreditsController {
     return this.creditsService.issueCredit(dto);
   }
 
+  /**
+   * POST /credits/bulk — Fetch up to 100 credits in a single request.
+   *
+   * Issue #494: Accepts { ids: string[] } and returns CreditMetadata[] with
+   * partial results. IDs that fail to fetch are omitted (not 500).
+   * Rate limiting counts this as 1 request (not N).
+   */
+  @ApiOperation({
+    summary: 'Bulk fetch up to 100 credits by ID',
+    description:
+      'Returns partial results — credits that fail to resolve are omitted. ' +
+      'IDs exceeding 100 return HTTP 400. Invalid hex IDs are skipped.',
+  })
   @Post('bulk')
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false }))
   async getBulkCredits(
-    @Body() dto: { ids: string[] },
+    @Body() dto: BulkCreditsDto,
   ): Promise<CreditMetadata[]> {
     return this.creditsService.getBulkCredits(dto.ids);
   }
