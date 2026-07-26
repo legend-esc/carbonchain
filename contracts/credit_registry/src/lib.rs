@@ -1,7 +1,7 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Vec};
 
 // ── Unit convention ──────────────────────────────────────────────────────────
 //
@@ -32,26 +32,30 @@ use crate::errors::CarbonChainError;
 use crate::events::{
     ContractInitialized, ContractPaused, ContractUnpaused, CreditDisputed, CreditExpired,
     CreditFlagged, CreditMinted, CreditSplit, CreditSubmitted, CreditTransferred, CreditsMerged,
-    DisputeResolved, ProjectRegistered, RetirementContractUpdated, SessionNew, VerifierRegistered,
-    VerifierRemoved, VerifierServicesConfigured,
+    DisputeResolved, ProjectRegistered, RetirementContractUpdated, SessionNew, StakeDeposited,
+    StakeWithdrawn, UnbondingInitiated, VerifierRegistered, VerifierRemoved,
+    VerifierServicesConfigured, VerifierSlashed,
 };
 use crate::storage::{
     add_credit_to_owner, add_credit_to_project, add_to_pending_credits, append_audit_log,
     consume_nonce, decrement_verifier_pending, get_admin, get_audit_log, get_credit,
     get_credit_approvals, get_credit_by_project_vintage, get_credits_by_owner,
-    get_credits_by_project, get_issuers, get_methodologies, get_nonce, get_pending_credits,
-    get_required_approvals, get_retirement_contract, get_session, get_session_op_count,
-    get_verifier_pending_count, get_verifier_reputation, get_verifiers, has_admin,
-    increment_approval_count, increment_dispute_count, increment_session_op_count,
-    increment_verifier_pending, is_issuer as storage_is_issuer, is_methodology_valid, is_paused,
-    is_verifier, remove_credit_approvals, remove_credit_from_owner, set_admin, set_credit,
-    set_credit_approvals, set_credit_by_project_vintage, set_issuers, set_methodologies,
-    set_paused, set_required_approvals, set_retirement_contract, set_session, set_verifiers,
+    get_credits_by_project, get_issuers, get_methodologies, get_min_stake, get_nonce,
+    get_pending_credits, get_required_approvals, get_retirement_contract, get_session,
+    get_session_op_count, get_unbonding_request, get_verifier_pending_count,
+    get_verifier_reputation, get_verifier_stake, get_verifiers, has_admin, increment_approval_count,
+    increment_dispute_count, increment_session_op_count, increment_verifier_pending,
+    is_issuer as storage_is_issuer, is_methodology_valid, is_paused, is_verifier,
+    remove_credit_approvals, remove_credit_from_owner, remove_unbonding_request, set_admin,
+    set_credit, set_credit_approvals, set_credit_by_project_vintage, set_issuers,
+    set_methodologies, set_min_stake, set_paused, set_required_approvals, set_retirement_contract,
+    set_session, set_unbonding_request, set_verifier_stake, set_verifiers,
     get_verifier_services_for, set_verifier_services, verifier_has_credit_approval,
+    SLASH_PERCENT, UNBONDING_PERIOD_SECS,
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, Methodology, ProjectMetadata,
-    ServiceType, Session, VerifierReputation,
+    ServiceType, Session, UnbondingRequest, VerifierReputation,
 };
 
 #[cfg_attr(not(feature = "library"), contract)]
@@ -163,6 +167,12 @@ impl CreditRegistry {
         if is_verifier(&env, &verifier) {
             return Err(CarbonChainError::VerifierAlreadyExists);
         }
+        // Issue #565: verifier must have locked at least the minimum stake (via
+        // `deposit_stake`) before the admin can register them — this gives approvals
+        // economic backing so a malicious verifier has capital at risk.
+        if get_verifier_stake(&env, &verifier) < get_min_stake(&env) {
+            return Err(CarbonChainError::InsufficientStake);
+        }
         let mut verifiers = get_verifiers(&env);
         verifiers.push_back(verifier.clone());
         set_verifiers(&env, &verifiers);
@@ -214,6 +224,30 @@ impl CreditRegistry {
             }
         }
         set_verifiers(&env, &new_list);
+
+        // Issue #565: initiate a 30-day unbonding period for any locked stake rather than
+        // returning it immediately — this keeps capital at risk long enough to slash it if
+        // misconduct surfaces after removal. Withdraw via `withdraw_stake` once matured.
+        let stake = get_verifier_stake(&env, &verifier);
+        if stake > 0 {
+            let unlock_at = env.ledger().timestamp() + UNBONDING_PERIOD_SECS;
+            set_unbonding_request(
+                &env,
+                &verifier,
+                &UnbondingRequest {
+                    amount: stake,
+                    unlock_at,
+                },
+            );
+            set_verifier_stake(&env, &verifier, 0);
+            UnbondingInitiated {
+                verifier: verifier.clone(),
+                amount: stake,
+                unlock_at,
+            }
+            .publish(&env);
+        }
+
         VerifierRemoved { admin, verifier }.publish(&env);
         Ok(())
     }
@@ -253,6 +287,171 @@ impl CreditRegistry {
             i += 1;
         }
         out
+    }
+
+    // ── Issue #565: Verifier Staking ─────────────────────────────────────────
+
+    /// Deposit stake toward the minimum required to register as a verifier.
+    ///
+    /// `token_id` is the address of the token contract to transfer from (e.g. the native
+    /// XLM Stellar Asset Contract on the target network). Stake is transferred from
+    /// `verifier` into this contract's own balance, acting as an escrow. Deposits
+    /// accumulate — call this multiple times to reach `get_min_stake`.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::ContractPaused`] — contract is paused.
+    /// - [`CarbonChainError::InvalidStakeAmount`] — `amount` is zero or negative.
+    /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current verifier nonce.
+    pub fn deposit_stake(
+        env: Env,
+        verifier: Address,
+        token_id: Address,
+        amount: i128,
+        nonce: u64,
+    ) -> Result<(), CarbonChainError> {
+        if is_paused(&env) {
+            return Err(CarbonChainError::ContractPaused);
+        }
+        verifier.require_auth();
+        if amount <= 0 {
+            return Err(CarbonChainError::InvalidStakeAmount);
+        }
+        if !consume_nonce(&env, &verifier, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+
+        let escrow: Address = env.current_contract_address();
+        let _: () = env.invoke_contract(
+            &token_id,
+            &Symbol::new(&env, "transfer"),
+            (verifier.clone(), escrow, amount).into_val(&env),
+        );
+
+        let total = get_verifier_stake(&env, &verifier) + amount;
+        set_verifier_stake(&env, &verifier, total);
+        StakeDeposited { verifier, total }.publish(&env);
+        Ok(())
+    }
+
+    /// Withdraw stake once the 30-day unbonding period initiated by [`remove_verifier`]
+    /// has elapsed. `token_id` must match the token originally deposited via
+    /// [`deposit_stake`].
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::NoUnbondingRequest`] — no unbonding request exists for `verifier`.
+    /// - [`CarbonChainError::UnbondingNotReady`] — the unbonding period has not yet elapsed.
+    /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current verifier nonce.
+    pub fn withdraw_stake(
+        env: Env,
+        verifier: Address,
+        token_id: Address,
+        nonce: u64,
+    ) -> Result<(), CarbonChainError> {
+        verifier.require_auth();
+        if !consume_nonce(&env, &verifier, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        let request =
+            get_unbonding_request(&env, &verifier).ok_or(CarbonChainError::NoUnbondingRequest)?;
+        if env.ledger().timestamp() < request.unlock_at {
+            return Err(CarbonChainError::UnbondingNotReady);
+        }
+
+        let escrow: Address = env.current_contract_address();
+        let _: () = env.invoke_contract(
+            &token_id,
+            &Symbol::new(&env, "transfer"),
+            (escrow, verifier.clone(), request.amount).into_val(&env),
+        );
+
+        remove_unbonding_request(&env, &verifier);
+        StakeWithdrawn {
+            verifier,
+            amount: request.amount,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Slash 10% of a verifier's currently locked stake as a penalty for approving a credit
+    /// that was later flagged as fraudulent. Manually triggered by the admin (MVP mechanism
+    /// per issue #565); slashed funds remain forfeited in the contract's escrow balance
+    /// rather than being transferred out.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
+    /// - [`CarbonChainError::Unauthorized`] — caller is not the admin.
+    /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    /// - [`CarbonChainError::InsufficientStake`] — verifier has no stake to slash.
+    pub fn slash_verifier(
+        env: Env,
+        admin: Address,
+        verifier: Address,
+        credit_id: BytesN<32>,
+        nonce: u64,
+    ) -> Result<(), CarbonChainError> {
+        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        admin.require_auth();
+        if admin != stored_admin {
+            return Err(CarbonChainError::Unauthorized);
+        }
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        let stake = get_verifier_stake(&env, &verifier);
+        if stake <= 0 {
+            return Err(CarbonChainError::InsufficientStake);
+        }
+        let slash_amount = stake * SLASH_PERCENT / 100;
+        set_verifier_stake(&env, &verifier, stake - slash_amount);
+
+        VerifierSlashed {
+            admin,
+            verifier,
+            amount: slash_amount,
+            credit_id,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Returns the stake currently locked by `verifier`.
+    pub fn get_verifier_stake(env: Env, verifier: Address) -> i128 {
+        get_verifier_stake(&env, &verifier)
+    }
+
+    /// Returns the minimum stake required to register as a verifier.
+    pub fn get_min_stake(env: Env) -> i128 {
+        get_min_stake(&env)
+    }
+
+    /// Update the minimum stake required to register as a verifier. Only the admin may
+    /// call this.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
+    /// - [`CarbonChainError::Unauthorized`] — caller is not the admin.
+    /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    /// - [`CarbonChainError::InvalidStakeAmount`] — `amount` is negative.
+    pub fn set_min_stake(
+        env: Env,
+        admin: Address,
+        amount: i128,
+        nonce: u64,
+    ) -> Result<(), CarbonChainError> {
+        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        admin.require_auth();
+        if admin != stored_admin {
+            return Err(CarbonChainError::Unauthorized);
+        }
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        if amount < 0 {
+            return Err(CarbonChainError::InvalidStakeAmount);
+        }
+        set_min_stake(&env, amount);
+        Ok(())
     }
 
     // ── Issuer management ────────────────────────────────────────────────────

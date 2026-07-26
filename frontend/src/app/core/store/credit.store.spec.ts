@@ -175,3 +175,178 @@ describe('CreditStore — optimistic splitCredit', () => {
     expect(store.credits().length).toBe(0);
   });
 });
+
+const CREDIT_A = { ...ACTIVE_CREDIT, id: 'credit-a', project_id: 'proj-1', tonnes: '1000000' };
+const CREDIT_B = {
+  ...ACTIVE_CREDIT,
+  id: 'credit-b',
+  project_id: 'proj-1',
+  tonnes: '2000000',
+  status: CreditStatus.Retired,
+};
+const CREDIT_C = { ...ACTIVE_CREDIT, id: 'credit-c', project_id: 'proj-2', tonnes: '500000' };
+
+describe('CreditStore — loadByProject', () => {
+  let store: CreditStore;
+  let listCreditsByProject: ReturnType<typeof vi.fn>;
+  let getCredit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    listCreditsByProject = vi.fn().mockReturnValue(of(['credit-a', 'credit-b']));
+    getCredit = vi.fn().mockImplementation((id: string) => {
+      const byId: Record<string, typeof CREDIT_A> = {
+        'credit-a': CREDIT_A,
+        'credit-b': CREDIT_B,
+      };
+      return of(byId[id]);
+    });
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiService, useValue: { listCreditsByProject, getCredit } },
+        { provide: ToastService, useValue: { showError: vi.fn(), showSuccess: vi.fn() } },
+      ],
+    });
+    store = TestBed.inject(CreditStore);
+  });
+
+  it('sets loadingState to loading synchronously, then loaded on success', async () => {
+    const pending = TestBed.runInInjectionContext(() => store.loadByProject('proj-1'));
+    expect(store.isLoading()).toBe(true);
+    await pending;
+
+    expect(store.loadingState()).toBe('loaded');
+    expect(store.isLoading()).toBe(false);
+  });
+
+  it('fetches all credit IDs for a project and populates the credits signal', async () => {
+    await TestBed.runInInjectionContext(() => store.loadByProject('proj-1'));
+
+    expect(listCreditsByProject).toHaveBeenCalledWith('proj-1');
+    expect(getCredit).toHaveBeenCalledWith('credit-a');
+    expect(getCredit).toHaveBeenCalledWith('credit-b');
+    expect(store.credits().length).toBe(2);
+  });
+
+  it('sets error state when listCreditsByProject fails', async () => {
+    listCreditsByProject.mockReturnValue(throwError(() => new Error('network down')));
+
+    await TestBed.runInInjectionContext(() => store.loadByProject('proj-1'));
+
+    expect(store.loadingState()).toBe('error');
+    expect(store.error()).toBe('network down');
+    expect(store.credits().length).toBe(0);
+  });
+
+  it('sets error state when a per-credit fetch fails', async () => {
+    getCredit.mockReturnValue(throwError(() => new Error('credit fetch failed')));
+
+    await TestBed.runInInjectionContext(() => store.loadByProject('proj-1'));
+
+    expect(store.loadingState()).toBe('error');
+    expect(store.error()).toBe('credit fetch failed');
+  });
+});
+
+describe('CreditStore — select / reset', () => {
+  let store: CreditStore;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: ApiService,
+          useValue: { getCredit: vi.fn().mockReturnValue(of(CREDIT_A)) },
+        },
+        { provide: ToastService, useValue: { showError: vi.fn(), showSuccess: vi.fn() } },
+      ],
+    });
+    store = TestBed.inject(CreditStore);
+  });
+
+  it('select() sets selectedId and selected resolves the matching credit', async () => {
+    await TestBed.runInInjectionContext(() => store.loadOne('credit-a'));
+
+    store.select('credit-a');
+    expect(store.selectedId()).toBe('credit-a');
+    expect(store.selected()?.id).toBe('credit-a');
+  });
+
+  it('selected computed returns null when no credit matches selectedId', () => {
+    store.select('does-not-exist');
+    expect(store.selected()).toBeNull();
+  });
+
+  it('select(null) clears the selection', async () => {
+    await TestBed.runInInjectionContext(() => store.loadOne('credit-a'));
+    store.select('credit-a');
+    store.select(null);
+
+    expect(store.selectedId()).toBeNull();
+    expect(store.selected()).toBeNull();
+  });
+
+  it('reset() clears credits, loadingState, error, and selectedId', async () => {
+    await TestBed.runInInjectionContext(() => store.loadOne('credit-a'));
+    store.select('credit-a');
+
+    store.reset();
+
+    expect(store.credits()).toEqual([]);
+    expect(store.loadingState()).toBe('idle');
+    expect(store.error()).toBeNull();
+    expect(store.selectedId()).toBeNull();
+  });
+});
+
+describe('CreditStore — computed signals', () => {
+  let store: CreditStore;
+  let getCredit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    getCredit = vi.fn();
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiService, useValue: { getCredit } },
+        { provide: ToastService, useValue: { showError: vi.fn(), showSuccess: vi.fn() } },
+      ],
+    });
+    store = TestBed.inject(CreditStore);
+  });
+
+  async function seed(...credits: Array<typeof CREDIT_A>) {
+    for (const credit of credits) {
+      getCredit.mockReturnValue(of(credit));
+      await TestBed.runInInjectionContext(() => store.loadOne(credit.id));
+    }
+  }
+
+  it('totalTonnes sums tonnes across all credits as a bigint', async () => {
+    await seed(CREDIT_A, CREDIT_B, CREDIT_C);
+    expect(store.totalTonnes()).toBe(BigInt('1000000') + BigInt('2000000') + BigInt('500000'));
+  });
+
+  it('activeCredits filters to only Active status', async () => {
+    await seed(CREDIT_A, CREDIT_B, CREDIT_C);
+    expect(store.activeCredits().map((c) => c.id).sort()).toEqual(['credit-a', 'credit-c']);
+  });
+
+  it('retiredCredits filters to only Retired status', async () => {
+    await seed(CREDIT_A, CREDIT_B, CREDIT_C);
+    expect(store.retiredCredits().map((c) => c.id)).toEqual(['credit-b']);
+  });
+
+  it('creditsByProject groups credits by project_id', async () => {
+    await seed(CREDIT_A, CREDIT_B, CREDIT_C);
+    const grouped = store.creditsByProject();
+
+    expect(grouped.get('proj-1')?.map((c) => c.id).sort()).toEqual(['credit-a', 'credit-b']);
+    expect(grouped.get('proj-2')?.map((c) => c.id)).toEqual(['credit-c']);
+  });
+
+  it('computed signals reflect an empty store', () => {
+    expect(store.totalTonnes()).toBe(BigInt(0));
+    expect(store.activeCredits()).toEqual([]);
+    expect(store.retiredCredits()).toEqual([]);
+    expect(store.creditsByProject().size).toBe(0);
+  });
+});
