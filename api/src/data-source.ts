@@ -29,5 +29,16 @@ export const AppDataSource = new DataSource({
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
+    // Issue #551: kill runaway queries after 10 s to free the connection pool.
+    // A slow full-table scan on 100 K credits can hold a connection for 30+ s
+    // and starve concurrent requests. statement_timeout is set at the
+    // connection level so it applies to every query through this pool.
+    // Long-running operations that legitimately exceed 10 s (e.g. data export)
+    // must issue `SET LOCAL statement_timeout = 0;` inside their own
+    // transaction to opt out.
+    statement_timeout: 10000,
+    // Warn in application logs when a query takes > 8 s so operators have a
+    // heads-up before the hard 10 s kill fires.
+    query_timeout: 8000,
   },
 });

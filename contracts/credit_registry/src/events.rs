@@ -72,6 +72,17 @@ pub struct DisputeResolved {
     pub outcome: u32,
 }
 
+/// Emitted when a flagged credit's dispute is resolved via `resolve_flag`.
+#[contractevent]
+#[derive(Clone)]
+pub struct FlagResolved {
+    pub credit_id: BytesN<32>,
+    /// The verifier (or admin) who resolved the flag.
+    pub resolver: Address,
+    /// 0 = Confirmed (credit stays Flagged), 1 = Rejected (credit restored to Active).
+    pub resolution: u32,
+}
+
 #[contractevent]
 #[derive(Clone)]
 pub struct CreditExpired {

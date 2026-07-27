@@ -22,6 +22,19 @@ pub enum ServiceType {
     MRVReview = 1,
 }
 
+/// Resolution outcome for a flagged credit dispute.
+///
+/// - `Confirmed` — the flag is confirmed; the credit remains `Flagged` (anomaly validated).
+/// - `Rejected`  — the flag was a false positive; the credit is restored to `Active`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[contracttype]
+pub enum DisputeResolution {
+    /// The flag is confirmed — credit stays Flagged.
+    Confirmed = 0,
+    /// The flag was a false positive — credit is restored to Active.
+    Rejected = 1,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct CreditMetadata {

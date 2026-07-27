@@ -449,3 +449,76 @@ pub fn verifier_has_credit_approval(env: &Env, verifier: &Address) -> bool {
     }
     services.contains(ServiceType::CreditApproval)
 }
+
+// ── Issue #481: Per-credit verifier snapshot & pending credits index ─────────
+
+/// Snapshot the current verifier set for a specific credit at submission time.
+/// This allows `remove_verifier` to check per-credit assignment without relying
+/// on the global verifier list, which may have changed since submission.
+pub fn set_credit_verifiers(env: &Env, credit_id: &BytesN<32>, verifiers: &Vec<Address>) {
+    let key = DataKey::CreditVerifiers(credit_id.clone());
+    env.storage().persistent().set(&key, verifiers);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+/// Returns the verifier snapshot for a credit, or an empty Vec if none exists.
+pub fn get_credit_verifiers(env: &Env, credit_id: &BytesN<32>) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CreditVerifiers(credit_id.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Removes the verifier snapshot for a credit once it is no longer pending.
+pub fn remove_credit_verifiers(env: &Env, credit_id: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::CreditVerifiers(credit_id.clone()));
+}
+
+/// Adds a credit ID to the global pending credits index.
+pub fn add_to_pending_credits(env: &Env, credit_id: &BytesN<32>) {
+    let key = DataKey::PendingCredits;
+    let mut list: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if !list.contains(credit_id) {
+        list.push_back(credit_id.clone());
+        env.storage().persistent().set(&key, &list);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    }
+}
+
+/// Removes a credit ID from the global pending credits index.
+pub fn remove_from_pending_credits(env: &Env, credit_id: &BytesN<32>) {
+    let key = DataKey::PendingCredits;
+    let old: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut new_list: Vec<BytesN<32>> = Vec::new(env);
+    for id in old.iter() {
+        if id != *credit_id {
+            new_list.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &new_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+/// Returns the current list of all pending credit IDs.
+pub fn get_pending_credits(env: &Env) -> Vec<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PendingCredits)
+        .unwrap_or_else(|| Vec::new(env))
+}

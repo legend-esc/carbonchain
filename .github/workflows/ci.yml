@@ -194,3 +194,11 @@ jobs:
         run: cd frontend && npm run build
       - name: Run Tests
         run: cd frontend && npm run test:ci
+      # Issue #549 — Lighthouse CI accessibility audit (fails if score < 90)
+      # Runs after build so the static dist is available for LHCI to serve.
+      - name: Install Lighthouse CI
+        run: npm install -g @lhci/cli@0.14.x --no-save
+      - name: Run Lighthouse CI
+        run: cd frontend && lhci autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
