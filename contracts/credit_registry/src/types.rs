@@ -22,6 +22,19 @@ pub enum ServiceType {
     MRVReview = 1,
 }
 
+/// Resolution outcome for a flagged credit dispute.
+///
+/// - `Confirmed` — the flag is confirmed; the credit remains `Flagged` (anomaly validated).
+/// - `Rejected`  — the flag was a false positive; the credit is restored to `Active`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[contracttype]
+pub enum DisputeResolution {
+    /// The flag is confirmed — credit stays Flagged.
+    Confirmed = 0,
+    /// The flag was a false positive — credit is restored to Active.
+    Rejected = 1,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct CreditMetadata {
@@ -82,6 +95,15 @@ pub struct AuditLogEntry {
     pub timestamp: u64,
 }
 
+/// A pending stake withdrawal created by `remove_verifier`. The stake becomes
+/// withdrawable once `unlock_at` (ledger timestamp) has passed — see issue #565.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct UnbondingRequest {
+    pub amount: i128,
+    pub unlock_at: u64,
+}
+
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
@@ -129,4 +151,10 @@ pub enum DataKey {
     /// Maintained by submit_credit (add) and approve_and_mint/flag_credit (remove).
     /// Used by remove_verifier to iterate per-credit snapshots efficiently.
     PendingCredits,
+    /// Stake amount (in the configured stake token's smallest unit) locked by a verifier.
+    VerifierStake(Address),
+    /// Minimum stake required to register as a verifier. Configurable by the admin.
+    MinStake,
+    /// Pending unbonding request created when a verifier is removed.
+    UnbondingRequest(Address),
 }

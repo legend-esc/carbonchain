@@ -42,4 +42,12 @@ pub enum CarbonChainError {
     AlreadyApproved = 125,
     /// Returned when no retirement contract has been registered.
     NoRetirementContract = 126,
+    /// Returned when a verifier's locked stake is below the required minimum.
+    InsufficientStake = 127,
+    /// Returned when a stake deposit/slash amount is zero or negative.
+    InvalidStakeAmount = 128,
+    /// Returned when there is no pending unbonding request for a verifier.
+    NoUnbondingRequest = 129,
+    /// Returned when withdrawing stake before the 30-day unbonding period has elapsed.
+    UnbondingNotReady = 130,
 }

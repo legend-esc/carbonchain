@@ -1,6 +1,8 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { RouterOutlet, RouterLink } from '@angular/router';
+import { SwUpdate } from '@angular/service-worker';
 import { ConnectWalletComponent } from './core/components/connect-wallet.component';
+import { NetworkIndicatorComponent } from './core/components/network-indicator.component';
 import { LocaleSwitcherComponent } from './core/components/locale-switcher.component';
 import { ThemeService } from './core/services/theme.service';
 import { TranslatePipe } from './core/pipes/translate.pipe';
@@ -16,6 +18,7 @@ import { PwaInstallService } from './core/services/pwa-install.service';
     RouterOutlet,
     RouterLink,
     ConnectWalletComponent,
+    NetworkIndicatorComponent,
     LocaleSwitcherComponent,
     TranslatePipe,
     ToastComponent,
@@ -27,10 +30,29 @@ import { PwaInstallService } from './core/services/pwa-install.service';
 export class App implements OnInit {
   readonly theme = inject(ThemeService);
   readonly onlineStatus = inject(OnlineStatusService);
-  readonly pwaInstall = inject(PwaInstallService);
+  private readonly swUpdate = inject(SwUpdate, { optional: true });
 
   ngOnInit(): void {
-    // Initialize PWA install prompt listener
-    this.pwaInstall.initialize();
+    this.checkForSwUpdate();
+  }
+
+  /**
+   * Check for a new service-worker version on application startup.
+   *
+   * When the SW has an update available, the browser will activate the new
+   * worker on the next page load. This is a passive check — no forced reload —
+   * which is sufficient for invalidating the `credits-api` freshness cache
+   * configured in ngsw-config.json.
+   *
+   * The manual "Refresh" button in the UI can call this method directly to
+   * force an immediate update check.
+   */
+  checkForSwUpdate(): void {
+    if (!this.swUpdate?.isEnabled) {
+      return;
+    }
+    this.swUpdate.checkForUpdate().catch(() => {
+      // Non-fatal: SW update check failure should not block the app
+    });
   }
 }

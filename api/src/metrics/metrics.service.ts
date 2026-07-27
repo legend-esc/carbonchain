@@ -8,6 +8,16 @@ export class MetricsService implements OnModuleInit {
   httpRequestsTotal: client.Counter<string>;
   httpRequestDurationSeconds: client.Histogram<string>;
   stellarTxSubmitTotal: client.Counter<string>;
+  /**
+   * Issue #546 — Histogram of the fee paid (in stroops) for each Soroban
+   * contract call.  Buckets span 100 stroops (minimum base fee) up to
+   * 10,000,000 stroops (10 XLM) to capture the full realistic range.
+   *
+   * Labels:
+   *   contract — the Soroban contract address (or "unknown" if unavailable)
+   *   method   — the contract function name
+   */
+  contractCallFeeStroops: client.Histogram<string>;
 
   constructor() {
     this.register = new client.Registry();
@@ -34,6 +44,19 @@ export class MetricsService implements OnModuleInit {
       name: 'stellar_tx_submit_total',
       help: 'Total number of Stellar transaction submissions',
       labelNames: ['contract', 'method', 'status'],
+      registers: [this.register],
+    });
+
+    // Issue #546 — fee distribution histogram for Soroban contract calls.
+    this.contractCallFeeStroops = new client.Histogram({
+      name: 'contract_call_fee_stroops',
+      help: 'Fee paid in stroops for each Soroban contract call invocation',
+      labelNames: ['contract', 'method'],
+      // Exponential-ish buckets: 100 → 10_000_000 stroops
+      buckets: [
+        100, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000,
+        250_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000,
+      ],
       registers: [this.register],
     });
   }

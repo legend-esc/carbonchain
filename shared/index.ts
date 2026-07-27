@@ -52,6 +52,8 @@ export interface RetirementRecord {
   reason: string;
   retired_at: number;
   tx_hash: string;
+  /** Issue #544 — IPFS hash of the retirement certificate PDF. Empty for legacy records. */
+  certificate_ipfs_hash?: string;
 }
 
 export interface Offer {

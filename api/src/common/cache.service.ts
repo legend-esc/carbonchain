@@ -96,6 +96,10 @@ export class CacheService implements OnModuleDestroy {
 
   /**
    * Delete all keys matching a glob pattern (e.g. `credits:*`).
+   *
+   * Scans the whole keyspace via `KEYS` — O(n) in total key count and blocks
+   * the event loop under load. Prefer `setTagged`/`invalidateTag` for cache
+   * entries that need targeted invalidation.
    */
   async delPattern(pattern: string): Promise<void> {
     if (!this.client) return;
@@ -110,6 +114,62 @@ export class CacheService implements OnModuleDestroy {
     } catch (err) {
       this.logger.warn(
         `Cache DEL pattern "${pattern}" failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private tagSetKey(tag: string): string {
+    return `cache:tag:${tag}`;
+  }
+
+  /**
+   * Store a value and register its key against one or more tags, so it can
+   * later be invalidated with `invalidateTag` in O(members-of-tag) time
+   * instead of scanning the whole keyspace.
+   */
+  async setTagged(
+    key: string,
+    value: unknown,
+    tags: string[],
+    ttlSeconds?: number,
+  ): Promise<void> {
+    if (!this.client) return;
+    const ttl = ttlSeconds ?? this.defaultTtlSeconds;
+    try {
+      await this.client.set(key, JSON.stringify(value), { EX: ttl });
+      for (const tag of tags) {
+        const tagSet = this.tagSetKey(tag);
+        await this.client.sAdd(tagSet, key);
+        // Tag set should never expire before its longest-lived member.
+        await this.client.expire(tagSet, ttl);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Cache SET (tagged) failed for key "${key}": ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Delete every key registered under `tag`, then the tag set itself.
+   * Targeted alternative to `delPattern` — only touches keys that were
+   * actually written under this tag.
+   */
+  async invalidateTag(tag: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const tagSet = this.tagSetKey(tag);
+      const keys = await this.client.sMembers(tagSet);
+      if (keys.length > 0) {
+        await this.client.del(keys);
+      }
+      await this.client.del(tagSet);
+      this.logger.debug(
+        `Invalidated ${keys.length} keys tagged "${tag}"`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Cache tag invalidation failed for tag "${tag}": ${(err as Error).message}`,
       );
     }
   }

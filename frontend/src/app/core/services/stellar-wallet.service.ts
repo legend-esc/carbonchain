@@ -20,12 +20,24 @@ declare global {
 }
 
 export type WalletState = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type WalletNetwork = 'testnet' | 'mainnet';
+
+// Issue #539: persist both the address and the network across reloads —
+// restoring only the address left the app defaulting to the environment's
+// network (mainnet in prod) regardless of which network the user was
+// actually on.
+const STORAGE_ADDRESS_KEY = 'cc_wallet_address';
+const STORAGE_NETWORK_KEY = 'cc_wallet_network';
 
 @Injectable({ providedIn: 'root' })
 export class StellarWalletService {
-  private readonly _publicKey = signal<string | null>(null);
-  private readonly _state = signal<WalletState>('disconnected');
+  private readonly _publicKey = signal<string | null>(this.loadStoredAddress());
+  private readonly _state = signal<WalletState>(
+    this.loadStoredAddress() ? 'connected' : 'disconnected',
+  );
   private readonly _error = signal<string | null>(null);
+  private readonly _network = signal<WalletNetwork | null>(this.loadStoredNetwork());
+  private readonly _networkMismatch = signal<boolean>(false);
 
   private readonly _xlmBalance = signal<number | null>(null);
   private readonly _balanceError = signal<string | null>(null);
@@ -37,10 +49,24 @@ export class StellarWalletService {
   readonly error = this._error.asReadonly();
   readonly isConnected = computed(() => this._state() === 'connected');
 
+  /** Network (testnet/mainnet) the wallet last connected/persisted with. */
+  readonly network = this._network.asReadonly();
+  /** True when Freighter's live network no longer matches the persisted `network`. */
+  readonly networkMismatch = this._networkMismatch.asReadonly();
+
   /** Latest fetched XLM balance (in stroops -> XLM). */
   readonly xlmBalance = this._xlmBalance.asReadonly();
   /** Optional fetch error message. */
   readonly balanceError = this._balanceError.asReadonly();
+
+  constructor() {
+    // A restored session (address survived reload) may no longer match
+    // Freighter's actual network — verify it up front so the mismatch
+    // warning shows immediately rather than after the next action.
+    if (this._publicKey() && this.isFreighterInstalled) {
+      void this.checkNetworkMatch();
+    }
+  }
 
   /** Returns true if the Freighter extension is installed in the browser. */
   get isFreighterInstalled(): boolean {
@@ -66,8 +92,14 @@ export class StellarWalletService {
       }
 
       const publicKey = await window.freighter!.getPublicKey();
+      const { network } = await window.freighter!.getNetworkDetails();
+      const walletNetwork = this.mapNetwork(network);
+
       this._publicKey.set(publicKey);
+      this._network.set(walletNetwork);
+      this._networkMismatch.set(false);
       this._state.set('connected');
+      this.persistSession(publicKey, walletNetwork);
       return publicKey;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to connect to Freighter.';
@@ -174,5 +206,62 @@ export class StellarWalletService {
     this._error.set(null);
     this._xlmBalance.set(null);
     this._balanceError.set(null);
+    this._network.set(null);
+    this._networkMismatch.set(false);
+    this.clearPersistedSession();
+  }
+
+  /**
+   * Re-checks Freighter's live network against the persisted `network` and
+   * updates `networkMismatch` accordingly. Returns true when they match.
+   *
+   * Call this after a reload (a restored session may be stale) and whenever
+   * the user might have switched networks inside Freighter directly.
+   */
+  async checkNetworkMatch(): Promise<boolean> {
+    const stored = this._network();
+    if (!stored || !this.isFreighterInstalled) {
+      this._networkMismatch.set(false);
+      return true;
+    }
+    try {
+      const { network } = await window.freighter!.getNetworkDetails();
+      const live = this.mapNetwork(network);
+      const mismatch = live !== stored;
+      this._networkMismatch.set(mismatch);
+      return !mismatch;
+    } catch {
+      // Can't determine the live network (e.g. Freighter locked) — don't
+      // block the UI on an inconclusive check.
+      return true;
+    }
+  }
+
+  /** Maps Freighter's raw network string ('PUBLIC', 'TESTNET', ...) to our two-value model. */
+  private mapNetwork(freighterNetwork: string): WalletNetwork {
+    return freighterNetwork.toUpperCase() === 'PUBLIC' ? 'mainnet' : 'testnet';
+  }
+
+  private persistSession(publicKey: string, network: WalletNetwork): void {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_ADDRESS_KEY, publicKey);
+    localStorage.setItem(STORAGE_NETWORK_KEY, network);
+  }
+
+  private clearPersistedSession(): void {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.removeItem(STORAGE_ADDRESS_KEY);
+    localStorage.removeItem(STORAGE_NETWORK_KEY);
+  }
+
+  private loadStoredAddress(): string | null {
+    if (typeof localStorage === 'undefined') return null;
+    return localStorage.getItem(STORAGE_ADDRESS_KEY);
+  }
+
+  private loadStoredNetwork(): WalletNetwork | null {
+    if (typeof localStorage === 'undefined') return null;
+    const stored = localStorage.getItem(STORAGE_NETWORK_KEY);
+    return stored === 'mainnet' || stored === 'testnet' ? stored : null;
   }
 }

@@ -130,14 +130,19 @@ export class EventsService implements OnModuleInit {
           `Indexed event: ${eventType} from contract ${contractId} at ledger ${event.ledger}`,
         );
 
-        // Invalidate credit cache on status-change events
-        if (CREDIT_STATUS_CHANGE_EVENTS.has(eventType)) {
-          const creditId = eventEntity.data['credit_id'] as string | undefined;
+        // Invalidate credit cache on status-change events.
+        // Issue #540: targeted tag invalidation instead of a `credits:list:*`
+        // KEYS scan — mirrors CreditsService.invalidateCreditCache's tagging
+        // convention (list queries are all tagged `credits:list`).
+        if (CREDIT_STATUS_CHANGE_EVENTS.has(sorobanEvent.type)) {
+          const creditId = sorobanEvent.data['credit_id'] as string | undefined;
           if (creditId) {
             await this.cache.del(`credits:${creditId}`);
           }
-          await this.cache.delPattern('credits:list:*');
-          this.logger.debug(`Cache invalidated after event: ${eventType}`);
+          await this.cache.invalidateTag('credits:list');
+          this.logger.debug(
+            `Cache invalidated after event: ${sorobanEvent.type}`,
+          );
         }
 
         // Trigger webhooks for this event
