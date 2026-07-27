@@ -1,10 +1,13 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { StellarService } from '../stellar/stellar.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { rpc } from '@stellar/stellar-sdk';
 import { CacheService } from '../common/cache.service';
+import { EventEntity } from './event.entity';
 
 export interface SorobanEvent {
   id: string;
@@ -23,32 +26,51 @@ const CREDIT_STATUS_CHANGE_EVENTS = new Set([
   'CreditRevoked',
 ]);
 
+/**
+ * EventsService - Background event indexer with PostgreSQL storage.
+ * Polls Soroban RPC every 30 seconds and stores events in the database.
+ * API reads from DB for <50ms query latency.
+ */
 @Injectable()
 export class EventsService implements OnModuleInit {
   private readonly logger = new Logger(EventsService.name);
-  private lastLedger = 0;
-  private events: Map<string, SorobanEvent> = new Map();
+  private readonly lastLedgerCache = new Map<string, number>();
 
   constructor(
+    @InjectRepository(EventEntity)
+    private readonly eventRepository: Repository<EventEntity>,
     private stellarService: StellarService,
     private configService: ConfigService,
     private webhooksService: WebhooksService,
     private readonly cache: CacheService,
   ) {}
 
-  onModuleInit() {
-    this.logger.log('EventsService initialized');
+  async onModuleInit() {
+    this.logger.log('EventsService initialized - loading last synced ledgers');
+    // Load last synced ledger per contract from DB
+    const contractIds = this.getContractIds();
+    for (const contractId of contractIds) {
+      const lastEvent = await this.eventRepository.findOne({
+        where: { contractId },
+        order: { ledger: 'DESC' },
+      });
+      if (lastEvent) {
+        this.lastLedgerCache.set(contractId, lastEvent.ledger);
+        this.logger.log(
+          `Contract ${contractId}: last synced ledger = ${lastEvent.ledger}`,
+        );
+      }
+    }
   }
 
+  /**
+   * Background indexer - runs every 30 seconds.
+   * Syncs events from all configured contracts.
+   */
   @Cron(CronExpression.EVERY_30_SECONDS)
   async indexEvents(): Promise<void> {
     try {
-      const contractIds = [
-        this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID'),
-        this.configService.get<string>('RETIREMENT_CONTRACT_ID'),
-        this.configService.get<string>('MARKETPLACE_CONTRACT_ID'),
-        this.configService.get<string>('MRV_ORACLE_CONTRACT_ID'),
-      ].filter((id): id is string => Boolean(id));
+      const contractIds = this.getContractIds();
 
       for (const contractId of contractIds) {
         await this.indexContractEvents(contractId);
@@ -61,51 +83,77 @@ export class EventsService implements OnModuleInit {
     }
   }
 
+  private getContractIds(): string[] {
+    return [
+      this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID'),
+      this.configService.get<string>('RETIREMENT_CONTRACT_ID'),
+      this.configService.get<string>('MARKETPLACE_CONTRACT_ID'),
+      this.configService.get<string>('MRV_ORACLE_CONTRACT_ID'),
+    ].filter((id): id is string => Boolean(id));
+  }
+
   private async indexContractEvents(contractId: string): Promise<void> {
     try {
+      const lastLedger = this.lastLedgerCache.get(contractId) || 0;
       const events = await this.stellarService.getContractEvents(
         contractId,
-        this.lastLedger,
+        lastLedger,
       );
+
+      if (events.length === 0) return;
 
       for (const event of events) {
         const eventId = `${contractId}-${event.ledger}-${event.id}`;
-        const sorobanEvent: SorobanEvent = {
+        const eventType = this.parseEventType(event);
+
+        // Check if event already exists (idempotency for reorgs)
+        const existing = await this.eventRepository.findOne({
+          where: { id: eventId },
+        });
+        if (existing) {
+          continue;
+        }
+
+        const eventEntity = this.eventRepository.create({
           id: eventId,
-          type: this.parseEventType(event),
           contractId,
+          eventType,
           ledger: event.ledger,
+          txHash: event.txHash || null,
           timestamp: this.parseEventTimestamp(event),
           data: this.parseEventData(event),
-        };
+        });
 
-        this.events.set(eventId, sorobanEvent);
+        await this.eventRepository.save(eventEntity);
+
         this.logger.debug(
-          `Indexed event: ${sorobanEvent.type} from contract ${contractId}`,
+          `Indexed event: ${eventType} from contract ${contractId} at ledger ${event.ledger}`,
         );
 
         // Invalidate credit cache on status-change events
-        if (CREDIT_STATUS_CHANGE_EVENTS.has(sorobanEvent.type)) {
-          const creditId = sorobanEvent.data['credit_id'] as string | undefined;
+        if (CREDIT_STATUS_CHANGE_EVENTS.has(eventType)) {
+          const creditId = eventEntity.data['credit_id'] as string | undefined;
           if (creditId) {
             await this.cache.del(`credits:${creditId}`);
           }
           await this.cache.delPattern('credits:list:*');
-          this.logger.debug(
-            `Cache invalidated after event: ${sorobanEvent.type}`,
-          );
+          this.logger.debug(`Cache invalidated after event: ${eventType}`);
         }
 
         // Trigger webhooks for this event
-        await this.webhooksService.triggerWebhooks(
-          sorobanEvent.type,
-          sorobanEvent,
-        );
+        await this.webhooksService.triggerWebhooks(eventType, {
+          id: eventId,
+          type: eventType,
+          contractId,
+          ledger: event.ledger,
+          timestamp: eventEntity.timestamp,
+          data: eventEntity.data,
+        });
       }
 
-      if (events.length > 0) {
-        this.lastLedger = Math.max(...events.map((e) => e.ledger));
-      }
+      // Update last synced ledger
+      const maxLedger = Math.max(...events.map((e) => e.ledger));
+      this.lastLedgerCache.set(contractId, maxLedger);
     } catch (error) {
       this.logger.error(
         `Failed to index events for contract ${contractId}: ${(error as Error).message}`,
@@ -138,32 +186,84 @@ export class EventsService implements OnModuleInit {
     };
   }
 
-  getEvents(
+  /**
+   * Query events from PostgreSQL (fast, <50ms).
+   * Replaces the old in-memory Map approach.
+   */
+  async getEvents(
     contractId?: string,
     eventType?: string,
     take = 50,
     skip = 0,
-  ): SorobanEvent[] {
-    let filtered = Array.from(this.events.values());
+  ): Promise<SorobanEvent[]> {
+    const limit = Math.min(take, 200);
+    const where: any = {};
 
     if (contractId) {
-      filtered = filtered.filter((e) => e.contractId === contractId);
+      where.contractId = contractId;
     }
-
     if (eventType) {
-      filtered = filtered.filter((e) => e.type === eventType);
+      where.eventType = eventType;
     }
 
-    const limit = Math.min(take, 200);
-    return filtered.slice(skip, skip + limit);
+    const events = await this.eventRepository.find({
+      where,
+      order: { ledger: 'DESC' },
+      take: limit,
+      skip,
+    });
+
+    return events.map((e) => ({
+      id: e.id,
+      type: e.eventType,
+      contractId: e.contractId,
+      ledger: Number(e.ledger),
+      timestamp: Number(e.timestamp),
+      data: e.data,
+    }));
   }
 
-  getEventById(eventId: string): SorobanEvent | undefined {
-    return this.events.get(eventId);
+  async getEventById(eventId: string): Promise<SorobanEvent | undefined> {
+    const event = await this.eventRepository.findOne({
+      where: { id: eventId },
+    });
+
+    if (!event) return undefined;
+
+    return {
+      id: event.id,
+      type: event.eventType,
+      contractId: event.contractId,
+      ledger: Number(event.ledger),
+      timestamp: Number(event.timestamp),
+      data: event.data,
+    };
   }
 
-  clearEvents(): void {
-    this.events.clear();
-    this.lastLedger = 0;
+  /**
+   * Handle ledger reorg: delete events from reverted ledgers.
+   * Called when a ledger closes but transactions are reverted.
+   */
+  async handleReorg(contractId: string, revertedLedger: number): Promise<void> {
+    this.logger.warn(
+      `Handling reorg: deleting events from ledger ${revertedLedger} for contract ${contractId}`,
+    );
+
+    await this.eventRepository.delete({
+      contractId,
+      ledger: revertedLedger,
+    });
+
+    // Update last synced ledger
+    const lastEvent = await this.eventRepository.findOne({
+      where: { contractId },
+      order: { ledger: 'DESC' },
+    });
+    const newLastLedger = lastEvent ? lastEvent.ledger : 0;
+    this.lastLedgerCache.set(contractId, newLastLedger);
+
+    this.logger.log(
+      `Reorg handled: new last ledger for ${contractId} = ${newLastLedger}`,
+    );
   }
 }

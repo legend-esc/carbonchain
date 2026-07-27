@@ -53,6 +53,9 @@ export class MarketplaceController {
   }
 
   @ApiOperation({ summary: 'Get offer by ID' })
+  @ApiResponse({ status: 200, description: 'Offer retrieved' })
+  @ApiResponse({ status: 404, description: 'Offer not found' })
+  @ApiResponse({ status: 410, description: 'Offer has expired' })
   @Get('offer/:id')
   getOffer(@Param('id', ParseIntPipe) id: number): Promise<Offer> {
     return this.marketplaceService.getOffer(id);
@@ -76,6 +79,7 @@ export class MarketplaceController {
   @ApiOperation({ summary: 'Buy an offer from the marketplace' })
   @ApiResponse({ status: 200, description: 'Offer purchased' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 410, description: 'Offer has expired' })
   @UseGuards(JwtAuthGuard)
   @Post('offer/:id/buy')
   buyOffer(

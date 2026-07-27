@@ -56,6 +56,7 @@ lcov.info
 *.lcov
 # Soroban test snapshots (auto-generated, not source — issue PR checklist)
 test_snapshots/
+**/test_snapshots/
 # Karma / browser test output
 karma-test-results.xml
 browser_test_results/
@@ -64,6 +65,10 @@ browser_test_results/
 .jest-cache/
 # Jest coverage directory (alternative name)
 jest-coverage/
+# Additional test artifacts
+*.test.log
+**/coverage/
+**/__snapshots__/
 
 # Build artifacts
 *.js.map
