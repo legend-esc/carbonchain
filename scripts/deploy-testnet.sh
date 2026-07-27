@@ -12,6 +12,24 @@ REQUIRED_STELLAR_CLI_VERSION="26.1.0"
 log()  { echo "🌿 $*"; }
 fail() { echo "❌ $*" >&2; exit 1; }
 
+# Retry a command up to 3 times with exponential back-off (5s, 10s, 20s).
+# Usage: retry <description> <command...>
+retry() {
+  local desc="$1"; shift
+  local attempt delay
+  for attempt in 1 2 3; do
+    if "$@"; then
+      return 0
+    fi
+    if [[ $attempt -lt 3 ]]; then
+      delay=$(( 5 * (1 << (attempt - 1)) ))   # 5, 10
+      echo "  ⚠️  $desc failed (attempt $attempt/3), retrying in ${delay}s…" >&2
+      sleep "$delay"
+    fi
+  done
+  fail "$desc failed after 3 attempts"
+}
+
 # ── 0. Verify stellar-cli version ────────────────────────────────────────────
 
 if ! command -v stellar &>/dev/null; then
@@ -50,28 +68,28 @@ WASM_DIR="$SCRIPT_DIR/../contracts/target/wasm32v1-none/release"
 # ── 3. Deploy contracts ───────────────────────────────────────────────────────
 
 log "Deploying credit_registry..."
-CREDIT_REGISTRY_ID=$(stellar contract deploy \
+CREDIT_REGISTRY_ID=$(retry "deploy credit_registry" stellar contract deploy \
   --wasm "$WASM_DIR/carbonchain_credit_registry.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet)
 log "  credit_registry: $CREDIT_REGISTRY_ID"
 
 log "Deploying retirement..."
-RETIREMENT_ID=$(stellar contract deploy \
+RETIREMENT_ID=$(retry "deploy retirement" stellar contract deploy \
   --wasm "$WASM_DIR/carbonchain_retirement.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet)
 log "  retirement: $RETIREMENT_ID"
 
 log "Deploying marketplace..."
-MARKETPLACE_ID=$(stellar contract deploy \
+MARKETPLACE_ID=$(retry "deploy marketplace" stellar contract deploy \
   --wasm "$WASM_DIR/carbonchain_marketplace.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet)
 log "  marketplace: $MARKETPLACE_ID"
 
 log "Deploying mrv_oracle..."
-MRV_ORACLE_ID=$(stellar contract deploy \
+MRV_ORACLE_ID=$(retry "deploy mrv_oracle" stellar contract deploy \
   --wasm "$WASM_DIR/carbonchain_mrv_oracle.wasm" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet)
@@ -80,7 +98,7 @@ log "  mrv_oracle: $MRV_ORACLE_ID"
 # ── 4. Initialize contracts ───────────────────────────────────────────────────
 
 log "Initializing credit_registry..."
-stellar contract invoke \
+retry "initialize credit_registry" stellar contract invoke \
   --id "$CREDIT_REGISTRY_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
@@ -90,7 +108,7 @@ stellar contract invoke \
   --required-approvals 1
 
 log "Initializing retirement..."
-stellar contract invoke \
+retry "initialize retirement" stellar contract invoke \
   --id "$RETIREMENT_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
@@ -98,7 +116,7 @@ stellar contract invoke \
   --admin "$ADMIN_ADDRESS"
 
 log "Initializing marketplace..."
-stellar contract invoke \
+retry "initialize marketplace" stellar contract invoke \
   --id "$MARKETPLACE_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
@@ -107,7 +125,7 @@ stellar contract invoke \
   --min-price-per-tonne 0
 
 log "Initializing mrv_oracle..."
-stellar contract invoke \
+retry "initialize mrv_oracle" stellar contract invoke \
   --id "$MRV_ORACLE_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \

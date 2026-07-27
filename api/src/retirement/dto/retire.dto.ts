@@ -1,27 +1,28 @@
-import { IsString, IsNotEmpty, IsNumberString } from 'class-validator';
+import { IsString, IsNotEmpty, MaxLength, IsInt, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RetireDto {
-  @ApiProperty({
-    example: 'GABC...XYZ',
-    description: 'Stellar public key of the buyer',
-  })
+  @ApiProperty({ example: '2024 Scope 3 offset', maxLength: 200 })
   @IsString()
   @IsNotEmpty()
-  buyerPublicKey: string;
-
-  @ApiProperty({ example: '037176a1...', description: 'Hex-encoded credit ID' })
-  @IsString()
-  @IsNotEmpty()
-  creditId: string;
-
-  @ApiProperty({ example: '1000000', description: '1 tonne = 1_000_000 units' })
-  @IsNumberString()
-  @IsNotEmpty()
-  tonnes: string;
-
-  @ApiProperty({ example: '2024 Scope 3 offset' })
-  @IsString()
-  @IsNotEmpty()
+  @MaxLength(200)
   reason: string;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Replay-protection nonce from the contract',
+    default: 0,
+  })
+  @IsInt()
+  @Min(0)
+  nonce: number = 0;
+}
+
+/** Full retirement payload used by the service and the POST /retirement endpoint. */
+export class FullRetireDto {
+  buyerPublicKey: string;
+  creditId: string;
+  tonnes: string;
+  reason: string;
+  nonce: number;
 }

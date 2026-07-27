@@ -9,6 +9,7 @@ import {
   CREDIT_REPOSITORY,
 } from './credit.repository';
 import { NonceService } from '../common/nonce.service';
+import { ETagCacheInterceptor } from './etag-cache.interceptor';
 
 @Module({
   imports: [ConfigModule, StellarModule, AuthModule],
@@ -17,8 +18,9 @@ import { NonceService } from '../common/nonce.service';
     CreditsService,
     NonceService,
     { provide: CREDIT_REPOSITORY, useClass: InMemoryCreditRepository },
+    ETagCacheInterceptor,
   ],
-  exports: [CreditsService],
+  exports: [CreditsService, CREDIT_REPOSITORY],
 })
 export class CreditsModule implements OnApplicationBootstrap {
   constructor(private readonly nonceService: NonceService) {}

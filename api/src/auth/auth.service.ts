@@ -15,8 +15,12 @@ import {
   Transaction,
   StrKey,
 } from '@stellar/stellar-sdk';
+import { randomUUID } from 'crypto';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CacheService } from '../common/cache.service';
+
+/** Redis key prefix for blocklisted JTIs. */
+const BLOCKLIST_PREFIX = 'auth:blocklist:jti:';
 
 @Injectable()
 export class AuthService {
@@ -97,6 +101,9 @@ export class AuthService {
    *  2. Server signature is present and valid
    *  3. Client signature is present and valid on the manageData operation
    *  4. Nonce has not been previously used (Issue #254)
+   *
+   * Issue #491 — All issued tokens include a `jti` (UUID v4) claim so they
+   * can be individually revoked via POST /auth/logout.
    */
   async verifyAndIssueToken(signedTransactionXdr: string): Promise<{
     access_token: string;
@@ -174,8 +181,61 @@ export class AuthService {
     // Delete nonce to prevent reuse
     await this.cache.del(nonceKey);
 
-    const access_token = this.jwtService.sign({ account: clientAccount });
-    this.logger.log(`Issued JWT for account: ${clientAccount}`);
+    // Issue #491 — Include a UUID v4 jti so tokens can be blocklisted on logout.
+    const jti = randomUUID();
+    const access_token = this.jwtService.sign({ account: clientAccount, jti });
+    this.logger.log(`Issued JWT for account: ${clientAccount} (jti: ${jti})`);
     return { access_token };
+  }
+
+  /**
+   * Issue #491 — Invalidate a JWT by storing its jti in the Redis blocklist.
+   *
+   * The token is decoded without re-verification (the guard already verified it).
+   * If the token has no `jti` claim it cannot be blocklisted — we reject it so
+   * old tokens without `jti` are treated as unrevocable and must expire naturally.
+   *
+   * @param token — raw Bearer token string (without "Bearer " prefix)
+   */
+  async logout(token: string): Promise<void> {
+    if (!token) return;
+
+    let payload: { jti?: string; exp?: number; iat?: number } | null = null;
+    try {
+      payload = this.jwtService.decode(token) as {
+        jti?: string;
+        exp?: number;
+        iat?: number;
+      } | null;
+    } catch {
+      // malformed token — nothing to revoke
+      return;
+    }
+
+    if (!payload?.jti) {
+      throw new UnauthorizedException(
+        'Token cannot be revoked: missing jti claim. Please re-authenticate.',
+      );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const exp = payload.exp ?? 0;
+    const remainingTtl = Math.max(exp - now, 1);
+
+    const blocklistKey = `${BLOCKLIST_PREFIX}${payload.jti}`;
+    await this.cache.set(blocklistKey, true, remainingTtl);
+    this.logger.log(
+      `JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`,
+    );
+  }
+
+  /**
+   * Issue #491 — Check whether a jti has been blocklisted.
+   * Called by JwtAuthGuard on every authenticated request.
+   */
+  async isTokenRevoked(jti: string): Promise<boolean> {
+    const blocklistKey = `${BLOCKLIST_PREFIX}${jti}`;
+    const blocked = await this.cache.get<boolean>(blocklistKey);
+    return blocked === true;
   }
 }

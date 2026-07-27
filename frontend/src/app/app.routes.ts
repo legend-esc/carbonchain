@@ -5,7 +5,7 @@ import { RetireComponent } from './retire/retire.component';
 import { CreditDetailComponent } from './credits/credit-detail.component';
 import { ProjectDetailComponent } from './projects/project-detail.component';
 import { ConnectWalletComponent } from './core/components/connect-wallet.component';
-import { AdminVerifiersComponent } from './admin/admin-verifiers.component';
+import { AdminComponent } from './admin/admin.component';
 import { OfflineComponent } from './offline/offline.component';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
@@ -18,6 +18,12 @@ export const routes: Routes = [
   { path: 'marketplace', component: MarketplaceComponent, canActivate: [authGuard] },
   { path: 'retire', component: RetireComponent, canActivate: [authGuard] },
   { path: 'credits/:id', component: CreditDetailComponent, canActivate: [authGuard] },
+  {
+    path: 'projects',
+    loadComponent: () =>
+      import('./projects/projects-list.component').then((m) => m.ProjectsListComponent),
+    canActivate: [authGuard],
+  },
   { path: 'projects/:id', component: ProjectDetailComponent, canActivate: [authGuard] },
-  { path: 'admin', component: AdminVerifiersComponent, canActivate: [authGuard, adminGuard] },
+  { path: 'admin', component: AdminComponent, canActivate: [authGuard, adminGuard] },
 ];
