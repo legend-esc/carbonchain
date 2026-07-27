@@ -22,4 +22,9 @@ export class RetirementEntity {
 
   @Column({ default: '' })
   txHash: string;
+
+  /** Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
+   *  Empty string for legacy retirements. */
+  @Column({ default: '' })
+  certificateIpfsHash: string;
 }

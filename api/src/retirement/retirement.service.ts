@@ -37,6 +37,8 @@ export interface CertificateVerification {
   tx_hash: string;
   verified: boolean;
   ledger_sequence?: number;
+  /** Issue #544 — IPFS hash of the certificate PDF as committed on-chain. */
+  certificate_ipfs_hash?: string;
 }
 
 /** Payload carried by the CreditRetired application event. */
@@ -221,6 +223,54 @@ export class RetirementService {
           timestamp: entity.retiredAt,
         });
         certificateIpfsHash = result.ipfsHash;
+
+        // ── Issue #544: commit the IPFS hash on-chain ─────────────────────
+        // This makes the certificate independently verifiable: anyone can
+        // fetch the hash from the contract, download from IPFS, and confirm
+        // the content hash matches.  We use the admin keypair and the admin's
+        // current nonce.  The call is fire-and-forget with a warning on
+        // failure so that a transient RPC error does not roll back the
+        // retirement itself.
+        try {
+          const adminKeypair = this.keypairService.getAdminKeypair();
+          const adminPublicKey = adminKeypair.publicKey();
+          const adminNonce = await this.stellarService.readContract(
+            this.retirementContractId,
+            'get_nonce',
+            [nativeToScVal(adminPublicKey, { type: 'address' })],
+          );
+          const nonceValue = adminNonce
+            ? BigInt(scValToNative(adminNonce) as number | bigint)
+            : 0n;
+
+          await this.stellarService.invokeContract(
+            this.retirementContractId,
+            'set_certificate_hash',
+            [
+              nativeToScVal(adminPublicKey, { type: 'address' }),
+              nativeToScVal(Buffer.from(retirementId, 'hex'), { type: 'bytes' }),
+              nativeToScVal(certificateIpfsHash, { type: 'string' }),
+              nativeToScVal(nonceValue, { type: 'u64' }),
+            ],
+            adminKeypair,
+          );
+
+          // Persist the hash to the off-chain index so it is returned in
+          // GET /certificates/:id without an additional on-chain read.
+          entity.certificateIpfsHash = certificateIpfsHash;
+          await this.retirementRepo.save(entity);
+
+          this.logger.log(
+            `Certificate hash committed on-chain for retirement ${retirementId}: ${certificateIpfsHash}`,
+          );
+        } catch (onChainErr) {
+          this.logger.warn(
+            `Failed to commit certificate hash on-chain for retirement ${retirementId}: ` +
+              `${(onChainErr as Error).message}. Hash is in IPFS but not yet on-chain.`,
+          );
+          // Do not rethrow — retirement already succeeded; on-chain commit can
+          // be retried separately via a background job.
+        }
       } catch (certErr) {
         this.logger.warn(
           `Certificate generation failed for retirement ${retirementId}: ` +
@@ -416,6 +466,7 @@ export class RetirementService {
       reason: e.reason,
       retired_at: e.retiredAt,
       tx_hash: e.txHash,
+      certificate_ipfs_hash: e.certificateIpfsHash ?? '',
     };
   }
 
@@ -426,6 +477,30 @@ export class RetirementService {
       this.logger.log(`Verifying certificate: ${certificateId}`);
       const retirement = await this.getRetirement(certificateId);
 
+      // Issue #544: fetch the on-chain certificate_ipfs_hash so callers can
+      // independently verify the certificate PDF by comparing its content hash
+      // to the IPFS CID stored in the contract.
+      let onChainIpfsHash: string | undefined;
+      try {
+        const retval = await this.stellarService.readContract(
+          this.retirementContractId,
+          'get_retirement',
+          [nativeToScVal(Buffer.from(certificateId, 'hex'), { type: 'bytes' })],
+        );
+        if (retval) {
+          const native = scValToNative(retval) as Record<string, unknown>;
+          onChainIpfsHash =
+            typeof native.certificate_ipfs_hash === 'string'
+              ? native.certificate_ipfs_hash
+              : '';
+        }
+      } catch (onChainErr) {
+        this.logger.warn(
+          `Could not fetch on-chain certificate hash for ${certificateId}: ` +
+            `${(onChainErr as Error).message}`,
+        );
+      }
+
       return {
         id: retirement.id,
         credit_id: retirement.credit_id,
@@ -435,6 +510,7 @@ export class RetirementService {
         retired_at: retirement.retired_at,
         tx_hash: retirement.tx_hash || '',
         verified: true,
+        certificate_ipfs_hash: onChainIpfsHash ?? retirement.certificate_ipfs_hash ?? '',
       };
     } catch (error: unknown) {
       this.logger.error(

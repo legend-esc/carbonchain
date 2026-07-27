@@ -43,6 +43,10 @@ pub struct RetirementRecord {
     pub tonnes_retired: i128,
     pub reason: String,
     pub retired_at: u64,
+    /// Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
+    /// Empty string for legacy retirements that pre-date this field.
+    /// Set after retirement via `set_certificate_hash`.
+    pub certificate_ipfs_hash: String,
 }
 
 #[derive(Clone)]

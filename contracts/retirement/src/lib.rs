@@ -63,6 +63,15 @@ pub struct BatchRetired {
     pub total_tonnes: i128,
 }
 
+/// Issue #544 — emitted when the API admin commits a certificate IPFS hash
+/// on-chain after uploading the retirement certificate PDF to IPFS.
+#[contractevent]
+#[derive(Clone)]
+pub struct CertificateHashSet {
+    pub retirement_id: BytesN<32>,
+    pub ipfs_hash: String,
+}
+
 #[contract]
 pub struct Retirement;
 
@@ -195,6 +204,7 @@ impl Retirement {
             tonnes_retired: tonnes,
             reason,
             retired_at: env.ledger().timestamp(),
+            certificate_ipfs_hash: String::from_str(&env, ""),
         };
 
         env.storage()
@@ -312,6 +322,7 @@ impl Retirement {
                 tonnes_retired: tonne_amount,
                 reason: reason.clone(),
                 retired_at: env.ledger().timestamp(),
+                certificate_ipfs_hash: String::from_str(&env, ""),
             };
 
             env.storage()
@@ -456,6 +467,59 @@ impl Retirement {
         env.storage()
             .persistent()
             .get(&DataKey::Retirement(retirement_id))
+    }
+
+    /// Issue #544 — Commit the IPFS hash of the off-chain retirement certificate PDF.
+    ///
+    /// Called by the API admin after the certificate has been generated and
+    /// uploaded to IPFS.  This operation is **idempotent**: calling it multiple
+    /// times with the same or a different hash is allowed so that the API can
+    /// safely retry on transient failures.
+    ///
+    /// # Arguments
+    /// - `admin`         — must be the initialised contract admin.
+    /// - `retirement_id` — the retirement record to update.
+    /// - `ipfs_hash`     — CIDv1 / CIDv0 IPFS content identifier of the certificate.
+    /// - `nonce`         — admin's current nonce (replay protection).
+    ///
+    /// # Errors
+    /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
+    /// - [`RetirementError::Unauthorized`]   — caller is not the admin.
+    /// - [`RetirementError::InvalidNonce`]   — `nonce` does not match the stored value.
+    /// - [`RetirementError::CreditNotActive`] — `retirement_id` does not exist.
+    pub fn set_certificate_hash(
+        env: Env,
+        admin: Address,
+        retirement_id: BytesN<32>,
+        ipfs_hash: String,
+        nonce: u64,
+    ) -> Result<(), RetirementError> {
+        Self::require_admin(&env, &admin)?;
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(RetirementError::InvalidNonce);
+        }
+
+        let key = DataKey::Retirement(retirement_id.clone());
+        let mut record: RetirementRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RetirementError::CreditNotActive)?;
+
+        record.certificate_ipfs_hash = ipfs_hash.clone();
+
+        env.storage().persistent().set(&key, &record);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+
+        CertificateHashSet {
+            retirement_id,
+            ipfs_hash,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     /// Returns all retirement IDs for `account` (unordered, unbounded).
@@ -1051,4 +1115,138 @@ mod tests {
             ret_id1, ret_id2,
             "retirement IDs must be distinct even with same timestamp and reason"
         );
+    }
+
+    // ── Issue #544: set_certificate_hash ─────────────────────────────────────
+
+    #[test]
+    fn test_set_certificate_hash_stores_and_retrieves() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        // First retire the credit to create a retirement record
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "2024 Scope 3 offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        // Verify certificate_ipfs_hash is empty initially
+        let record = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(record.certificate_ipfs_hash, String::from_str(&env, ""));
+
+        // Admin commits the IPFS hash on-chain
+        let admin_nonce = client.get_nonce(&retirement_admin);
+        client.set_certificate_hash(
+            &retirement_admin,
+            &ret_id,
+            &String::from_str(&env, "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354"),
+            &admin_nonce,
+        );
+
+        // Verify the hash is now stored
+        let updated = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(
+            updated.certificate_ipfs_hash,
+            String::from_str(&env, "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354")
+        );
+    }
+
+    #[test]
+    fn test_set_certificate_hash_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        // First call sets the hash
+        let n1 = client.get_nonce(&retirement_admin);
+        client.set_certificate_hash(
+            &retirement_admin,
+            &ret_id,
+            &String::from_str(&env, "bafybei_first"),
+            &n1,
+        );
+
+        // Second call with an updated hash (idempotent — allowed)
+        let n2 = client.get_nonce(&retirement_admin);
+        client.set_certificate_hash(
+            &retirement_admin,
+            &ret_id,
+            &String::from_str(&env, "bafybei_second"),
+            &n2,
+        );
+
+        let updated = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(
+            updated.certificate_ipfs_hash,
+            String::from_str(&env, "bafybei_second")
+        );
+    }
+
+    #[test]
+    fn test_set_certificate_hash_non_existent_retirement_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, _, _, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&retirement_admin);
+        let result = client.try_set_certificate_hash(
+            &retirement_admin,
+            &BytesN::from_array(&env, &[0u8; 32]),
+            &String::from_str(&env, "bafybei_nonexistent"),
+            &nonce,
+        );
+
+        assert_eq!(result, Err(Ok(RetirementError::CreditNotActive)));
+    }
+
+    #[test]
+    fn test_set_certificate_hash_non_admin_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let rando = Address::generate(&env);
+        let rando_nonce = client.get_nonce(&rando);
+        let result = client.try_set_certificate_hash(
+            &rando,
+            &ret_id,
+            &String::from_str(&env, "bafybei_rando"),
+            &rando_nonce,
+        );
+
+        assert!(result.is_err());
     }
