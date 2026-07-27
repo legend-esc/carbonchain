@@ -6,7 +6,11 @@ import { AppModule } from './app.module';
 import { PinoNestLogger } from './common/pino-nest-logger.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    // Disable NestJS built-in logger so all output flows through PinoNestLogger
+    logger: false,
+  });
   app.useLogger(new PinoNestLogger());
 
   // #45 — security headers

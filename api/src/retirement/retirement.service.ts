@@ -299,23 +299,46 @@ export class RetirementService {
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
-    const retirementIds: string[] = rv
-      ? (
-          scValToNative(
-            rv as Parameters<typeof scValToNative>[0],
-          ) as Uint8Array[]
-        ).map((b) => Buffer.from(b).toString('hex'))
-      : [];
+
+    // The contract now returns BatchRetireResult { succeeded: Vec<BytesN<32>>, failed: Vec<{credit_id, error_code}> }
+    let succeededIds: string[] = [];
+    let contractFailed: { id: string; reason: string }[] = [];
+
+    if (rv) {
+      const native = scValToNative(rv as Parameters<typeof scValToNative>[0]) as {
+        succeeded?: Uint8Array[];
+        failed?: Array<{ credit_id: Uint8Array; error_code: number }>;
+      };
+
+      succeededIds = (native.succeeded ?? []).map((b) =>
+        Buffer.from(b).toString('hex'),
+      );
+
+      const ERROR_CODE_MAP: Record<number, string> = {
+        110: 'CreditNotActive',
+        113: 'Unauthorized',
+        117: 'InvalidTonnes',
+        118: 'InvalidInput',
+      };
+
+      contractFailed = (native.failed ?? []).map((f) => ({
+        id: Buffer.from(f.credit_id).toString('hex'),
+        reason: ERROR_CODE_MAP[f.error_code] ?? `Error(${f.error_code})`,
+      }));
+    }
 
     const now = Math.floor(Date.now() / 1000);
 
-    // Build all entities upfront
-    const entities: RetirementEntity[] = retirementIds.map((retirementId, i) => {
+    // Build entities only for successfully retired credits
+    const entities: RetirementEntity[] = succeededIds.map((retirementId, i) => {
+      // Map retirement ID back to original credit ID by index in succeeded list
+      // The contract retires credits in input order, skipping failed ones
+      const creditId = dto.creditIds[i] ?? '';
       const entity = new RetirementEntity();
       entity.id = retirementId;
-      entity.creditId = dto.creditIds[i];
+      entity.creditId = creditId;
       entity.buyer = dto.buyerPublicKey;
-      entity.tonnesRetired = dto.tonnes[i];
+      entity.tonnesRetired = dto.tonnes[i] ?? '0';
       entity.reason = dto.reason;
       entity.retiredAt = now;
       entity.txHash = '';
@@ -335,16 +358,17 @@ export class RetirementService {
       // Callers should reconcile by re-querying on-chain state.
       return {
         succeeded: [],
-        failed: dto.creditIds.map((id, i) => ({
-          id,
-          reason: `DB transaction failed: ${(error as Error).message}`,
-        })),
+        failed: [
+          ...contractFailed,
+          ...dto.creditIds.map((id) => ({
+            id,
+            reason: `DB transaction failed: ${(error as Error).message}`,
+          })),
+        ],
       };
     }
 
     // Emit events only after all records are persisted successfully.
-    // The contract emits a single BatchRetired event on full success,
-    // so we never emit partial CreditRetired events.
     const succeeded: string[] = [];
     for (let i = 0; i < entities.length; i++) {
       const event: CreditRetiredEvent = {
@@ -358,7 +382,11 @@ export class RetirementService {
       succeeded.push(entities[i].id);
     }
 
-    return { succeeded, failed: [] };
+    // Merge contract-reported failures with any additional context
+    return {
+      succeeded,
+      failed: contractFailed,
+    };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {
