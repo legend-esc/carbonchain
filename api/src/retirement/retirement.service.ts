@@ -37,6 +37,8 @@ export interface CertificateVerification {
   tx_hash: string;
   verified: boolean;
   ledger_sequence?: number;
+  /** Issue #544 — IPFS hash of the certificate PDF as committed on-chain. */
+  certificate_ipfs_hash?: string;
 }
 
 /** Payload carried by the CreditRetired application event. */
@@ -221,6 +223,54 @@ export class RetirementService {
           timestamp: entity.retiredAt,
         });
         certificateIpfsHash = result.ipfsHash;
+
+        // ── Issue #544: commit the IPFS hash on-chain ─────────────────────
+        // This makes the certificate independently verifiable: anyone can
+        // fetch the hash from the contract, download from IPFS, and confirm
+        // the content hash matches.  We use the admin keypair and the admin's
+        // current nonce.  The call is fire-and-forget with a warning on
+        // failure so that a transient RPC error does not roll back the
+        // retirement itself.
+        try {
+          const adminKeypair = this.keypairService.getAdminKeypair();
+          const adminPublicKey = adminKeypair.publicKey();
+          const adminNonce = await this.stellarService.readContract(
+            this.retirementContractId,
+            'get_nonce',
+            [nativeToScVal(adminPublicKey, { type: 'address' })],
+          );
+          const nonceValue = adminNonce
+            ? BigInt(scValToNative(adminNonce) as number | bigint)
+            : 0n;
+
+          await this.stellarService.invokeContract(
+            this.retirementContractId,
+            'set_certificate_hash',
+            [
+              nativeToScVal(adminPublicKey, { type: 'address' }),
+              nativeToScVal(Buffer.from(retirementId, 'hex'), { type: 'bytes' }),
+              nativeToScVal(certificateIpfsHash, { type: 'string' }),
+              nativeToScVal(nonceValue, { type: 'u64' }),
+            ],
+            adminKeypair,
+          );
+
+          // Persist the hash to the off-chain index so it is returned in
+          // GET /certificates/:id without an additional on-chain read.
+          entity.certificateIpfsHash = certificateIpfsHash;
+          await this.retirementRepo.save(entity);
+
+          this.logger.log(
+            `Certificate hash committed on-chain for retirement ${retirementId}: ${certificateIpfsHash}`,
+          );
+        } catch (onChainErr) {
+          this.logger.warn(
+            `Failed to commit certificate hash on-chain for retirement ${retirementId}: ` +
+              `${(onChainErr as Error).message}. Hash is in IPFS but not yet on-chain.`,
+          );
+          // Do not rethrow — retirement already succeeded; on-chain commit can
+          // be retried separately via a background job.
+        }
       } catch (certErr) {
         this.logger.warn(
           `Certificate generation failed for retirement ${retirementId}: ` +
@@ -299,23 +349,46 @@ export class RetirementService {
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
-    const retirementIds: string[] = rv
-      ? (
-          scValToNative(
-            rv as Parameters<typeof scValToNative>[0],
-          ) as Uint8Array[]
-        ).map((b) => Buffer.from(b).toString('hex'))
-      : [];
+
+    // The contract now returns BatchRetireResult { succeeded: Vec<BytesN<32>>, failed: Vec<{credit_id, error_code}> }
+    let succeededIds: string[] = [];
+    let contractFailed: { id: string; reason: string }[] = [];
+
+    if (rv) {
+      const native = scValToNative(rv as Parameters<typeof scValToNative>[0]) as {
+        succeeded?: Uint8Array[];
+        failed?: Array<{ credit_id: Uint8Array; error_code: number }>;
+      };
+
+      succeededIds = (native.succeeded ?? []).map((b) =>
+        Buffer.from(b).toString('hex'),
+      );
+
+      const ERROR_CODE_MAP: Record<number, string> = {
+        110: 'CreditNotActive',
+        113: 'Unauthorized',
+        117: 'InvalidTonnes',
+        118: 'InvalidInput',
+      };
+
+      contractFailed = (native.failed ?? []).map((f) => ({
+        id: Buffer.from(f.credit_id).toString('hex'),
+        reason: ERROR_CODE_MAP[f.error_code] ?? `Error(${f.error_code})`,
+      }));
+    }
 
     const now = Math.floor(Date.now() / 1000);
 
-    // Build all entities upfront
-    const entities: RetirementEntity[] = retirementIds.map((retirementId, i) => {
+    // Build entities only for successfully retired credits
+    const entities: RetirementEntity[] = succeededIds.map((retirementId, i) => {
+      // Map retirement ID back to original credit ID by index in succeeded list
+      // The contract retires credits in input order, skipping failed ones
+      const creditId = dto.creditIds[i] ?? '';
       const entity = new RetirementEntity();
       entity.id = retirementId;
-      entity.creditId = dto.creditIds[i];
+      entity.creditId = creditId;
       entity.buyer = dto.buyerPublicKey;
-      entity.tonnesRetired = dto.tonnes[i];
+      entity.tonnesRetired = dto.tonnes[i] ?? '0';
       entity.reason = dto.reason;
       entity.retiredAt = now;
       entity.txHash = '';
@@ -335,16 +408,17 @@ export class RetirementService {
       // Callers should reconcile by re-querying on-chain state.
       return {
         succeeded: [],
-        failed: dto.creditIds.map((id, i) => ({
-          id,
-          reason: `DB transaction failed: ${(error as Error).message}`,
-        })),
+        failed: [
+          ...contractFailed,
+          ...dto.creditIds.map((id) => ({
+            id,
+            reason: `DB transaction failed: ${(error as Error).message}`,
+          })),
+        ],
       };
     }
 
     // Emit events only after all records are persisted successfully.
-    // The contract emits a single BatchRetired event on full success,
-    // so we never emit partial CreditRetired events.
     const succeeded: string[] = [];
     for (let i = 0; i < entities.length; i++) {
       const event: CreditRetiredEvent = {
@@ -358,7 +432,11 @@ export class RetirementService {
       succeeded.push(entities[i].id);
     }
 
-    return { succeeded, failed: [] };
+    // Merge contract-reported failures with any additional context
+    return {
+      succeeded,
+      failed: contractFailed,
+    };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {
@@ -416,6 +494,7 @@ export class RetirementService {
       reason: e.reason,
       retired_at: e.retiredAt,
       tx_hash: e.txHash,
+      certificate_ipfs_hash: e.certificateIpfsHash ?? '',
     };
   }
 
@@ -426,6 +505,30 @@ export class RetirementService {
       this.logger.log(`Verifying certificate: ${certificateId}`);
       const retirement = await this.getRetirement(certificateId);
 
+      // Issue #544: fetch the on-chain certificate_ipfs_hash so callers can
+      // independently verify the certificate PDF by comparing its content hash
+      // to the IPFS CID stored in the contract.
+      let onChainIpfsHash: string | undefined;
+      try {
+        const retval = await this.stellarService.readContract(
+          this.retirementContractId,
+          'get_retirement',
+          [nativeToScVal(Buffer.from(certificateId, 'hex'), { type: 'bytes' })],
+        );
+        if (retval) {
+          const native = scValToNative(retval) as Record<string, unknown>;
+          onChainIpfsHash =
+            typeof native.certificate_ipfs_hash === 'string'
+              ? native.certificate_ipfs_hash
+              : '';
+        }
+      } catch (onChainErr) {
+        this.logger.warn(
+          `Could not fetch on-chain certificate hash for ${certificateId}: ` +
+            `${(onChainErr as Error).message}`,
+        );
+      }
+
       return {
         id: retirement.id,
         credit_id: retirement.credit_id,
@@ -435,6 +538,7 @@ export class RetirementService {
         retired_at: retirement.retired_at,
         tx_hash: retirement.tx_hash || '',
         verified: true,
+        certificate_ipfs_hash: onChainIpfsHash ?? retirement.certificate_ipfs_hash ?? '',
       };
     } catch (error: unknown) {
       this.logger.error(

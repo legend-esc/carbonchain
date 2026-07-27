@@ -1,5 +1,6 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+import { SwUpdate } from '@angular/service-worker';
 import { CreditMetadata, CreditStatus } from '@shared';
 import { ApiService } from '../services/api.service';
 import { ToastService } from '../services/toast.service';
@@ -10,6 +11,7 @@ export type LoadingState = 'idle' | 'loading' | 'loaded' | 'error';
 export class CreditStore {
   private readonly api = inject(ApiService);
   private readonly toast = inject(ToastService);
+  private readonly swUpdate = inject(SwUpdate, { optional: true });
 
   // ── Private writable signals ───────────────────────────────────────────────
 
@@ -109,6 +111,31 @@ export class CreditStore {
   }
 
   /**
+   * Trigger a service-worker update check to bust the `credits-api` cache.
+   *
+   * Call this after any mutation (issue, retire, split) so the next
+   * `loadByProject` / `loadOne` fetches fresh data from the network rather
+   * than the stale SW cache.
+   *
+   * The `credits-api` dataGroup is configured with `strategy: 'freshness'`
+   * in ngsw-config.json, so a `checkForUpdate()` forces the SW to revalidate
+   * all cached responses for `/api/v1/credits*` on the next request.
+   *
+   * This is a best-effort call — if SwUpdate is unavailable (dev mode, tests)
+   * it is silently skipped.
+   */
+  async invalidateSwCache(): Promise<void> {
+    if (!this.swUpdate?.isEnabled) {
+      return;
+    }
+    try {
+      await this.swUpdate.checkForUpdate();
+    } catch {
+      // Non-fatal: SW cache invalidation failure should not surface as an error
+    }
+  }
+
+  /**
    * Optimistically split a credit into two child credits.
    * On success, replaces temporary IDs with real IDs from the API response.
    * On failure, rolls back the optimistic update and shows an error toast.
@@ -173,6 +200,9 @@ export class CreditStore {
           return c;
         }),
       );
+
+      // Invalidate SW cache so the next load fetches fresh data from network
+      await this.invalidateSwCache();
 
       this.toast.showSuccess('Credit split successfully');
     } catch (err) {

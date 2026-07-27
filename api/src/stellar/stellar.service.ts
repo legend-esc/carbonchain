@@ -1,5 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Account,
@@ -15,6 +14,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RequestContextStore } from '../common/request-context';
+import { MetricsService } from '../metrics/metrics.service';
 
 /**
  * Default fee-buffer multiplier applied on top of the simulated minResourceFee.
@@ -58,6 +58,7 @@ export class StellarService implements OnModuleInit {
   constructor(
     private configService: ConfigService,
     private seqNoManager: SequenceNumberManager,
+    @Optional() private readonly metricsService?: MetricsService,
   ) {
     const rawMultiplier = configService.get<string>('FEE_BUFFER_MULTIPLIER');
     const parsed =
@@ -209,47 +210,89 @@ export class StellarService implements OnModuleInit {
         `Full XDR for method=${method}: ${preparedTx.toEnvelope().toXDR('base64')}`,
       );
 
-      try {
-        const response = await this.submitTransactionWithRetry(() =>
-          this.sorobanRpcServer.sendTransaction(preparedTx),
-        );
+      // Issue #546 — insufficient-fee retry loop.
+      // If the submission is rejected for tx_insufficient_fee, rebuild with
+      // 2× the fee and resubmit.  We allow up to 3 fee-bump retries before
+      // giving up.  Each attempt logs the fee paid so operators can diagnose
+      // sustained fee pressure.
+      const MAX_FEE_BUMP_RETRIES = 3;
+      let currentFee = parseInt(fee, 10);
+      let currentTx = preparedTx;
 
-        if ((response.status as string) === 'PENDING') {
-          const result = await this.pollTransactionStatus(response.hash);
-          this.invalidateAccountInfoCache(pk);
-          return result;
-        }
-        throw new Error(`Transaction failed with status: ${response.status}`);
-      } catch (error: unknown) {
-        const isBadSeq =
-          (error as Error).message?.toLowerCase().includes('tx_bad_seq') ||
-          (
-            error as {
-              response?: {
-                data?: { extras?: { result_codes?: { transaction?: string } } };
-              };
-            }
-          )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
+      for (let feeAttempt = 0; feeAttempt <= MAX_FEE_BUMP_RETRIES; feeAttempt++) {
+        try {
+          const response = await this.submitTransactionWithRetry(() =>
+            this.sorobanRpcServer.sendTransaction(currentTx),
+          );
 
-        if (isBadSeq && retries > 0) {
-          this.logger.warn(
-            `tx_bad_seq for ${pk} (sig:${method}), waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
-          );
-          this.seqNoManager.reset(pk);
-          // Issue #473: mandatory delay before re-fetching to allow Horizon to catch up.
-          await new Promise((resolve) =>
-            setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
-          );
-          return this.invokeContract(
-            contractId,
-            method,
-            args,
-            signerKeypair,
-            retries - 1,
-          );
+          if ((response.status as string) === 'PENDING') {
+            const result = await this.pollTransactionStatus(response.hash);
+            this.invalidateAccountInfoCache(pk);
+
+            // Issue #546 — record the actual fee paid in the histogram.
+            this.metricsService?.contractCallFeeStroops
+              ?.labels({ contract: contractId, method })
+              .observe(currentFee);
+            this.logger.log(
+              `[issue#546] Contract call fee paid: method=${method} fee_stroops=${currentFee}`,
+            );
+
+            return result;
+          }
+          throw new Error(`Transaction failed with status: ${response.status}`);
+        } catch (error: unknown) {
+          const errMsg = (error as Error).message?.toLowerCase() ?? '';
+
+          // Detect insufficient-fee rejection
+          const isInsufficientFee =
+            errMsg.includes('tx_insufficient_fee') ||
+            errMsg.includes('insufficient fee') ||
+            (error as { response?: { data?: { extras?: { result_codes?: { transaction?: string } } } } })
+              ?.response?.data?.extras?.result_codes?.transaction === 'tx_insufficient_fee';
+
+          if (isInsufficientFee && feeAttempt < MAX_FEE_BUMP_RETRIES) {
+            currentFee = currentFee * 2;
+            this.logger.warn(
+              `[issue#546] tx_insufficient_fee for method=${method} (attempt ${feeAttempt + 1}/${MAX_FEE_BUMP_RETRIES}), bumping fee to ${currentFee} stroops`,
+            );
+
+            // Rebuild the transaction with the bumped fee against the same
+            // account sequence number (already incremented — reuse).
+            const rebuiltBuilder = rpc.assembleTransaction(tx, simulation);
+            currentTx = rebuiltBuilder.setBaseFee(String(currentFee)).build();
+            currentTx.sign(signerKeypair);
+            continue;
+          }
+
+          // Not an insufficient-fee error, or retries exhausted — fall through
+          // to the existing bad-seq retry logic.
+          const isBadSeq =
+            errMsg.includes('tx_bad_seq') ||
+            (error as { response?: { data?: { extras?: { result_codes?: { transaction?: string } } } } })
+              ?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
+
+          if (isBadSeq && retries > 0) {
+            this.logger.warn(
+              `tx_bad_seq for ${pk} (sig:${method}), waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
+            );
+            this.seqNoManager.reset(pk);
+            await new Promise((resolve) =>
+              setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
+            );
+            return this.invokeContract(
+              contractId,
+              method,
+              args,
+              signerKeypair,
+              retries - 1,
+            );
+          }
+          throw error;
         }
-        throw error;
       }
+
+      // Should be unreachable — the loop either returns or throws.
+      throw new Error(`Max fee bump retries (${MAX_FEE_BUMP_RETRIES}) exceeded for method=${method}`);
     } else {
       throw new Error(`Simulation failed: ${JSON.stringify(simulation)}`);
     }

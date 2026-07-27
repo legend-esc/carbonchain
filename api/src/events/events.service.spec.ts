@@ -40,6 +40,7 @@ describe('EventsService', () => {
             set: jest.fn().mockResolvedValue(undefined),
             del: jest.fn().mockResolvedValue(undefined),
             delPattern: jest.fn().mockResolvedValue(undefined),
+            invalidateTag: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
