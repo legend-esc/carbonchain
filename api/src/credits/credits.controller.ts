@@ -12,8 +12,10 @@ import {
   Request,
   UsePipes,
   ValidationPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
 import { ETagCacheInterceptor } from './etag-cache.interceptor';
 import { IssueCreditDto } from './dto/issue-credit.dto';
@@ -25,7 +27,7 @@ import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { MergeCreditsDto } from './dto/merge-credits.dto';
 import { CreditMetadata, CreditStatus } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { PageResult } from './credit.repository';
+import { PageResult, CursorPageResult } from './credit.repository';
 import { BulkCreditsDto } from './dto/bulk-credits.dto';
 
 @ApiTags('credits')
@@ -54,6 +56,19 @@ export class CreditsController {
 
   @ApiOperation({ summary: 'List credits with optional filters' })
   @ApiResponse({ status: 200, description: 'Paginated list of credits' })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Cursor token from a previous response next_cursor field. ' +
+      'When provided, cursor-based pagination is used (O(1) at any depth). ' +
+      'When omitted, offset-based pagination is used (deprecated for deep pages).',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Page number for offset pagination (deprecated — prefer cursor).',
+  })
   @Get()
   async listCredits(
     @Query('methodology') methodology?: string,
@@ -62,14 +77,41 @@ export class CreditsController {
     @Query('status') status?: string,
     @Query('min_tonnes') minTonnes?: string,
     @Query('max_tonnes') maxTonnes?: string,
+    @Query('cursor') cursor?: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-  ): Promise<{
-    data: CreditMetadata[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
+    @Query('limit') limit: string = '20',
+  ): Promise<
+    | {
+        data: CreditMetadata[];
+        total: number;
+        page: number;
+        limit: number;
+      }
+    | {
+        data: CreditMetadata[];
+        next_cursor: string | null;
+        limit: number;
+        /** Signals to callers that offset pagination is deprecated. */
+        pagination_mode: 'cursor';
+      }
+  > {
+    const parsedLimit = parseInt(limit, 10);
+
+    // Cursor-based path (preferred — O(1) at any depth)
+    if (cursor !== undefined) {
+      return this.creditsService.listCreditsCursor({
+        methodology,
+        geography,
+        vintageYear: vintageYear ? parseInt(vintageYear, 10) : undefined,
+        status,
+        minTonnes,
+        maxTonnes,
+        cursor,
+        limit: parsedLimit,
+      });
+    }
+
+    // Offset-based path (deprecated — emits warning header via service layer)
     return this.creditsService.listCredits({
       methodology,
       geography,
@@ -78,7 +120,7 @@ export class CreditsController {
       minTonnes,
       maxTonnes,
       page: parseInt(page, 10),
-      limit: parseInt(limit, 10),
+      limit: parsedLimit,
     });
   }
 

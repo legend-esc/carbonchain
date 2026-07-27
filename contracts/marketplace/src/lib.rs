@@ -41,12 +41,42 @@ struct CreditMetadata {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/// Represents the payment asset for a marketplace offer.
+///
+/// - `Native` — XLM (Stellar's native asset). No contract address needed.
+/// - `Asset(Address)` — Any Stellar Asset Contract (SAC) token, e.g. USDC, EURC,
+///   or a custom token. The `Address` is the deployed SAC contract address.
+///
+/// Backward compatibility: existing offers that were created before this change
+/// use the `price_xlm` field and are treated as `AssetType::Native` by the
+/// `accept_offer` function. New offers set `price_asset` to declare their asset.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub enum AssetType {
+    /// XLM native asset — no SAC contract required.
+    Native,
+    /// Any Stellar Asset Contract token (USDC, EURC, custom).
+    Asset(Address),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct Offer {
     pub seller: Address,
     pub credit_id: BytesN<32>,
-    pub price_xlm: i128, // in stroops
+    /// Price in stroops (XLM) — kept for backward compatibility with existing
+    /// on-chain offers. New offers should use `price_amount` + `price_asset`.
+    ///
+    /// When `price_asset` is `AssetType::Native` this field is the authoritative
+    /// price. When `price_asset` is `AssetType::Asset(_)` this field is `0` and
+    /// `price_amount` holds the token amount.
+    pub price_xlm: i128,
+    /// Price in the asset's base unit (stroops for XLM, or token decimals for SAC).
+    /// This is the canonical price field for new multi-asset offers.
+    pub price_amount: i128,
+    /// The payment asset. Defaults to `AssetType::Native` (XLM) for offers that
+    /// only set `price_xlm` (backward compatibility).
+    pub price_asset: AssetType,
     /// Carbon volume available in scaled units. 1 tonne = 1_000_000 units.
     pub tonnes: i128,
     pub active: bool,
@@ -86,7 +116,7 @@ pub enum MarketplaceError {
     OfferExpired = 123,
     Overflow = 124,
     AlreadyInitialized = 126,
-    /// Buyer does not hold enough XLM to cover the offer price.
+    /// Buyer does not hold enough of the payment asset to cover the offer price.
     InsufficientFunds = 127,
     /// Escrow transfer succeeded but the offer record failed to persist;
     /// the credit was returned to the seller to avoid a stuck escrow.
@@ -199,10 +229,12 @@ impl Marketplace {
 
     // ── Offers ───────────────────────────────────────────────────────────────
 
-    /// List a credit for sale. Returns the new offer ID.
+    /// List a credit for sale with XLM pricing. Returns the new offer ID.
     ///
-    /// Verifies that the credit exists and is [`CreditStatus::Active`] in the registry
-    /// before creating the offer. `price_xlm` and `tonnes` must both be positive.
+    /// This is the original XLM-only entry point, kept for backward compatibility.
+    /// For multi-asset pricing (USDC, custom SAC tokens) use [`create_offer_with_asset`].
+    ///
+    /// Verifies that the credit exists and is [`CreditStatus::Active`] in the registry.
     ///
     /// # Errors
     /// - [`MarketplaceError::ContractPaused`] — contract is paused.
@@ -220,6 +252,67 @@ impl Marketplace {
         expires_at: Option<u64>,
         nonce: u64,
     ) -> Result<u64, MarketplaceError> {
+        Self::create_offer_internal(
+            env,
+            seller,
+            credit_id,
+            price_xlm,
+            AssetType::Native,
+            tonnes,
+            registry_id,
+            expires_at,
+            nonce,
+        )
+    }
+
+    /// List a credit for sale with any Stellar asset (XLM, USDC, custom SAC tokens).
+    ///
+    /// `price_amount` is denominated in the base unit of `price_asset`:
+    /// - `AssetType::Native` — stroops (same as `create_offer`).
+    /// - `AssetType::Asset(address)` — token's smallest unit (e.g. 1 USDC = 10_000_000
+    ///   if the token uses 7 decimal places).
+    ///
+    /// The buyer must hold enough of the specified asset before calling [`buy_offer`].
+    ///
+    /// # Errors
+    /// Same as [`create_offer`].
+    pub fn create_offer_with_asset(
+        env: Env,
+        seller: Address,
+        credit_id: BytesN<32>,
+        price_amount: i128,
+        price_asset: AssetType,
+        tonnes: i128,
+        registry_id: Address,
+        expires_at: Option<u64>,
+        nonce: u64,
+    ) -> Result<u64, MarketplaceError> {
+        Self::create_offer_internal(
+            env,
+            seller,
+            credit_id,
+            price_amount,
+            price_asset,
+            tonnes,
+            registry_id,
+            expires_at,
+            nonce,
+        )
+    }
+
+    /// Internal shared implementation for both `create_offer` variants.
+    #[allow(clippy::too_many_arguments)]
+    fn create_offer_internal(
+        env: Env,
+        seller: Address,
+        credit_id: BytesN<32>,
+        price_amount: i128,
+        price_asset: AssetType,
+        tonnes: i128,
+        registry_id: Address,
+        expires_at: Option<u64>,
+        nonce: u64,
+    ) -> Result<u64, MarketplaceError> {
         if Self::is_paused(&env) {
             return Err(MarketplaceError::ContractPaused);
         }
@@ -227,7 +320,7 @@ impl Marketplace {
         if !Self::consume_nonce(&env, &seller, nonce) {
             return Err(MarketplaceError::InvalidNonce);
         }
-        if price_xlm <= 0 {
+        if price_amount <= 0 {
             return Err(MarketplaceError::InvalidPrice);
         }
         if tonnes <= 0 || tonnes % 100_000 != 0 {
@@ -239,7 +332,7 @@ impl Marketplace {
             .instance()
             .get(&DataKey::MinPrice)
             .unwrap_or(0);
-        if price_xlm < min_price {
+        if price_amount < min_price {
             return Err(MarketplaceError::InvalidPrice);
         }
 
@@ -277,11 +370,19 @@ impl Marketplace {
                 .into_val(&env),
         );
 
+        // Derive price_xlm for backward compatibility: set only for Native asset
+        let price_xlm = match price_asset {
+            AssetType::Native => price_amount,
+            AssetType::Asset(_) => 0,
+        };
+
         let offer_id = Self::next_id(&env)?;
         let offer = Offer {
             seller: seller.clone(),
             credit_id,
             price_xlm,
+            price_amount,
+            price_asset,
             tonnes,
             active: true,
             created_at: env.ledger().timestamp(),
@@ -298,7 +399,7 @@ impl Marketplace {
         // Store escrowed amount for refund on cancellation
         env.storage()
             .persistent()
-            .set(&DataKey::EscrowedAmount(offer_id), &price_xlm);
+            .set(&DataKey::EscrowedAmount(offer_id), &price_amount);
         env.storage().persistent().extend_ttl(
             &DataKey::EscrowedAmount(offer_id),
             TTL_THRESHOLD,
@@ -332,10 +433,7 @@ impl Marketplace {
             .persistent()
             .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
 
-        // Atomic-escrow guard: confirm the offer actually persisted after the
-        // cross-contract transfer_credit call. If the storage write did not
-        // take effect, return the credit to the seller instead of leaving it
-        // stuck in escrow with no corresponding offer.
+        // Atomic-escrow guard
         let stored: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(offer_id));
         if stored.is_none() {
             let seller_nonce: u64 = env.invoke_contract(
@@ -587,6 +685,9 @@ impl Marketplace {
 
     /// Update the price of an existing active offer. Only the original seller may reprice.
     ///
+    /// For XLM (Native) offers, `new_price_amount` is in stroops.
+    /// For SAC-token offers, `new_price_amount` is in the token's base unit.
+    ///
     /// # Errors
     /// - [`MarketplaceError::ContractPaused`] — contract is paused.
     /// - [`MarketplaceError::InvalidNonce`] — nonce mismatch.
@@ -622,7 +723,6 @@ impl Marketplace {
         }
         if let Some(expires_at) = offer.expires_at {
             if env.ledger().timestamp() > expires_at {
-                // State changes before Err are rolled back; just return the error.
                 return Err(MarketplaceError::OfferExpired);
             }
         }
@@ -637,7 +737,11 @@ impl Marketplace {
         if new_price_xlm < min_price {
             return Err(MarketplaceError::InvalidPrice);
         }
-        offer.price_xlm = new_price_xlm;
+        // Update both price fields for consistency across old and new callers
+        offer.price_amount = new_price_xlm;
+        if matches!(offer.price_asset, AssetType::Native) {
+            offer.price_xlm = new_price_xlm;
+        }
         env.storage()
             .persistent()
             .set(&DataKey::Offer(offer_id), &offer);
@@ -655,11 +759,19 @@ impl Marketplace {
 
     /// Purchase an active offer.
     ///
+    /// Payment is transferred in the asset declared on the offer (`price_asset`):
+    /// - `AssetType::Native` — XLM via the native token contract (`token_id`).
+    /// - `AssetType::Asset(sac_address)` — the SAC token contract handles the transfer.
+    ///
+    /// The `token_id` parameter is used **only** for `AssetType::Native` offers (backward
+    /// compatibility). For SAC-token offers the asset contract address is read directly from
+    /// the offer's `price_asset` field, so the caller may pass any address for `token_id`.
+    ///
     /// Execution order (all-or-nothing, Soroban atomicity):
     /// 1. Validate offer exists, is active, and not expired.
-    /// 2. Pre-check buyer XLM balance ≥ `price_xlm` (returns `InsufficientFunds` early).
-    /// 3. Overflow-safe cast of `price_xlm` (i128) to i128 — already i128, guarded against negative.
-    /// 4. **Token transfer first** — transfer `price_xlm` XLM stroops from buyer → seller.
+    /// 2. Determine payment asset and amount from offer fields.
+    /// 3. Pre-check buyer balance ≥ `price_amount` (returns `InsufficientFunds` early).
+    /// 4. **Token transfer first** — transfer `price_amount` from buyer → seller.
     /// 5. **Credit transfer second** — transfer escrowed credit from marketplace → buyer.
     /// 6. Mark offer inactive, remove from active index.
     ///
@@ -669,8 +781,8 @@ impl Marketplace {
     /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
     /// - [`MarketplaceError::AlreadyClosed`] — offer has already been cancelled/filled.
     /// - [`MarketplaceError::OfferExpired`] — offer has expired.
-    /// - [`MarketplaceError::InsufficientFunds`] — buyer XLM balance is less than `price_xlm`.
-    /// - [`MarketplaceError::Overflow`] — price overflows i128 (should never happen in practice).
+    /// - [`MarketplaceError::InsufficientFunds`] — buyer balance is less than `price_amount`.
+    /// - [`MarketplaceError::Overflow`] — price is zero or negative (corrupt state).
     pub fn buy_offer(
         env: Env,
         buyer: Address,
@@ -703,20 +815,26 @@ impl Marketplace {
             }
         }
 
-        // Overflow guard: price_xlm is stored as i128; it must be positive (validated on
-        // create_offer) and must not be i128::MIN (nonsensical).  Negative values indicate
-        // corrupt state — treat as overflow.
-        let price: i128 = offer.price_xlm;
+        // Resolve the payment asset contract address and amount.
+        // For backward-compat Native offers, fall back to price_xlm if price_amount is 0.
+        let price: i128 = if offer.price_amount > 0 {
+            offer.price_amount
+        } else {
+            offer.price_xlm
+        };
         if price <= 0 {
             return Err(MarketplaceError::Overflow);
         }
 
-        // ── Pre-check: verify buyer holds enough XLM before touching any state ──────
-        //
-        // Call the native token contract's `balance` function.  This is a read-only call
-        // so it does not modify state; if it panics the whole transaction reverts cleanly.
+        // Resolve which contract to call for balance/transfer.
+        let payment_contract: Address = match &offer.price_asset {
+            AssetType::Native => token_id.clone(),
+            AssetType::Asset(sac) => sac.clone(),
+        };
+
+        // ── Pre-check: verify buyer holds enough of the payment asset ─────────────
         let buyer_balance: i128 = env.invoke_contract(
-            &token_id,
+            &payment_contract,
             &Symbol::new(&env, "balance"),
             (buyer.clone(),).into_val(&env),
         );
@@ -727,18 +845,13 @@ impl Marketplace {
         let escrow_account: Address = env.current_contract_address();
 
         // ── Step 1 (token transfer FIRST) ─────────────────────────────────────────
-        //
-        // Transfer XLM from buyer to seller.  If this fails (e.g. actual balance changed
-        // since the pre-check), Soroban's atomicity ensures no credit transfer occurs.
         let _: () = env.invoke_contract(
-            &token_id,
+            &payment_contract,
             &Symbol::new(&env, "transfer"),
             (buyer.clone(), offer.seller.clone(), price).into_val(&env),
         );
 
         // ── Step 2 (credit transfer SECOND) ──────────────────────────────────────
-        //
-        // Now that payment has been confirmed, transfer the escrowed credit to the buyer.
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
             &Symbol::new(&env, "get_nonce"),

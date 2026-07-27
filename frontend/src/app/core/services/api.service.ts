@@ -133,6 +133,20 @@ export class ApiService {
     return this.http.get<Offer[]>(`${this.baseUrl}/marketplace/listings`);
   }
 
+  /**
+   * GET /marketplace/listings — cursor-based pagination.
+   * Pass `cursor` from a previous response's `next_cursor` to get the next page.
+   * When `cursor` is omitted the first page is returned.
+   */
+  getListingsCursor(
+    params: Record<string, string>,
+  ): Observable<{ data: Offer[]; next_cursor: string | null; limit: number }> {
+    return this.http.get<{ data: Offer[]; next_cursor: string | null; limit: number }>(
+      `${this.baseUrl}/credits`,
+      { params },
+    );
+  }
+
   /** GET /marketplace/offer/:id */
   getOffer(id: number): Observable<Offer> {
     return this.http.get<Offer>(`${this.baseUrl}/marketplace/offer/${id}`);

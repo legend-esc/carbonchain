@@ -36,7 +36,9 @@ services:
       retries: 5
       start_period: 10s
 
-  # ── Redis ──────────────────────────────────────────────────────────────────
+  # ── Redis Master ───────────────────────────────────────────────────────────
+  # Primary Redis node. Sentinels monitor this instance and promote a replica
+  # automatically if the master becomes unreachable.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -52,6 +54,122 @@ services:
       retries: 5
       start_period: 5s
 
+  # ── Redis Replica 1 ────────────────────────────────────────────────────────
+  redis-replica-1:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --replicaof redis 6379 --loglevel warning
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis Replica 2 ────────────────────────────────────────────────────────
+  redis-replica-2:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --replicaof redis 6379 --loglevel warning
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis Sentinel 1 ───────────────────────────────────────────────────────
+  # Three sentinel instances provide a quorum of 2 — the minimum required to
+  # agree on a failover before promoting a new master.
+  redis-sentinel-1:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
+        echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
+        echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26379:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Redis Sentinel 2 ───────────────────────────────────────────────────────
+  redis-sentinel-2:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
+        echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
+        echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26380:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Redis Sentinel 3 ───────────────────────────────────────────────────────
+  redis-sentinel-3:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
+        echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
+        echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26381:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   # ── NestJS API ─────────────────────────────────────────────────────────────
   api:
     build:
@@ -62,7 +180,12 @@ services:
       - ./api/.env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/carbonchain
+      # Sentinel-aware connection string. The API's CacheService reads this and
+      # uses ioredis Sentinel mode when REDIS_SENTINEL_HOSTS is set.
+      # Format: sentinel://<sentinel-host>:<port>,<sentinel-host>:<port>,.../<master-name>
       REDIS_URL: redis://redis:6379
+      REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_NAME: mymaster
       PORT: 3000
     ports:
       - "3000:3000"
@@ -70,6 +193,12 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]

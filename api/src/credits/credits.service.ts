@@ -32,6 +32,18 @@ interface ListCreditsFilter {
   limit: number;
 }
 
+interface ListCreditsCursorFilter {
+  methodology?: string;
+  geography?: string;
+  vintageYear?: number;
+  status?: string;
+  minTonnes?: string;
+  maxTonnes?: string;
+  /** Opaque cursor from a previous response's next_cursor. */
+  cursor: string | undefined;
+  limit: number;
+}
+
 @Injectable()
 export class CreditsService {
   private readonly logger = new Logger(CreditsService.name);
@@ -252,6 +264,71 @@ export class CreditsService {
     };
     await this.cache.set(cacheKey, result, CREDIT_TTL);
     return result;
+  }
+
+  /**
+   * Cursor-based listing of credits — O(1) at any page depth.
+   *
+   * Orders by (issued_at ASC, id ASC) and uses an opaque base64url cursor to
+   * seek past already-seen records rather than using OFFSET.
+   *
+   * Backward compatibility: if no cursor is provided the first page is
+   * returned and a `Deprecation` warning is logged so callers know to adopt
+   * the cursor pattern.
+   */
+  async listCreditsCursor(filter: ListCreditsCursorFilter): Promise<{
+    data: CreditMetadata[];
+    next_cursor: string | null;
+    limit: number;
+    pagination_mode: 'cursor';
+  }> {
+    if (!filter.status) {
+      filter.status = CreditStatus.Active;
+    }
+
+    if (!filter.cursor) {
+      this.logger.warn(
+        'listCreditsCursor called without cursor — returning first page. ' +
+          'Offset pagination via ?page= is deprecated; use ?cursor= instead.',
+      );
+    }
+
+    const repoFilter: import('./credit.repository').CreditFilter = {
+      status: filter.status as CreditStatus | undefined,
+      methodology: filter.methodology,
+      geography: filter.geography,
+      vintageYear: filter.vintageYear,
+    };
+
+    let repoResult: import('./credit.repository').CursorPageResult<CreditEntity>;
+    try {
+      repoResult = await (
+        this.creditRepo as import('./credit.repository').ICreditRepository
+      ).findByFilterCursor(repoFilter, filter.cursor, filter.limit);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch credits (cursor) from repo: ${(err as Error).message}`,
+      );
+      repoResult = { data: [], next_cursor: null, limit: filter.limit };
+    }
+
+    let data = repoResult.data.map((e) => this.entityToMetadata(e));
+
+    if (filter.minTonnes) {
+      const minVal = BigInt(filter.minTonnes);
+      data = data.filter((c) => BigInt(c.tonnes) >= minVal);
+    }
+    if (filter.maxTonnes) {
+      const maxVal = BigInt(filter.maxTonnes);
+      data = data.filter((c) => BigInt(c.tonnes) <= maxVal);
+    }
+
+    return {
+      data,
+      next_cursor: repoResult.next_cursor,
+      limit: repoResult.limit,
+      pagination_mode: 'cursor',
+    };
   }
 
   /**

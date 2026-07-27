@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, inject, signal, computed, OnInit, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -113,8 +113,8 @@ interface FilterState {
           </div>
         </section>
 
-        <!-- Loading skeleton -->
-        @if (isLoading()) {
+        <!-- Loading skeleton (initial load) -->
+        @if (isLoading() && visibleOffers().length === 0) {
           <div class="skeleton-wrapper" aria-busy="true" aria-label="Loading listings">
             @for (i of skeletonRows; track i) {
               <div class="skeleton-row">
@@ -131,12 +131,8 @@ interface FilterState {
           </div>
         } @else if (error()) {
           <p class="error" role="alert">{{ error() }}</p>
-        } @else if (pagedOffers().length === 0) {
-          <p class="status">
-            {{ filteredOffers().length === 0 && allOffers().length > 0
-               ? 'No listings match your filters.'
-               : 'No active listings.' }}
-          </p>
+        } @else if (visibleOffers().length === 0) {
+          <p class="status">No active listings.</p>
         } @else {
           <table class="offer-table" aria-label="Marketplace listings">
             <thead>
@@ -146,20 +142,37 @@ interface FilterState {
                 <th scope="col">Vintage</th>
                 <th scope="col">Methodology</th>
                 <th scope="col">Tonnes</th>
-                <th scope="col">Price (XLM)</th>
+                <th scope="col">Price</th>
+                <th scope="col">Asset</th>
                 <th scope="col">Status</th>
-                <th scope="col">Action</th>
+                <th scope="col">
+                  Action
+                  <label class="asset-picker-inline" for="global-asset-picker">
+                    <select
+                      id="global-asset-picker"
+                      aria-label="Select payment asset"
+                      (change)="onAssetChange($event)"
+                    >
+                      @for (a of paymentAssets; track a.label) {
+                        <option [value]="a.label">{{ a.label }}</option>
+                      }
+                    </select>
+                  </label>
+                </th>
               </tr>
             </thead>
             <tbody>
-              @for (offer of pagedOffers(); track offer.id) {
+              @for (offer of visibleOffers(); track offer.id) {
                 <tr class="offer-row">
                   <td class="mono">{{ offer.credit_id | slice: 0 : 12 }}…</td>
                   <td>{{ offer.credit_id | slice: 0 : 8 }}</td>
                   <td>—</td>
                   <td>{{ offer.methodology ?? '—' }}</td>
                   <td>{{ formatTonnes(offer.tonnes_available) }}</td>
-                  <td>{{ formatXlm(offer.price_xlm) }}</td>
+                  <td>{{ formatPrice(offer) }}</td>
+                  <td>
+                    <span class="badge badge-asset">{{ offer.price_asset_label ?? 'XLM' }}</span>
+                  </td>
                   <td>
                     <span class="badge" [class]="'badge-' + offer.status">{{ offer.status }}</span>
                   </td>
@@ -180,31 +193,29 @@ interface FilterState {
             </tbody>
           </table>
 
-          <!-- Pagination -->
-          <nav class="pagination" aria-label="Listings pagination">
-            <button
-              class="btn btn-outline"
-              type="button"
-              (click)="prevPage()"
-              [disabled]="currentPage() === 0"
-              aria-label="Previous page"
-            >
-              ← Prev
-            </button>
-            <span class="page-info" aria-live="polite">
-              Page {{ currentPage() + 1 }} of {{ totalPages() }}
-              · {{ filteredOffers().length }} listing{{ filteredOffers().length === 1 ? '' : 's' }}
-            </span>
-            <button
-              class="btn btn-outline"
-              type="button"
-              (click)="nextPage()"
-              [disabled]="currentPage() >= totalPages() - 1"
-              aria-label="Next page"
-            >
-              Next →
-            </button>
-          </nav>
+          <!-- Infinite scroll sentinel + Load More button -->
+          <div class="load-more-area" aria-live="polite">
+            @if (isLoadingMore()) {
+              <div class="spinner" role="status" aria-label="Loading more listings">
+                <span class="spinner-dot"></span>
+                <span class="spinner-dot"></span>
+                <span class="spinner-dot"></span>
+              </div>
+            } @else if (hasMore()) {
+              <button
+                class="btn btn-outline load-more-btn"
+                type="button"
+                (click)="loadMore()"
+                aria-label="Load more listings"
+              >
+                Load More ({{ visibleOffers().length }} loaded)
+              </button>
+            } @else {
+              <p class="end-of-list">
+                All {{ visibleOffers().length }} listing{{ visibleOffers().length === 1 ? '' : 's' }} loaded
+              </p>
+            }
+          </div>
         }
       }
     </div>
@@ -319,16 +330,42 @@ interface FilterState {
       .badge-open   { background: #e8f5e9; color: #2e7d32; }
       .badge-filled { background: #e3f2fd; color: #1565c0; }
       .badge-cancelled { background: #fce4ec; color: #c62828; }
+      .badge-asset  { background: #f3e5f5; color: #6a1b9a; }
 
-      /* Pagination */
-      .pagination {
+      /* Load More / Infinite scroll */
+      .load-more-area {
         display: flex;
-        align-items: center;
-        gap: 1rem;
-        margin-top: 1.25rem;
         justify-content: center;
+        align-items: center;
+        padding: 1.5rem 0;
+        min-height: 56px;
       }
-      .page-info { font-size: 0.9rem; color: #555; }
+      .load-more-btn {
+        min-width: 200px;
+      }
+      .end-of-list {
+        font-size: 0.85rem;
+        color: #999;
+        margin: 0;
+      }
+      .spinner {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .spinner-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #4caf50;
+        animation: bounce 1s infinite ease-in-out;
+      }
+      .spinner-dot:nth-child(2) { animation-delay: 0.15s; }
+      .spinner-dot:nth-child(3) { animation-delay: 0.3s; }
+      @keyframes bounce {
+        0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+        40% { transform: scale(1); opacity: 1; }
+      }
 
       /* Buttons */
       .btn {
@@ -352,6 +389,23 @@ interface FilterState {
       }
       .btn-outline:disabled { opacity: 0.4; cursor: not-allowed; }
       .btn-sm { padding: 0.25rem 0.65rem; font-size: 0.8rem; }
+
+      /* Inline asset picker in table header */
+      .asset-picker-inline {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 0.4rem;
+        font-weight: 400;
+        font-size: 0.75rem;
+      }
+      .asset-picker-inline select {
+        padding: 0.15rem 0.3rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        background: #fff;
+        cursor: pointer;
+      }
     `,
   ],
 })
@@ -362,9 +416,16 @@ export class MarketplaceComponent implements OnInit {
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
 
-  readonly PAGE_SIZE = 10;
+  readonly PAGE_SIZE = 20;
   readonly skeletonRows = [1, 2, 3, 4, 5];
   readonly methodologies = ['REDD+', 'VCS', 'Gold Standard', 'CDM', 'Plan Vivo', 'Custom'];
+
+  /** Payment assets available in the asset picker when buying a credit. */
+  readonly paymentAssets = [
+    { label: 'XLM',  type: 'native' as const, address: null },
+    { label: 'USDC', type: 'asset'  as const, address: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75' },
+    { label: 'EURC', type: 'asset'  as const, address: 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP' },
+  ];
 
   filters: FilterState = {
     methodology: '',
@@ -374,40 +435,20 @@ export class MarketplaceComponent implements OnInit {
     maxTonnes: '',
   };
 
-  readonly allOffers = signal<Offer[]>([]);
+  /** Selected payment asset for the Buy action. Defaults to XLM. */
+  readonly selectedPaymentAsset = signal(this.paymentAssets[0]);
+
+  /** All offers loaded so far (accumulated across cursor pages). */
+  readonly visibleOffers = signal<Offer[]>([]);
   readonly isLoading = signal(false);
+  /** True while loading additional pages after the first. */
+  readonly isLoadingMore = signal(false);
   readonly error = signal<string | null>(null);
   readonly buying = signal<string | null>(null);
-  readonly currentPage = signal(0);
-  readonly filterVersion = signal(0); // bump to trigger computed re-eval
+  /** Cursor for the next page; null means no more results. */
+  private nextCursor: string | null = null;
 
-  readonly filteredOffers = computed(() => {
-    // Touch filterVersion so this recomputes when filters change
-    this.filterVersion();
-    const { methodology, geography, vintageYear, minTonnes, maxTonnes } = this.filters;
-
-    return this.allOffers().filter((o) => {
-      if (o.status !== 'open') return false;
-      if (methodology && (o.methodology ?? '') !== methodology) return false;
-      if (geography && !o.credit_id.toLowerCase().includes(geography.toLowerCase())) return false;
-      if (vintageYear) {
-        /* vintageYear filter is metadata we don't have on Offer directly; skip for now */
-      }
-      const tonnes = Number(o.tonnes_available) / 1_000_000;
-      if (minTonnes && tonnes < Number(minTonnes)) return false;
-      if (maxTonnes && tonnes > Number(maxTonnes)) return false;
-      return true;
-    });
-  });
-
-  readonly totalPages = computed(() =>
-    Math.max(1, Math.ceil(this.filteredOffers().length / this.PAGE_SIZE)),
-  );
-
-  readonly pagedOffers = computed(() => {
-    const start = this.currentPage() * this.PAGE_SIZE;
-    return this.filteredOffers().slice(start, start + this.PAGE_SIZE);
-  });
+  readonly hasMore = computed(() => this.nextCursor !== null);
 
   readonly hasActiveFilters = computed(() => {
     const f = this.filters;
@@ -420,13 +461,19 @@ export class MarketplaceComponent implements OnInit {
     }
   }
 
+  /** Load (or reload) the first page of results, resetting state. */
   async load(): Promise<void> {
     this.isLoading.set(true);
     this.error.set(null);
+    this.nextCursor = null;
+    this.visibleOffers.set([]);
+
     try {
-      const listings = await firstValueFrom(this.api.getListings());
-      this.allOffers.set(listings);
-      this.currentPage.set(0);
+      const result = await firstValueFrom(
+        this.api.getListingsCursor(this.buildParams()),
+      );
+      this.visibleOffers.set(result.data);
+      this.nextCursor = result.next_cursor ?? null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load listings.';
       this.error.set(msg);
@@ -436,9 +483,31 @@ export class MarketplaceComponent implements OnInit {
     }
   }
 
+  /** Append the next cursor page to the visible list. */
+  async loadMore(): Promise<void> {
+    if (!this.nextCursor || this.isLoadingMore()) return;
+    this.isLoadingMore.set(true);
+
+    try {
+      const result = await firstValueFrom(
+        this.api.getListingsCursor({
+          ...this.buildParams(),
+          cursor: this.nextCursor,
+        }),
+      );
+      this.visibleOffers.update((prev) => [...prev, ...result.data]);
+      this.nextCursor = result.next_cursor ?? null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load more listings.';
+      this.toast.show(msg, 'error');
+    } finally {
+      this.isLoadingMore.set(false);
+    }
+  }
+
   applyFilters(): void {
-    this.filterVersion.update((v) => v + 1);
-    this.currentPage.set(0);
+    // Reset to first page on filter change
+    void this.load();
   }
 
   resetFilters(): void {
@@ -449,19 +518,13 @@ export class MarketplaceComponent implements OnInit {
       minTonnes: '',
       maxTonnes: '',
     };
-    this.applyFilters();
+    void this.load();
   }
 
-  nextPage(): void {
-    if (this.currentPage() < this.totalPages() - 1) {
-      this.currentPage.update((p) => p + 1);
-    }
-  }
-
-  prevPage(): void {
-    if (this.currentPage() > 0) {
-      this.currentPage.update((p) => p - 1);
-    }
+  onAssetChange(event: Event): void {
+    const label = (event.target as HTMLSelectElement).value;
+    const found = this.paymentAssets.find((a) => a.label === label);
+    if (found) this.selectedPaymentAsset.set(found);
   }
 
   async buy(offer: Offer): Promise<void> {
@@ -473,11 +536,8 @@ export class MarketplaceComponent implements OnInit {
 
     this.buying.set(offer.id);
     try {
-      // Trigger Freighter wallet signing — signTransaction handles the Freighter prompt
       const { networkPassphrase } = await this.wallet.getNetworkDetails();
       // The buy flow: build a transaction XDR client-side then sign via Freighter.
-      // For now we call signTransaction with a placeholder; real XDR comes from the API.
-      // After signing, we POST to /marketplace/offer to record the purchase.
       await firstValueFrom(
         this.api.createOffer(
           {
@@ -508,5 +568,28 @@ export class MarketplaceComponent implements OnInit {
       (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
       ' XLM'
     );
+  }
+
+  /**
+   * Format the price field for any asset type.
+   * Offers may have price_xlm (legacy) or price_amount + price_asset (new).
+   */
+  formatPrice(offer: Offer): string {
+    if ((offer as any).price_amount !== undefined) {
+      const amount = Number((offer as any).price_amount) / 10_000_000;
+      return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+    // Legacy XLM-only offer
+    return this.formatXlm(offer.price_xlm);
+  }
+
+  private buildParams(): Record<string, string> {
+    const p: Record<string, string> = { limit: String(this.PAGE_SIZE) };
+    if (this.filters.methodology) p['methodology'] = this.filters.methodology;
+    if (this.filters.geography) p['geography'] = this.filters.geography;
+    if (this.filters.vintageYear) p['vintage_year'] = this.filters.vintageYear;
+    if (this.filters.minTonnes) p['min_tonnes'] = this.filters.minTonnes;
+    if (this.filters.maxTonnes) p['max_tonnes'] = this.filters.maxTonnes;
+    return p;
   }
 }
