@@ -58,6 +58,49 @@ const AGGREGATE_CACHE_TTL = 60; // seconds
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
+/**
+ * Maps a Soroban contract error code from the mrv_oracle contract to an HTTP
+ * exception, using the canonical 400–410 range defined in
+ * docs/features/ERROR_CODES_REFERENCE.md.
+ *
+ * If the error code is unrecognised the original error is re-thrown unchanged.
+ */
+function mapOracleContractError(error: unknown): never {
+  const message = (error as Error)?.message ?? '';
+
+  // Extract a numeric error code from Soroban error strings such as:
+  //   "Error(Contract, #400)" or "contract error 400"
+  const match = /(?:Error\(Contract,\s*#|contract error\s*)(\d+)/i.exec(message);
+  const code = match ? parseInt(match[1], 10) : NaN;
+
+  switch (code) {
+    case 400: // NotInitialized
+      throw new ServiceUnavailableException('Oracle contract is not initialized');
+    case 401: // Unauthorized
+      throw new UnauthorizedException('Oracle: caller is not authorized');
+    case 402: // AlreadyInitialized
+      throw new BadRequestException('Oracle contract is already initialized');
+    case 403: // Overflow
+      throw new BadRequestException('Oracle: arithmetic overflow — tonnes value too large');
+    case 404: // ContractPaused
+      throw new ServiceUnavailableException('Oracle contract is currently paused');
+    case 405: // ProjectNotFound
+      throw new NotFoundException('Oracle: project not found in registry');
+    case 406: // InvalidNonce
+      throw new BadRequestException('Oracle: invalid replay-protection nonce');
+    case 407: // InvalidProject
+      throw new BadRequestException('Oracle: project has no credits in registry');
+    case 408: // InvalidTimestamp
+      throw new BadRequestException('Oracle: timestamp is in the future');
+    case 409: // NoPendingAdmin
+      throw new BadRequestException('Oracle: no pending admin transfer to accept');
+    case 410: // InvalidReading
+      throw new BadRequestException('Oracle: tonnes reading must be non-negative');
+    default:
+      throw error;
+  }
+}
+
 @Injectable()
 export class OracleService {
   private readonly logger = new Logger(OracleService.name);
@@ -117,9 +160,7 @@ export class OracleService {
 
     const tonnes = BigInt(dto.tonnesSequestered);
     if (tonnes <= 0n) {
-      throw new BadRequestException(
-        'tonnes must be positive (greater than 0)',
-      );
+      throw new BadRequestException('tonnes must be positive (greater than 0)');
     }
 
     this.logger.log(
@@ -138,6 +179,18 @@ export class OracleService {
     ];
 
     const signer = this.keypairService.getAdminKeypair();
+    let response;
+    try {
+      response = await this.stellarService.invokeContract(
+        this.contractId,
+        'update_mrv_data',
+        args,
+        signer,
+      );
+    } catch (error: unknown) {
+      // Map oracle contract error codes (400–410) to HTTP exceptions.
+      mapOracleContractError(error);
+    }
 
     let response: unknown;
     try {
@@ -393,5 +446,56 @@ export class OracleService {
     const year = d.getUTCFullYear();
     const month = String(d.getUTCMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
+  }
+  /**
+   * Set or clear a per-project anomaly threshold override.
+   * Pass thresholdBps=0 to clear the override and revert to global threshold.
+   */
+  async setProjectAnomalyThreshold(
+    projectId: string,
+    thresholdBps: number,
+  ): Promise<{ projectId: string; thresholdBps: number | null }> {
+    if (!Number.isInteger(thresholdBps) || thresholdBps < 0 || thresholdBps > 10000) {
+      throw new BadRequestException(
+        'thresholdBps must be an integer between 0 and 10000',
+      );
+    }
+
+    const signer = this.keypairService.getAdminKeypair();
+    const nonceResponse = await this.stellarService.invokeContract(
+      this.contractId,
+      'get_nonce',
+      [nativeToScVal(signer.publicKey(), { type: 'address' })],
+      signer,
+    );
+    const nonce = (
+      scValToNative(
+        (nonceResponse as unknown as Record<string, unknown>)
+          .returnValue as Parameters<typeof scValToNative>[0],
+      ) as bigint
+    ).toString();
+
+    const args = [
+      nativeToScVal(signer.publicKey(), { type: 'address' }),
+      nativeToScVal(projectId, { type: 'string' }),
+      nativeToScVal(BigInt(thresholdBps), { type: 'u32' }),
+      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+    ];
+
+    await this.stellarService.invokeContract(
+      this.contractId,
+      'set_project_anomaly_threshold',
+      args,
+      signer,
+    );
+
+    this.logger.log(
+      `Set anomaly threshold for project ${projectId} to ${thresholdBps} bps`,
+    );
+
+    return {
+      projectId,
+      thresholdBps: thresholdBps === 0 ? null : thresholdBps,
+    };
   }
 }

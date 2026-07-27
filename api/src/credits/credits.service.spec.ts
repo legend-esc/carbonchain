@@ -2,7 +2,7 @@ import { CacheService } from '../common/cache.service';
 import { InMemoryCreditRepository } from './credit.repository';
 import { CreditsService } from './credits.service';
 import { CreditEntity } from './credit.entity';
-import { CreditStatus } from '../shared';
+import { CreditStatus } from '../../../shared';
 import { NotFoundException } from '@nestjs/common';
 
 // Minimal ConfigService mock for CacheService and CreditsService
@@ -211,6 +211,78 @@ describe('CreditsService.getCreditProvenance', () => {
       new CacheService(mockConfig),
     );
 
-    await expect(svcWithNoEvents.getCreditProvenance('nonexistent')).rejects.toThrow();
+    await expect(
+      svcWithNoEvents.getCreditProvenance('nonexistent'),
+    ).rejects.toThrow();
+  });
+});
+
+describe('CreditsService.getCreditCount / listCreditsByOwner (issue #541)', () => {
+  function buildSvc(mockStellarService: any): CreditsService {
+    return new CreditsService(
+      mockStellarService,
+      mockConfig,
+      {} as any,
+      new InMemoryCreditRepository(),
+      new CacheService(mockConfig),
+    );
+  }
+
+  it('getCreditCount() calls the contract-side get_credit_count function', async () => {
+    const readContract = jest.fn().mockResolvedValue(null);
+    const svc = buildSvc({ readContract });
+
+    await svc.getCreditCount();
+
+    expect(readContract).toHaveBeenCalledWith(
+      expect.any(String),
+      'get_credit_count',
+      [],
+    );
+  });
+
+  it('getCreditCount() returns 0 when the contract has no value yet', async () => {
+    const svc = buildSvc({ readContract: jest.fn().mockResolvedValue(null) });
+    await expect(svc.getCreditCount()).resolves.toBe(0);
+  });
+
+  it('getCreditCount() returns 0 (does not throw) when the contract call fails', async () => {
+    const svc = buildSvc({
+      readContract: jest.fn().mockRejectedValue(new Error('rpc unavailable')),
+    });
+    await expect(svc.getCreditCount()).resolves.toBe(0);
+  });
+
+  it('listCreditsByOwner() calls get_credits_by_owner_paginated with owner/offset/limit', async () => {
+    const readContract = jest.fn().mockResolvedValue(null);
+    const svc = buildSvc({ readContract });
+
+    await svc.listCreditsByOwner('GOWNER', 20, 10);
+
+    expect(readContract).toHaveBeenCalledWith(
+      expect.any(String),
+      'get_credits_by_owner_paginated',
+      expect.any(Array),
+    );
+  });
+
+  it('listCreditsByOwner() returns an empty page when the contract has no value', async () => {
+    const svc = buildSvc({ readContract: jest.fn().mockResolvedValue(null) });
+    await expect(svc.listCreditsByOwner('GOWNER', 0, 20)).resolves.toEqual({
+      data: [],
+      offset: 0,
+      limit: 20,
+    });
+  });
+
+  it('listCreditsByOwner() returns an empty page (does not throw) on contract error', async () => {
+    const svc = buildSvc({
+      readContract: jest.fn().mockRejectedValue(new Error('rpc unavailable')),
+    });
+    await expect(svc.listCreditsByOwner('GOWNER', 5, 15)).resolves.toEqual({
+      data: [],
+      offset: 5,
+      limit: 15,
+    });
   });
 });

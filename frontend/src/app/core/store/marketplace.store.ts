@@ -1,5 +1,5 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { firstValueFrom, Observable } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 import { Offer } from '@shared';
 import { ApiService } from '../services/api.service';
@@ -21,7 +21,6 @@ export class MarketplaceStore {
   readonly offers = this._offers.asReadonly();
   readonly state = this._state.asReadonly();
   readonly error = this._error.asReadonly();
-  readonly error$: Observable<string | null> = this._error.asObservable();
 
   readonly page = this._page.asReadonly();
   readonly isLoading = computed(() => this._state() === 'loading');

@@ -7,6 +7,8 @@ import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
  * 1748476800000-AddRetirementRetiredAtIndex.ts so that TypeORM's migration
  * generator produces a no-op when the schema is already up to date.
  */
+import { Entity, PrimaryColumn, Column } from 'typeorm';
+
 @Entity('retirements')
 export class RetirementEntity {
   @PrimaryColumn()
@@ -30,4 +32,9 @@ export class RetirementEntity {
 
   @Column({ default: '' })
   txHash: string;
+
+  /** Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
+   *  Empty string for legacy retirements. */
+  @Column({ default: '' })
+  certificateIpfsHash: string;
 }

@@ -19,6 +19,10 @@ import { CreditStatus } from '../shared';
  */
 @Entity('credits')
 @Index('idx_credits_status_methodology_geography', ['status', 'methodology', 'geography'])
+import { Entity, PrimaryColumn, Column } from 'typeorm';
+import { CreditStatus } from '../../../shared';
+
+@Entity('credits')
 export class CreditEntity {
   @PrimaryColumn()
   id: string;
@@ -31,6 +35,12 @@ export class CreditEntity {
   issuer: string;
 
   @Index('idx_credits_vintage_year')
+  @Column()
+  issuer: string;
+
+  @Column()
+  owner: string;
+
   @Column()
   vintageYear: number;
 

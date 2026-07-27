@@ -3,6 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { NotFoundException } from '@nestjs/common';
 import axios from 'axios';
 import { ProjectsService } from './projects.service';
+import {
+  InMemoryProjectRepository,
+  PROJECT_REPOSITORY,
+} from './project.repository';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -20,12 +24,15 @@ const mockConfig = {
 
 describe('ProjectsService', () => {
   let service: ProjectsService;
+  let repo: InMemoryProjectRepository;
 
   beforeEach(async () => {
+    repo = new InMemoryProjectRepository();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectsService,
         { provide: ConfigService, useValue: mockConfig },
+        { provide: PROJECT_REPOSITORY, useValue: repo },
       ],
     }).compile();
 
@@ -43,10 +50,26 @@ describe('ProjectsService', () => {
         methodology: 'VCS',
       });
 
-      expect(project.id).toMatch(/^proj_/);
+      expect(project.id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
       expect(project.name).toBe('Test Project');
       expect(project.documents_cid).toBe('');
       expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('persists project to database', async () => {
+      const project = await service.createProject({
+        name: 'DB Test',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'US',
+        methodology: 'VCS',
+      });
+
+      const stored = await repo.findById(project.id);
+      expect(stored).toBeDefined();
+      expect(stored!.name).toBe('DB Test');
     });
 
     it('uploads documents to Pinata and stores CID', async () => {
@@ -76,25 +99,28 @@ describe('ProjectsService', () => {
       expect(project.documents_cid).toBe('bafybeitest123');
     });
 
-    it('throws when Pinata upload fails', async () => {
+    it('creates project even when IPFS upload fails', async () => {
       mockedAxios.post = jest
         .fn()
         .mockRejectedValue(new Error('Network error'));
 
-      await expect(
-        service.createProject({
-          name: 'Fail Project',
-          developer: 'Dev',
-          description: 'desc',
-          location: 'US',
-          methodology: 'VCS',
-          documents: { data: 'test' },
-        }),
-      ).rejects.toThrow('Network error');
+      const project = await service.createProject({
+        name: 'Fail IPFS',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'US',
+        methodology: 'VCS',
+        documents: { data: 'test' },
+      });
+
+      expect(project.id).toBeDefined();
+      expect(project.documents_cid).toBe('');
+      const stored = await repo.findById(project.id);
+      expect(stored).toBeDefined();
     });
   });
 
-  describe('getProject', () => {
+  describe('getProjectAsync', () => {
     it('returns a project by id', async () => {
       const created = await service.createProject({
         name: 'P1',
@@ -104,12 +130,12 @@ describe('ProjectsService', () => {
         methodology: 'VCS',
       });
 
-      const found = service.getProject(created.id);
+      const found = await service.getProjectAsync(created.id);
       expect(found).toEqual(created);
     });
 
-    it('throws NotFoundException for unknown id', () => {
-      expect(() => service.getProject('nonexistent')).toThrow(
+    it('throws NotFoundException for unknown id', async () => {
+      await expect(service.getProjectAsync('nonexistent')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -132,7 +158,8 @@ describe('ProjectsService', () => {
         methodology: 'REDD+',
       });
 
-      expect(service.listProjects()).toHaveLength(2);
+      const projects = await service.listProjects();
+      expect(projects).toHaveLength(2);
     });
   });
 });

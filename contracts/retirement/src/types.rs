@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
 
 /// Minimum TTL in ledgers (~1 year at 5s/ledger).
 pub const MIN_TTL: u32 = 6_307_200;
@@ -43,6 +43,10 @@ pub struct RetirementRecord {
     pub tonnes_retired: i128,
     pub reason: String,
     pub retired_at: u64,
+    /// Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
+    /// Empty string for legacy retirements that pre-date this field.
+    /// Set after retirement via `set_certificate_hash`.
+    pub certificate_ipfs_hash: String,
 }
 
 #[derive(Clone)]
@@ -54,4 +58,29 @@ pub enum DataKey {
     Paused,
     Nonce(Address),
     PendingAdmin,
+}
+
+/// A single failed retirement entry within a partial-success batch.
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct BatchRetireFailure {
+    /// The credit ID that could not be retired.
+    pub credit_id: BytesN<32>,
+    /// The error code that caused the failure.
+    pub error_code: u32,
+}
+
+/// Result returned by `batch_retire` in partial-success mode.
+///
+/// Successful credits are retired and their retirement IDs are in `succeeded`.
+/// Invalid credits are skipped and their IDs (plus error codes) are in `failed`.
+/// An empty `succeeded` list is never returned — the call fails with `InvalidInput`
+/// if no credits in the batch are valid.
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct BatchRetireResult {
+    /// Retirement IDs for credits that were successfully retired.
+    pub succeeded: Vec<BytesN<32>>,
+    /// Credits that could not be retired, with the reason code.
+    pub failed: Vec<BatchRetireFailure>,
 }
