@@ -1,39 +1,54 @@
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  Index,
+} from 'typeorm';
 import { CreditStatus } from '../shared';
 
 /**
  * Off-chain index of an on-chain carbon credit.
- * Ready for TypeORM — uncomment decorators and add @nestjs/typeorm when DB is wired.
  *
- * @Entity('credits')
+ * @Index decorators mirror the SQL indexes created by migration
+ * 1748390400000-AddCreditIndexes.ts so that TypeORM's migration generator
+ * produces a no-op when the schema is already up to date.
+ *
+ * Composite index: (status, methodology, geography) — covers the most common
+ * marketplace multi-field filter.
+ * Single-column indexes: vintage_year (range queries) and issuer (portfolio).
  */
+@Entity('credits')
+@Index('idx_credits_status_methodology_geography', ['status', 'methodology', 'geography'])
 export class CreditEntity {
-  // @PrimaryColumn()
+  @PrimaryColumn()
   id: string;
 
-  // @Column()
+  @Column()
   projectId: string;
 
-  // @Column()
+  @Index('idx_credits_owner_address')
+  @Column()
   issuer: string;
 
-  // @Column()
+  @Index('idx_credits_vintage_year')
+  @Column()
   vintageYear: number;
 
-  // @Column()
+  @Column()
   methodology: string;
 
-  // @Column()
+  @Column()
   geography: string;
 
-  // @Column()
+  @Column()
   tonnes: string;
 
-  // @Column()
+  @Column()
   ipfsHash: string;
 
-  // @Column({ type: 'varchar' })
+  @Column({ type: 'varchar' })
   status: CreditStatus;
 
-  // @Column({ type: 'bigint' })
+  @Column({ type: 'bigint' })
   issuedAt: number;
 }

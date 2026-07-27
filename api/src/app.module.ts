@@ -17,6 +17,7 @@ import { RetirementModule } from './retirement/retirement.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { EventsModule } from './events/events.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { OracleModule } from './oracle/oracle.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     MarketplaceModule,
     EventsModule,
     WebhooksModule,
+    OracleModule,
   ],
   controllers: [AppController],
   providers: [AppService],
