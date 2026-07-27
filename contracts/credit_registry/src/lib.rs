@@ -1836,4 +1836,84 @@ mod tests {
         let result = client.try_register_verifier(&admin, &verifier, &0);
         assert_eq!(result, Err(Ok(CarbonChainError::InvalidNonce)));
     }
+
+    // ── #414: InvalidTonnes boundary coverage ────────────────────────────────
+    //
+    // These tests ensure the contract enforces MIN_CREDIT_UNIT (100_000) at
+    // the exact boundaries demanded by the issue.
+
+    /// 99_999 is one unit below the minimum — must return InvalidTonnes.
+    #[test]
+    fn test_submit_credit_99999_tonnes_fails_invalid_tonnes() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let _ = submit_test_credit(&env, &client, &admin, &issuer);
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2025,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &99_999,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidTonnes)));
+    }
+
+    /// 100_000 is the minimum valid value — must succeed.
+    #[test]
+    fn test_submit_credit_100000_tonnes_succeeds() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let anonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce_meth = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce_meth,
+        );
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-MIN"),
+            &String::from_str(&env, "Min Unit Test"),
+            &String::from_str(&env, "Min credit test project"),
+            &String::from_str(&env, "NG"),
+        );
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-MIN"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &100_000,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert!(result.is_ok(), "100_000 should be accepted as the minimum valid unit");
+    }
+
+    /// 100_001 is one unit above the minimum but not a multiple — must return InvalidTonnes.
+    #[test]
+    fn test_submit_credit_100001_tonnes_fails_invalid_tonnes() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let _ = submit_test_credit(&env, &client, &admin, &issuer);
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2025,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &100_001,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidTonnes)));
+    }
 }

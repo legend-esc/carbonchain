@@ -8,6 +8,7 @@ import { RetirementEntity } from './retirement.entity';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
 import { PageResult } from '../credits/credit.repository';
+import { NonceService } from '../common/nonce.service';
 
 export const MAX_BATCH_SIZE = 20;
 
@@ -16,6 +17,8 @@ export class RetireDto {
   creditId: string;
   tonnes: string;
   reason: string;
+  /** Optional nonce for API-layer replay-attack deduplication (#415). */
+  nonce?: string;
 }
 
 export class BatchRetireDto {
@@ -70,6 +73,7 @@ export class RetirementService {
     @Inject(RETIREMENT_REPOSITORY)
     private readonly retirementRepo: IRetirementRepository,
     @Inject(EVENT_EMITTER) private readonly eventEmitter: IEventEmitter,
+    private readonly nonceService?: NonceService,
   ) {
     this.retirementContractId = this.configService.get<string>(
       'RETIREMENT_CONTRACT_ID',
@@ -102,6 +106,13 @@ export class RetirementService {
     this.logger.log(
       `Retiring credit ${dto.creditId} for ${dto.buyerPublicKey}`,
     );
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    // Claim the nonce in Redis before submitting the transaction on-chain.
+    // A duplicate nonce within the Stellar ledger close window returns 409.
+    if (dto.nonce !== undefined && this.nonceService) {
+      await this.nonceService.consumeNonce(dto.buyerPublicKey, dto.nonce);
+    }
 
     const args = [
       nativeToScVal(dto.buyerPublicKey, { type: 'address' }),

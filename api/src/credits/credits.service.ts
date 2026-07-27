@@ -15,21 +15,20 @@ import { CreditEntity } from './credit.entity';
 import type { ICreditRepository, PageResult } from './credit.repository';
 import { CREDIT_REPOSITORY } from './credit.repository';
 import { CacheService } from '../common/cache.service';
+import { NonceService } from '../common/nonce.service';
+import { IssueCreditDto } from './dto/issue-credit.dto';
+
+// Re-export for backward compatibility with existing consumers
+// (CreditsController and tests that import IssueCreditDto from 'credits.service')
+export { IssueCreditDto } from './dto/issue-credit.dto';
 
 // Cache key helpers
 const CREDIT_KEY = (id: string) => `credits:${id}`;
 const LIST_CREDITS_KEY = (filter: string) => `credits:list:${filter}`;
 const CREDIT_TTL = 120; // seconds
 
-export class IssueCreditDto {
-  issuerPublicKey: string;
-  projectId: string;
-  vintageYear: number;
-  methodology: string;
-  geography: string;
-  tonnes: string;
-  ipfsHash: string;
-}
+// Re-export for backward compatibility with existing consumers
+export { IssueCreditDto } from './dto/issue-credit.dto';
 
 interface ListCreditsFilter {
   methodology?: string;
@@ -54,6 +53,7 @@ export class CreditsService {
     private keypairService: StellarKeypairService,
     @Inject(CREDIT_REPOSITORY) private readonly creditRepo: ICreditRepository,
     private readonly cache: CacheService,
+    private readonly nonceService?: NonceService,
   ) {
     this.contractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
@@ -61,6 +61,15 @@ export class CreditsService {
 
   async issueCredit(dto: IssueCreditDto): Promise<{ creditId: string }> {
     this.logger.log(`Issuing credit for project ${dto.projectId}`);
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    // Claim the nonce in Redis with atomic SET NX before sending the transaction
+    // on-chain.  A duplicate nonce within the Stellar ledger close window
+    // returns 409 Conflict before the transaction is ever submitted.
+    if (dto.nonce !== undefined && this.nonceService) {
+      await this.nonceService.consumeNonce(dto.issuerPublicKey, dto.nonce);
+    }
+
     const args = [
       nativeToScVal(dto.issuerPublicKey, { type: 'address' }),
       nativeToScVal(dto.projectId, { type: 'string' }),
