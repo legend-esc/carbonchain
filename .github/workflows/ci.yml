@@ -68,6 +68,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # #564 — full history needed to diff which migrations changed in this PR/push
+          fetch-depth: 0
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -76,6 +79,32 @@ jobs:
           cache-dependency-path: api/package-lock.json
       - name: Install Dependencies
         run: cd api && npm ci --legacy-peer-deps
+      # #564 — only test migration rollback when the migrations directory actually changed
+      - name: Check for migration changes
+        id: migration-check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" "${{ github.sha }}" -- api/src/migrations/ | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install PostgreSQL client tools
+        if: steps.migration-check.outputs.changed == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      # #564 — apply, revert, and re-apply the newest migration; fail if the
+      # schema after rollback doesn't match (i.e. down() doesn't cleanly undo up())
+      - name: Test Migration Rollback
+        if: steps.migration-check.outputs.changed == 'true'
+        run: ./scripts/test-migration-rollback.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
       # #194 — enforce lint and format without auto-fixing
       - name: Lint
         run: cd api && npm run lint

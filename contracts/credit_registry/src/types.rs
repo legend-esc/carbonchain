@@ -82,6 +82,15 @@ pub struct AuditLogEntry {
     pub timestamp: u64,
 }
 
+/// A pending stake withdrawal created by `remove_verifier`. The stake becomes
+/// withdrawable once `unlock_at` (ledger timestamp) has passed — see issue #565.
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct UnbondingRequest {
+    pub amount: i128,
+    pub unlock_at: u64,
+}
+
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
@@ -129,4 +138,10 @@ pub enum DataKey {
     /// Maintained by submit_credit (add) and approve_and_mint/flag_credit (remove).
     /// Used by remove_verifier to iterate per-credit snapshots efficiently.
     PendingCredits,
+    /// Stake amount (in the configured stake token's smallest unit) locked by a verifier.
+    VerifierStake(Address),
+    /// Minimum stake required to register as a verifier. Configurable by the admin.
+    MinStake,
+    /// Pending unbonding request created when a verifier is removed.
+    UnbondingRequest(Address),
 }

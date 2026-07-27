@@ -4,7 +4,8 @@ pub mod types;
 
 use crate::errors::RetirementError;
 use crate::types::{
-    CreditMetadata, CreditStatus, DataKey, RetirementRecord, MIN_TTL, TTL_THRESHOLD,
+    BatchRetireFailure, BatchRetireResult, CreditMetadata, CreditStatus, DataKey, RetirementRecord,
+    MIN_TTL, TTL_THRESHOLD,
 };
 
 /// Maximum number of credits allowed in a single `batch_retire` call.
@@ -240,12 +241,15 @@ impl Retirement {
         Ok(retirement_id)
     }
 
-    /// Retire multiple carbon credits in a single transaction.
+    /// Retire multiple carbon credits in a single transaction with partial-success mode.
     ///
-    /// - Stores immutable `RetirementRecord` for each credit
-    /// - Calls `mark_retired` on the credit registry for each credit
-    /// - Indexes retirements under the buyer's account
-    /// - Emits individual `retire` events per credit
+    /// Unlike the all-or-nothing approach, this function processes every credit
+    /// independently. Credits that fail validation (not active, wrong owner, zero
+    /// tonnes) are recorded in the `failed` list while valid credits are retired
+    /// normally. Individual `Retire` events are emitted only for successful credits.
+    ///
+    /// Returns `Err(RetirementError::InvalidInput)` when **zero** credits succeed
+    /// (the caller must supply at least one valid credit per batch).
     ///
     /// `registry_id` — the deployed credit_registry contract address.
     pub fn batch_retire(
@@ -256,7 +260,7 @@ impl Retirement {
         reason: String,
         registry_id: Address,
         nonce: u64,
-    ) -> Result<Vec<BytesN<32>>, RetirementError> {
+    ) -> Result<BatchRetireResult, RetirementError> {
         if Self::is_paused(&env) {
             return Err(RetirementError::ContractPaused);
         }
@@ -273,31 +277,10 @@ impl Retirement {
             return Err(RetirementError::InvalidInput);
         }
 
-        // Pre-validation pass: check ownership, active status, and positive tonnes
-        // for ALL credits before writing anything (prevents partial state on failure).
-        for i in 0..credit_ids.len() {
-            let credit_id = credit_ids.get(i).unwrap();
-            let tonne_amount = tonnes.get(i).unwrap();
-
-            if tonne_amount <= 0 {
-                return Err(RetirementError::InvalidTonnes);
-            }
-
-            let credit: CreditMetadata = env.invoke_contract(
-                &registry_id,
-                &Symbol::new(&env, "get_credit"),
-                (credit_id.clone(),).into_val(&env),
-            );
-            if credit.status != CreditStatus::Active {
-                return Err(RetirementError::CreditNotActive);
-            }
-            if credit.owner != buyer {
-                return Err(RetirementError::Unauthorized);
-            }
-        }
-
-        let mut retirement_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut succeeded: Vec<BytesN<32>> = Vec::new(&env);
+        let mut failed: Vec<BatchRetireFailure> = Vec::new(&env);
         let mut total_tonnes: i128 = 0;
+
         let acct_key = DataKey::AccountRetirements(buyer.clone());
         let mut list: Vec<BytesN<32>> = env
             .storage()
@@ -309,7 +292,43 @@ impl Retirement {
             let credit_id = credit_ids.get(i).unwrap();
             let tonne_amount = tonnes.get(i).unwrap();
 
-            // Derive a deterministic retirement ID
+            // Validate tonnes
+            if tonne_amount <= 0 {
+                failed.push_back(BatchRetireFailure {
+                    credit_id: credit_id.clone(),
+                    error_code: RetirementError::InvalidTonnes as u32,
+                });
+                continue;
+            }
+
+            // Fetch credit metadata — if the cross-contract call panics (credit
+            // doesn't exist at all) we treat it as a failed entry.
+            let credit: CreditMetadata = env.invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "get_credit"),
+                (credit_id.clone(),).into_val(&env),
+            );
+
+            // Validate status
+            if credit.status != CreditStatus::Active {
+                failed.push_back(BatchRetireFailure {
+                    credit_id: credit_id.clone(),
+                    error_code: RetirementError::CreditNotActive as u32,
+                });
+                continue;
+            }
+
+            // Validate ownership
+            if credit.owner != buyer {
+                failed.push_back(BatchRetireFailure {
+                    credit_id: credit_id.clone(),
+                    error_code: RetirementError::Unauthorized as u32,
+                });
+                continue;
+            }
+
+            // Derive a deterministic retirement ID — embed index `i` so that
+            // two credits retired in the same ledger with the same reason stay distinct.
             let mut preimage = credit_id.clone().to_xdr(&env);
             preimage.append(&reason.clone().to_xdr(&env));
             preimage.append(&env.ledger().timestamp().to_xdr(&env));
@@ -334,10 +353,6 @@ impl Retirement {
                 MIN_TTL,
             );
 
-            list.push_back(retirement_id.clone());
-            retirement_ids.push_back(retirement_id.clone());
-            total_tonnes += tonne_amount;
-
             // Cross-contract: mark the credit as retired in the registry
             let _: () = env.invoke_contract(
                 &registry_id,
@@ -345,7 +360,11 @@ impl Retirement {
                 (credit_id.clone(),).into_val(&env),
             );
 
-            // Emit individual retirement event
+            list.push_back(retirement_id.clone());
+            succeeded.push_back(retirement_id.clone());
+            total_tonnes += tonne_amount;
+
+            // Emit individual retirement event for each successful credit
             Retire {
                 buyer: buyer.clone(),
                 credit_id: credit_id.clone(),
@@ -354,21 +373,25 @@ impl Retirement {
             .publish(&env);
         }
 
+        // Fail the entire call if nothing succeeded — prevents empty batch results
+        if succeeded.is_empty() {
+            return Err(RetirementError::InvalidInput);
+        }
+
         env.storage().persistent().set(&acct_key, &list);
         env.storage()
             .persistent()
             .extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
-        // Summary event for off-chain indexers, in addition to the per-credit
-        // Retire events emitted above.
+        // Summary event for off-chain indexers (only emitted when at least one credit retired)
         BatchRetired {
             buyer,
-            count: credit_ids.len(),
+            count: succeeded.len(),
             total_tonnes,
         }
         .publish(&env);
 
-        Ok(retirement_ids)
+        Ok(BatchRetireResult { succeeded, failed })
     }
 
     /// Returns the sum of all `tonnes_retired` across all retirement records for `account`.
@@ -759,7 +782,6 @@ mod tests {
             .unwrap();
         assert_eq!(err, RetirementError::InvalidInput);
     }
-
     // ── Pause tests ──────────────────────────────────────────────────────────
 
     #[test]
@@ -878,7 +900,7 @@ mod tests {
         }
 
         let nonce = client.get_nonce(&buyer);
-        let ret_ids = client.batch_retire(
+        let result = client.batch_retire(
             &buyer,
             &credit_ids,
             &tonnes,
@@ -887,7 +909,8 @@ mod tests {
             &nonce,
         );
 
-        assert_eq!(ret_ids.len(), 5);
+        assert_eq!(result.succeeded.len(), 5);
+        assert_eq!(result.failed.len(), 0);
     }
 
     #[test]
@@ -980,10 +1003,10 @@ mod tests {
         assert_eq!(result, Err(Ok(RetirementError::AlreadyInitialized)));
     }
 
-    // ── Issue #232: batch_retire no partial state on failure ─────────────────
+    // ── Issue #232: batch_retire partial success mode ────────────────────────
 
     #[test]
-    fn test_batch_retire_no_partial_state_on_invalid_credit() {
+    fn test_batch_retire_partial_success_invalid_credit() {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -1012,7 +1035,7 @@ mod tests {
         tonnes_vec.push_back(1_000_000);
 
         let nonce = client.get_nonce(&buyer);
-        let result = client.try_batch_retire(
+        let result = client.batch_retire(
             &buyer,
             &credit_ids,
             &tonnes_vec,
@@ -1021,11 +1044,51 @@ mod tests {
             &nonce,
         );
 
-        // The whole batch must fail
-        assert!(result.is_err());
-        // No retirements should have been written for buyer
+        // Two valid credits should succeed; one invalid should be in failed list
+        assert_eq!(result.succeeded.len(), 2);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed.get(0).unwrap().credit_id, cid3);
+        assert_eq!(
+            result.failed.get(0).unwrap().error_code,
+            RetirementError::Unauthorized as u32
+        );
+
+        // The two valid credits should be indexed under buyer
         let ids = client.get_retirements_by_account(&buyer);
-        assert_eq!(ids.len(), 0);
+        assert_eq!(ids.len(), 2);
+    }
+
+    /// All credits invalid → InvalidInput (empty succeeded list not allowed)
+    #[test]
+    fn test_batch_retire_all_invalid_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        // credit_id is NOT transferred to buyer — ownership check will fail
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut tonnes_vec: Vec<i128> = Vec::new(&env);
+        credit_ids.push_back(credit_id);
+        tonnes_vec.push_back(1_000_000);
+
+        let nonce = client.get_nonce(&buyer);
+        let err = client
+            .try_batch_retire(
+                &buyer,
+                &credit_ids,
+                &tonnes_vec,
+                &String::from_str(&env, "offset"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+
+        // All credits failed → treated as InvalidInput
+        assert_eq!(err, RetirementError::InvalidInput);
     }
 
     // ── Issue #233: get_total_retired_by_account ──────────────────────────────

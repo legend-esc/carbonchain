@@ -1,5 +1,6 @@
 use crate::types::{
-    AuditLogEntry, CreditMetadata, DataKey, Methodology, ServiceType, Session, VerifierReputation,
+    AuditLogEntry, CreditMetadata, DataKey, Methodology, ServiceType, Session, UnbondingRequest,
+    VerifierReputation,
 };
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
@@ -372,6 +373,26 @@ pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+// ── Total credit count ──────────────────────────────────────────────────────
+
+/// Returns the total number of credits ever submitted (see `DataKey::TotalCredits`).
+pub fn get_total_credits(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalCredits)
+        .unwrap_or(0u64)
+}
+
+/// Increments the global total-credits counter. Call exactly once per
+/// `submit_credit`. Never call a corresponding decrement — the counter
+/// tracks credits ever issued, not credits currently active.
+pub fn increment_total_credits(env: &Env) {
+    let count = get_total_credits(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalCredits, &(count + 1));
+}
+
 /// Remove a single credit ID from the per-owner index.
 ///
 /// Issue #470: `transfer_credit` and `split_credit` did not remove the credit
@@ -448,4 +469,62 @@ pub fn verifier_has_credit_approval(env: &Env, verifier: &Address) -> bool {
         return true;
     }
     services.contains(ServiceType::CreditApproval)
+}
+
+// ── Verifier staking (issue #565) ─────────────────────────────────────────────
+
+/// Default minimum stake required to register as a verifier: 1000 XLM,
+/// expressed in stroops (the native token's smallest unit, 7 decimals).
+pub const DEFAULT_MIN_STAKE: i128 = 1_000 * 10_000_000;
+
+/// 30-day unbonding period, in seconds.
+pub const UNBONDING_PERIOD_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Percentage of a verifier's stake slashed on a malicious-approval finding.
+pub const SLASH_PERCENT: i128 = 10;
+
+pub fn get_min_stake(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MinStake)
+        .unwrap_or(DEFAULT_MIN_STAKE)
+}
+
+pub fn set_min_stake(env: &Env, amount: i128) {
+    env.storage().instance().set(&DataKey::MinStake, &amount);
+}
+
+pub fn get_verifier_stake(env: &Env, verifier: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VerifierStake(verifier.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_verifier_stake(env: &Env, verifier: &Address, amount: i128) {
+    let key = DataKey::VerifierStake(verifier.clone());
+    env.storage().persistent().set(&key, &amount);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+pub fn get_unbonding_request(env: &Env, verifier: &Address) -> Option<UnbondingRequest> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::UnbondingRequest(verifier.clone()))
+}
+
+pub fn set_unbonding_request(env: &Env, verifier: &Address, request: &UnbondingRequest) {
+    let key = DataKey::UnbondingRequest(verifier.clone());
+    env.storage().persistent().set(&key, request);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+pub fn remove_unbonding_request(env: &Env, verifier: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::UnbondingRequest(verifier.clone()));
 }

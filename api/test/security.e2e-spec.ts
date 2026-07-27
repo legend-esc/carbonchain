@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, HttpStatus } from '@nestjs/common';
+import { ForbiddenException, INestApplication, HttpStatus } from '@nestjs/common';
 import request from 'supertest';
 import helmet from 'helmet';
 import { AppModule } from '../src/app.module';
@@ -7,10 +7,12 @@ import { ThrottlerGuard } from '../src/common/throttler.guard';
 
 /**
  * Issue #45  — Verify Helmet security headers and CORS are applied.
+ * Issue #542 — Verify CORS origin whitelist enforcement (403 for non-whitelisted origins).
  * Issue #492 — Verify per-account rate limiting on POST /auth/verify.
  */
 describe('Security Headers (e2e)', () => {
   let app: INestApplication;
+  const allowedOrigins = ['http://localhost:4200'];
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -20,10 +22,20 @@ describe('Security Headers (e2e)', () => {
     app = moduleFixture.createNestApplication();
     app.use(helmet());
     app.enableCors({
-      origin: process.env.FRONTEND_URL ?? 'http://localhost:4200',
+      origin: (
+        origin: string | undefined,
+        callback: (err: Error | null, allow?: boolean) => void,
+      ) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new ForbiddenException('Origin not allowed by CORS policy'));
+        }
+      },
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
       credentials: true,
+      maxAge: 86400,
     });
     await app.init();
   });
@@ -42,7 +54,7 @@ describe('Security Headers (e2e)', () => {
     expect(res.headers['x-frame-options']).toBeDefined();
   });
 
-  it('should allow requests from the frontend origin', async () => {
+  it('should allow requests from the whitelisted frontend origin', async () => {
     const res = await request(app.getHttpServer())
       .options('/')
       .set('Origin', 'http://localhost:4200')
@@ -50,12 +62,33 @@ describe('Security Headers (e2e)', () => {
     expect(res.headers['access-control-allow-origin']).toBe(
       'http://localhost:4200',
     );
+    expect(res.headers['access-control-allow-credentials']).toBe('true');
   });
 
-  it('should reject requests from disallowed origins', async () => {
+  it('should set a preflight cache (Access-Control-Max-Age: 86400)', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/')
+      .set('Origin', 'http://localhost:4200')
+      .set('Access-Control-Request-Method', 'GET');
+    expect(res.headers['access-control-max-age']).toBe('86400');
+  });
+
+  it('should reject preflight requests from a non-whitelisted origin with 403', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/')
+      .set('Origin', 'http://evil.example.com')
+      .set('Access-Control-Request-Method', 'GET');
+    expect(res.status).toBe(HttpStatus.FORBIDDEN);
+    expect(res.headers['access-control-allow-origin']).not.toBe(
+      'http://evil.example.com',
+    );
+  });
+
+  it('should reject actual requests from a non-whitelisted origin with 403', async () => {
     const res = await request(app.getHttpServer())
       .get('/')
       .set('Origin', 'http://evil.example.com');
+    expect(res.status).toBe(HttpStatus.FORBIDDEN);
     expect(res.headers['access-control-allow-origin']).not.toBe(
       'http://evil.example.com',
     );
