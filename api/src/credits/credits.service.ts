@@ -21,6 +21,15 @@ const CREDIT_KEY = (id: string) => `credits:${id}`;
 const LIST_CREDITS_KEY = (filter: string) => `credits:list:${filter}`;
 const CREDIT_TTL = 120; // seconds
 
+// Cache tags — issue #540: targeted invalidation instead of `credits:*` KEYS scans.
+// Every individual credit is tagged with its own id so a single mutation only
+// touches that credit's key; every list query is tagged with the shared
+// CREDIT_LIST_TAG so all cached pages/filters can be dropped in one
+// O(members) sweep without ever scanning the wider `projects:*`/other
+// domains' keyspace.
+const CREDIT_TAG = (id: string) => `credit:${id}`;
+const CREDIT_LIST_TAG = 'credits:list';
+
 interface ListCreditsFilter {
   methodology?: string;
   geography?: string;
@@ -117,7 +126,12 @@ export class CreditsService {
     const indexed = await this.creditRepo.findById(creditId);
     if (indexed) {
       const metadata = this.entityToMetadata(indexed);
-      await this.cache.set(CREDIT_KEY(creditId), metadata, CREDIT_TTL);
+      await this.cache.setTagged(
+        CREDIT_KEY(creditId),
+        metadata,
+        [CREDIT_TAG(creditId)],
+        CREDIT_TTL,
+      );
       return metadata;
     }
 
@@ -138,7 +152,12 @@ export class CreditsService {
         );
       const native = scValToNative(retval);
       const metadata = this.mapToCreditMetadata(creditId, native);
-      await this.cache.set(CREDIT_KEY(creditId), metadata, CREDIT_TTL);
+      await this.cache.setTagged(
+        CREDIT_KEY(creditId),
+        metadata,
+        [CREDIT_TAG(creditId)],
+        CREDIT_TTL,
+      );
       return metadata;
     } catch (error: unknown) {
       this.logger.error(
@@ -262,7 +281,7 @@ export class CreditsService {
       page: filter.page,
       limit: filter.limit,
     };
-    await this.cache.set(cacheKey, result, CREDIT_TTL);
+    await this.cache.setTagged(cacheKey, result, [CREDIT_LIST_TAG], CREDIT_TTL);
     return result;
   }
 
@@ -480,10 +499,14 @@ export class CreditsService {
   /**
    * Invalidate all cached entries for a specific credit and the list cache.
    * Call this whenever a credit's status changes (approve, retire, flag).
+   *
+   * Issue #540: uses tag-based invalidation (O(members-of-tag)) instead of a
+   * `credits:*`/`credits:list:*` KEYS scan, so this stays fast regardless of
+   * how many unrelated keys (other domains, other credits) exist in Redis.
    */
   async invalidateCreditCache(creditId: string): Promise<void> {
     await this.cache.del(CREDIT_KEY(creditId));
-    await this.cache.delPattern('credits:list:*');
+    await this.cache.invalidateTag(CREDIT_LIST_TAG);
     this.logger.debug(`Cache invalidated for credit ${creditId}`);
   }
 
@@ -504,6 +527,69 @@ export class CreditsService {
         `Failed to list credits for project ${projectId}: ${(error as Error).message}`,
       );
       return [];
+    }
+  }
+
+  // ── Issue #541: contract-side count + pagination ──────────────────────────
+
+  /**
+   * Total number of credits ever issued, read directly from the contract's
+   * `TotalCredits` counter (O(1)) instead of fetching every credit ID and
+   * counting them in-process.
+   */
+  async getCreditCount(): Promise<number> {
+    try {
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_credit_count',
+        [],
+      );
+      if (!retval) return 0;
+      return Number(scValToNative(retval));
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to fetch credit count: ${(error as Error).message}`,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * One page of credit IDs owned by `owner`, fetched via the contract's
+   * `get_credits_by_owner_paginated`. Replaces the previous pattern of
+   * fetching an owner's full credit list and slicing it in-process.
+   */
+  async listCreditsByOwner(
+    owner: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ data: string[]; offset: number; limit: number }> {
+    try {
+      this.logger.log(
+        `Listing credits for owner ${owner} (offset=${offset}, limit=${limit})`,
+      );
+      const args = [
+        nativeToScVal(owner, { type: 'address' }),
+        nativeToScVal(offset, { type: 'u32' }),
+        nativeToScVal(limit, { type: 'u32' }),
+      ];
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_credits_by_owner_paginated',
+        args,
+      );
+      if (!retval) return { data: [], offset, limit };
+      const native = scValToNative(retval) as Buffer[];
+      return {
+        data: native.map((buf) => buf.toString('hex')),
+        offset,
+        limit,
+      };
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to list credits for owner ${owner}: ${(error as Error).message}`,
+      );
+      return { data: [], offset, limit };
     }
   }
 

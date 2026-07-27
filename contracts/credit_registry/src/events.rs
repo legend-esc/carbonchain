@@ -72,6 +72,17 @@ pub struct DisputeResolved {
     pub outcome: u32,
 }
 
+/// Emitted when a flagged credit's dispute is resolved via `resolve_flag`.
+#[contractevent]
+#[derive(Clone)]
+pub struct FlagResolved {
+    pub credit_id: BytesN<32>,
+    /// The verifier (or admin) who resolved the flag.
+    pub resolver: Address,
+    /// 0 = Confirmed (credit stays Flagged), 1 = Rejected (credit restored to Active).
+    pub resolution: u32,
+}
+
 #[contractevent]
 #[derive(Clone)]
 pub struct CreditExpired {
@@ -135,4 +146,39 @@ pub struct RetirementContractUpdated {
 pub struct VerifierServicesConfigured {
     pub verifier: Address,
     pub service_count: u32,
+}
+
+/// Emitted when a verifier deposits stake. `total` is the verifier's new locked balance.
+#[contractevent]
+#[derive(Clone)]
+pub struct StakeDeposited {
+    pub verifier: Address,
+    pub total: i128,
+}
+
+/// Emitted when `remove_verifier` initiates the 30-day unbonding period for a verifier's stake.
+#[contractevent]
+#[derive(Clone)]
+pub struct UnbondingInitiated {
+    pub verifier: Address,
+    pub amount: i128,
+    pub unlock_at: u64,
+}
+
+/// Emitted when a verifier withdraws stake after their unbonding period has elapsed.
+#[contractevent]
+#[derive(Clone)]
+pub struct StakeWithdrawn {
+    pub verifier: Address,
+    pub amount: i128,
+}
+
+/// Emitted when the admin slashes a verifier's stake for a malicious approval.
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierSlashed {
+    pub admin: Address,
+    pub verifier: Address,
+    pub amount: i128,
+    pub credit_id: BytesN<32>,
 }

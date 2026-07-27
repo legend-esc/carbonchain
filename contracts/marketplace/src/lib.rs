@@ -903,6 +903,7 @@ impl Marketplace {
     }
 
     /// Return a paginated list of all currently active offer IDs, capped at 50 per page.
+    /// Filters out expired offers before returning.
     ///
     /// `page` is 0-indexed. `page_size` is clamped to 50.
     pub fn list_active_offers(env: Env, page: u32, page_size: u32) -> Vec<u64> {
@@ -912,13 +913,29 @@ impl Marketplace {
             .persistent()
             .get(&DataKey::ActiveOffers)
             .unwrap_or_else(|| Vec::new(&env));
+        
+        let now = env.ledger().timestamp();
+        let mut filtered: Vec<u64> = Vec::new(&env);
+        
+        // Filter out expired offers
+        for id in all.iter() {
+            if let Some(offer) = env.storage().persistent().get::<_, Offer>(&DataKey::Offer(id)) {
+                if offer.active {
+                    let expired = offer.expires_at.is_some_and(|e| now > e);
+                    if !expired {
+                        filtered.push_back(id);
+                    }
+                }
+            }
+        }
+        
         let start = (page as usize) * page_size;
         let mut result: Vec<u64> = Vec::new(&env);
         for i in start..(start + page_size) {
-            if i >= all.len() as usize {
+            if i >= filtered.len() as usize {
                 break;
             }
-            result.push_back(all.get(i as u32).unwrap());
+            result.push_back(filtered.get(i as u32).unwrap());
         }
         result
     }
@@ -2015,5 +2032,83 @@ mod tests {
             &b2nonce,
         );
         assert_eq!(result, Err(Ok(MarketplaceError::AlreadyClosed)));
+    }
+
+    #[test]
+    fn test_buy_offer_expired_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) =
+            setup_with_token(&env);
+
+        let now = env.ledger().timestamp();
+        let expires_at = now + 100;
+        let price = 10_000_000i128;
+
+        // Seller creates offer with expiration
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &Some(expires_at),
+            &seller_nonce,
+        );
+
+        // Fast-forward ledger timestamp past expiration
+        env.ledger().set_timestamp(expires_at + 1);
+
+        // Buyer attempts to buy expired offer
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &price);
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &buyer_nonce,
+        );
+
+        // Should return OfferExpired error
+        assert_eq!(result, Err(Ok(MarketplaceError::OfferExpired)));
+
+        // Offer should still exist but buyer should not own the credit
+        let credit = registry.get_credit(&credit_id);
+        assert_ne!(credit.owner, buyer);
+    }
+
+    #[test]
+    fn test_list_active_offers_filters_expired() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, _token) =
+            setup_with_token(&env);
+
+        let now = env.ledger().timestamp();
+        let expires_at = now + 100;
+
+        // Create offer with expiration
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &500_000,
+            &registry.id,
+            &Some(expires_at),
+            &seller_nonce,
+        );
+
+        // Offer should appear in active list
+        assert_eq!(client.list_active_offers(&0, &50).len(), 1);
+
+        // Fast-forward past expiration
+        env.ledger().set_timestamp(expires_at + 1);
+
+        // Offer should no longer appear in active list
+        assert_eq!(client.list_active_offers(&0, &50).len(), 0);
     }
 }
