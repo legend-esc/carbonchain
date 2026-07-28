@@ -21,6 +21,7 @@ import { RetirementModule } from './retirement/retirement.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { EventsModule } from './events/events.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { OracleModule } from './oracle/oracle.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
 
@@ -69,6 +70,7 @@ import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
     MarketplaceModule,
     EventsModule,
     WebhooksModule,
+    OracleModule,
     MetricsModule,
   ],
   controllers: [AppController],
