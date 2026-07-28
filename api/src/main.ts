@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { ForbiddenException, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import compression = require('compression');
 import { AppModule } from './app.module';
 import { PinoNestLogger } from './common/pino-nest-logger.service';
 
@@ -15,6 +17,13 @@ async function bootstrap() {
 
   // #45 — security headers
   app.use(helmet());
+
+  // #588 — gzip compression for responses >1KB.
+  // level 6 balances CPU cost and compression ratio; threshold skips tiny
+  // payloads where gzip overhead would exceed the savings.
+  // The Vary: Accept-Encoding header is added automatically by the library,
+  // ensuring CDN/proxy caches store separate copies per encoding.
+  app.use(compression({ level: 6, threshold: 1024 }));
 
   // #542 — CORS: whitelist allowed origins from env, reject everything else.
   // Non-production environments always keep localhost:4200 whitelisted so
