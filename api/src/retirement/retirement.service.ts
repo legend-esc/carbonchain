@@ -140,6 +140,8 @@ export class RetirementService {
         ).toString('hex')
       : 'unknown';
 
+    const txHash = (response as rpc.Api.GetTransactionResponse).hash || '';
+
     // ── Step 1: Persist to off-chain index ───────────────────────────────────
     // The record MUST be written before the CreditRetired event is emitted.
     // If this write throws, the event is never emitted and the caller receives
@@ -151,7 +153,7 @@ export class RetirementService {
     entity.tonnesRetired = dto.tonnes;
     entity.reason = dto.reason;
     entity.retiredAt = Math.floor(Date.now() / 1000);
-    entity.txHash = '';
+    entity.txHash = txHash;
     await this.retirementRepo.save(entity);
 
     // ── Step 2: Emit CreditRetired event ─────────────────────────────────────
@@ -223,13 +225,28 @@ export class RetirementService {
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const txHash = (response as rpc.Api.GetTransactionResponse).hash || '';
     const retirementIds: string[] = rv
       ? (scValToNative(rv as Parameters<typeof scValToNative>[0]) as Uint8Array[]).map(
           (b) => Buffer.from(b).toString('hex'),
         )
       : [];
 
-    return { retirementIds };
+    // Persist batch retirement records with the batch transaction hash
+    const now = Math.floor(Date.now() / 1000);
+    for (const retirementId of retirementIds) {
+      const entity = new RetirementEntity();
+      entity.id = retirementId;
+      entity.creditId = '';
+      entity.buyer = dto.buyerPublicKey;
+      entity.tonnesRetired = '';
+      entity.reason = dto.reason;
+      entity.retiredAt = now;
+      entity.txHash = txHash;
+      await this.retirementRepo.save(entity);
+    }
+
+    return { retirementIds, txHash };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {

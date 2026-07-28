@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { CacheService } from '../common/cache.service';
 import { WebhooksService } from './webhooks.service';
 
 const mockConfigService = {
@@ -10,6 +11,11 @@ const mockConfigService = {
   }),
 };
 
+const mockCacheService = {
+  get: jest.fn().mockResolvedValue(null),
+  set: jest.fn().mockResolvedValue(undefined),
+};
+
 describe('WebhooksService', () => {
   let service: WebhooksService;
 
@@ -18,10 +24,16 @@ describe('WebhooksService', () => {
       providers: [
         WebhooksService,
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: CacheService, useValue: mockCacheService },
       ],
     }).compile();
 
     service = module.get<WebhooksService>(WebhooksService);
+    await service.onModuleInit();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
   });
 
   it('should be defined', () => {
@@ -75,13 +87,12 @@ describe('WebhooksService', () => {
     });
   });
 
-  describe('getDeliveries', () => {
-    it('should return deliveries for a webhook', async () => {
+  describe('triggerWebhooks', () => {
+    it('should enqueue delivery without awaiting HTTP call', async () => {
       const webhook = service.registerWebhook('https://example.com/webhook', [
         'credit_submitted',
       ]);
 
-      // Trigger webhook (will fail due to invalid URL, but delivery will be recorded)
       await service.triggerWebhooks('credit_submitted', {
         id: 'event-1',
         type: 'credit_submitted',
@@ -89,6 +100,7 @@ describe('WebhooksService', () => {
 
       const deliveries = service.getDeliveries(webhook.id);
       expect(deliveries.length).toBeGreaterThan(0);
+      expect(deliveries[0].status).toBe('pending');
     });
   });
 

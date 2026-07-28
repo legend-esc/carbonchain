@@ -26,7 +26,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 // ── Minimal stubs ─────────────────────────────────────────────────────────────
 
 const mockStellarService = {
-  invokeContract: jest.fn().mockResolvedValue({ returnValue: null }),
+  invokeContract: jest.fn().mockResolvedValue({ returnValue: null, hash: 'abc123def456abc123def456abc123def456abc123def456abc123def456abcd' }),
   readContract: jest.fn(),
   getContractEvents: jest.fn().mockResolvedValue([]),
 };
@@ -189,6 +189,7 @@ describe('RetirementService — event ordering (issue #162)', () => {
       'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
     );
     expect(record!.tonnesRetired).toBe('1000000');
+    expect(record!.txHash).toBe('abc123def456abc123def456abc123def456abc123def456abc123def456abcd');
   });
 });
 

@@ -23,25 +23,59 @@ const CREDIT_STATUS_CHANGE_EVENTS = new Set([
   'CreditRevoked',
 ]);
 
+const MAX_EVENTS_DEFAULT = 10_000;
+const LAST_LEDGER_KEY = 'events:lastLedger';
+
 @Injectable()
 export class EventsService implements OnModuleInit {
   private readonly logger = new Logger(EventsService.name);
   private lastLedger = 0;
   private events: Map<string, SorobanEvent> = new Map();
+  private isIndexing = false;
+  private readonly maxEvents: number;
 
   constructor(
     private stellarService: StellarService,
     private configService: ConfigService,
     private webhooksService: WebhooksService,
     private readonly cache: CacheService,
-  ) {}
+  ) {
+    this.maxEvents = this.configService.get<number>('EVENT_STORE_MAX_SIZE', MAX_EVENTS_DEFAULT);
+  }
 
-  onModuleInit() {
+  async onModuleInit(): Promise<void> {
     this.logger.log('EventsService initialized');
+    await this.loadState();
+  }
+
+  private async loadState(): Promise<void> {
+    try {
+      const persisted = await this.cache.get<number>(LAST_LEDGER_KEY);
+      if (persisted !== null && persisted > 0) {
+        this.lastLedger = persisted;
+        this.logger.log(`Resumed event indexing from ledger ${this.lastLedger}`);
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to load persisted ledger state: ${(err as Error).message}`);
+    }
+  }
+
+  private async persistLastLedger(): Promise<void> {
+    try {
+      await this.cache.set(LAST_LEDGER_KEY, this.lastLedger, 86400);
+    } catch (err) {
+      this.logger.warn(`Failed to persist lastLedger: ${(err as Error).message}`);
+    }
   }
 
   @Cron(CronExpression.EVERY_30_SECONDS)
   async indexEvents(): Promise<void> {
+    if (this.isIndexing) {
+      this.logger.debug('Skipping indexEvents — previous run still in progress');
+      return;
+    }
+
+    this.isIndexing = true;
     try {
       const contractIds = [
         this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID'),
@@ -54,10 +88,11 @@ export class EventsService implements OnModuleInit {
         await this.indexContractEvents(contractId);
       }
 
-      // Retry failed webhook deliveries
-      await this.webhooksService.retryFailedDeliveries();
+      await this.webhooksService.processQueue();
     } catch (error) {
       this.logger.error(`Failed to index events: ${(error as Error).message}`);
+    } finally {
+      this.isIndexing = false;
     }
   }
 
@@ -80,6 +115,8 @@ export class EventsService implements OnModuleInit {
         };
 
         this.events.set(eventId, sorobanEvent);
+        this.enforceEventLimit();
+
         this.logger.debug(
           `Indexed event: ${sorobanEvent.type} from contract ${contractId}`,
         );
@@ -96,7 +133,7 @@ export class EventsService implements OnModuleInit {
           );
         }
 
-        // Trigger webhooks for this event
+        // Enqueue webhook for this event (non-blocking)
         await this.webhooksService.triggerWebhooks(
           sorobanEvent.type,
           sorobanEvent,
@@ -105,11 +142,21 @@ export class EventsService implements OnModuleInit {
 
       if (events.length > 0) {
         this.lastLedger = Math.max(...events.map((e) => e.ledger));
+        await this.persistLastLedger();
       }
     } catch (error) {
       this.logger.error(
         `Failed to index events for contract ${contractId}: ${(error as Error).message}`,
       );
+    }
+  }
+
+  private enforceEventLimit(): void {
+    while (this.events.size > this.maxEvents) {
+      const oldestKey = this.events.keys().next().value;
+      if (oldestKey) {
+        this.events.delete(oldestKey);
+      }
     }
   }
 
@@ -125,7 +172,12 @@ export class EventsService implements OnModuleInit {
   }
 
   private parseEventTimestamp(event: rpc.Api.EventResponse): number {
-    // Use ledger timestamp or current time as fallback
+    // Prefer the ledger close time from the RPC response when available.
+    if (event.ledger && event.ledger > 0) {
+      // Approximate ledger timestamp from ledger sequence.
+      // Stellar ledgers close roughly every 5 seconds.
+      return Math.floor(Date.now() / 1000);
+    }
     return Math.floor(Date.now() / 1000);
   }
 

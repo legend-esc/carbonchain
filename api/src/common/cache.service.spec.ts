@@ -13,7 +13,7 @@ const mockRedisClient = {
   get: jest.fn(),
   set: jest.fn().mockResolvedValue('OK'),
   del: jest.fn().mockResolvedValue(1),
-  keys: jest.fn().mockResolvedValue([]),
+  scan: jest.fn().mockResolvedValue({ cursor: '0', keys: [] }),
   on: jest.fn(),
 };
 
@@ -133,12 +133,16 @@ describe('CacheService', () => {
 
   // ── delPattern ───────────────────────────────────────────────────────────
 
-  it('delPattern() deletes all keys matching the pattern', async () => {
-    mockRedisClient.keys.mockResolvedValue([
-      'credits:list:1',
-      'credits:list:2',
-    ]);
+  it('delPattern() uses SCAN to find matching keys', async () => {
+    mockRedisClient.scan.mockResolvedValueOnce({
+      cursor: '0',
+      keys: ['credits:list:1', 'credits:list:2'],
+    });
     await service.delPattern('credits:list:*');
+    expect(mockRedisClient.scan).toHaveBeenCalledWith('0', {
+      MATCH: 'credits:list:*',
+      COUNT: 100,
+    });
     expect(mockRedisClient.del).toHaveBeenCalledWith([
       'credits:list:1',
       'credits:list:2',
@@ -146,9 +150,46 @@ describe('CacheService', () => {
   });
 
   it('delPattern() is a no-op when no keys match', async () => {
-    mockRedisClient.keys.mockResolvedValue([]);
+    mockRedisClient.scan.mockResolvedValue({ cursor: '0', keys: [] });
     await service.delPattern('credits:list:*');
     expect(mockRedisClient.del).not.toHaveBeenCalled();
+  });
+
+  it('delPattern() does not throw when Redis errors', async () => {
+    mockRedisClient.scan.mockRejectedValue(new Error('scan failed'));
+    await expect(service.delPattern('credits:*')).resolves.toBeUndefined();
+  });
+
+  it('delPattern() handles paginated SCAN results', async () => {
+    mockRedisClient.scan
+      .mockResolvedValueOnce({ cursor: '1', keys: ['credits:list:1'] })
+      .mockResolvedValueOnce({ cursor: '0', keys: ['credits:list:2'] });
+    await service.delPattern('credits:list:*');
+    expect(mockRedisClient.scan).toHaveBeenCalledTimes(2);
+    expect(mockRedisClient.del).toHaveBeenCalledWith([
+      'credits:list:1',
+      'credits:list:2',
+    ]);
+  });
+
+  // ── circuit breaker ──────────────────────────────────────────────────────
+
+  it('opens circuit breaker after repeated failures', async () => {
+    mockRedisClient.get.mockRejectedValue(new Error('connection lost'));
+    for (let i = 0; i < 6; i++) {
+      await service.get('key');
+    }
+    expect(service.isConnected).toBe(false);
+  });
+
+  it('get() returns null when circuit breaker is open', async () => {
+    mockRedisClient.get.mockRejectedValue(new Error('connection lost'));
+    for (let i = 0; i < 6; i++) {
+      await service.get('key');
+    }
+    const result = await service.get('key');
+    expect(result).toBeNull();
+    expect(mockRedisClient.get).toHaveBeenCalledTimes(6);
   });
 
   // ── no-op mode (no REDIS_URL) ─────────────────────────────────────────────

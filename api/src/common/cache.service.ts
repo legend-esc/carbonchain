@@ -14,6 +14,15 @@ export class CacheService implements OnModuleDestroy {
   private client: RedisClientType | null = null;
   private readonly defaultTtlSeconds: number;
 
+  // Circuit breaker state for graceful degradation when Redis is unavailable.
+  private readonly circuitBreaker = {
+    failures: 0,
+    lastFailureAt: 0,
+    threshold: 5,
+    windowMs: 5_000,
+    open: false,
+  };
+
   constructor(private readonly config: ConfigService) {
     this.defaultTtlSeconds = config.get<number>('CACHE_TTL_SECONDS', 60);
   }
@@ -30,16 +39,19 @@ export class CacheService implements OnModuleDestroy {
 
     try {
       this.client = createClient({ url });
-      this.client.on('error', (err: Error) =>
-        this.logger.error(`Redis client error: ${err.message}`),
-      );
+      this.client.on('error', (err: Error) => {
+        this.logger.error(`Redis client error: ${err.message}`);
+        this.recordFailure();
+      });
       await this.client.connect();
       this.logger.log(`Connected to Redis at ${url}`);
+      this.resetCircuitBreaker();
     } catch (err) {
       this.logger.error(
         `Failed to connect to Redis: ${(err as Error).message}`,
       );
       this.client = null;
+      this.recordFailure();
     }
   }
 
@@ -49,18 +61,52 @@ export class CacheService implements OnModuleDestroy {
     }
   }
 
+  private recordFailure(): void {
+    const now = Date.now();
+    if (now - this.circuitBreaker.lastFailureAt > this.circuitBreaker.windowMs) {
+      this.circuitBreaker.failures = 1;
+    } else {
+      this.circuitBreaker.failures++;
+    }
+    this.circuitBreaker.lastFailureAt = now;
+    if (this.circuitBreaker.failures >= this.circuitBreaker.threshold) {
+      this.circuitBreaker.open = true;
+      this.logger.warn(
+        `Redis circuit breaker opened after ${this.circuitBreaker.failures} failures within ${this.circuitBreaker.windowMs}ms — serving cache-miss`,
+      );
+    }
+  }
+
+  private resetCircuitBreaker(): void {
+    this.circuitBreaker.failures = 0;
+    this.circuitBreaker.lastFailureAt = 0;
+    this.circuitBreaker.open = false;
+  }
+
+  private isCacheAvailable(): boolean {
+    if (!this.client || !this.client.isOpen) {
+      this.recordFailure();
+      return false;
+    }
+    if (this.circuitBreaker.open) {
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Retrieve a cached value. Returns `null` on cache miss or when Redis is unavailable.
    */
   async get<T>(key: string): Promise<T | null> {
-    if (!this.client) return null;
+    if (!this.isCacheAvailable()) return null;
     try {
-      const raw = await this.client.get(key);
+      const raw = await this.client!.get(key);
       return raw ? (JSON.parse(raw) as T) : null;
     } catch (err) {
       this.logger.warn(
         `Cache GET failed for key "${key}": ${(err as Error).message}`,
       );
+      this.recordFailure();
       return null;
     }
   }
@@ -69,14 +115,15 @@ export class CacheService implements OnModuleDestroy {
    * Store a value with an optional TTL (seconds). Defaults to CACHE_TTL_SECONDS env var.
    */
   async set(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
-    if (!this.client) return;
+    if (!this.isCacheAvailable()) return;
     try {
       const ttl = ttlSeconds ?? this.defaultTtlSeconds;
-      await this.client.set(key, JSON.stringify(value), { EX: ttl });
+      await this.client!.set(key, JSON.stringify(value), { EX: ttl });
     } catch (err) {
       this.logger.warn(
         `Cache SET failed for key "${key}": ${(err as Error).message}`,
       );
+      this.recordFailure();
     }
   }
 
@@ -84,25 +131,37 @@ export class CacheService implements OnModuleDestroy {
    * Delete one or more keys. Used for cache invalidation.
    */
   async del(...keys: string[]): Promise<void> {
-    if (!this.client || keys.length === 0) return;
+    if (!this.isCacheAvailable() || keys.length === 0) return;
     try {
-      await this.client.del(keys);
+      await this.client!.del(keys);
     } catch (err) {
       this.logger.warn(
         `Cache DEL failed for keys [${keys.join(', ')}]: ${(err as Error).message}`,
       );
+      this.recordFailure();
     }
   }
 
   /**
    * Delete all keys matching a glob pattern (e.g. `credits:*`).
+   * Uses SCAN internally to avoid blocking the Redis event loop.
    */
   async delPattern(pattern: string): Promise<void> {
-    if (!this.client) return;
+    if (!this.isCacheAvailable()) return;
     try {
-      const keys = await this.client.keys(pattern);
+      const keys: string[] = [];
+      let cursor: string = '0';
+      do {
+        const result = await this.client!.scan(cursor, {
+          MATCH: pattern,
+          COUNT: 100,
+        });
+        cursor = result.cursor;
+        keys.push(...result.keys);
+      } while (cursor !== '0');
+
       if (keys.length > 0) {
-        await this.client.del(keys);
+        await this.client!.del(keys);
         this.logger.debug(
           `Invalidated ${keys.length} keys matching "${pattern}"`,
         );
@@ -111,11 +170,12 @@ export class CacheService implements OnModuleDestroy {
       this.logger.warn(
         `Cache DEL pattern "${pattern}" failed: ${(err as Error).message}`,
       );
+      this.recordFailure();
     }
   }
 
-  /** Returns true when a live Redis connection is available. */
+  /** Returns true when a live Redis connection is available and circuit breaker is closed. */
   get isConnected(): boolean {
-    return this.client !== null && this.client.isOpen;
+    return this.isCacheAvailable();
   }
 }
