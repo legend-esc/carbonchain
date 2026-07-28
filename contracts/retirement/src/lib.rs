@@ -206,6 +206,9 @@ impl Retirement {
             reason,
             retired_at: env.ledger().timestamp(),
             certificate_ipfs_hash: String::from_str(&env, ""),
+            // Issue #589 — capture vintage year from credit metadata so the
+            // retirement record is self-contained for compliance auditing.
+            vintage_year: credit.vintage_year,
         };
 
         env.storage()
@@ -342,6 +345,8 @@ impl Retirement {
                 reason: reason.clone(),
                 retired_at: env.ledger().timestamp(),
                 certificate_ipfs_hash: String::from_str(&env, ""),
+                // Issue #589 — capture vintage year from credit metadata.
+                vintage_year: credit.vintage_year,
             };
 
             env.storage()
@@ -688,6 +693,34 @@ mod tests {
         assert_eq!(record.buyer, credit_owner);
         assert_eq!(record.tonnes_retired, 1_000_000);
         assert_eq!(record.credit_id, credit_id);
+    }
+
+    /// Issue #589 — vintage year must be captured from credit metadata and
+    /// stored on the RetirementRecord so certificates can show full provenance.
+    #[test]
+    fn test_retire_stores_vintage_year() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // setup() submits a credit with vintage_year 2024
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let nonce = client.get_nonce(&credit_owner);
+
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "2024 Scope 3 offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let record = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(
+            record.vintage_year, 2024,
+            "vintage_year must be populated from credit metadata on retirement"
+        );
     }
 
     #[test]

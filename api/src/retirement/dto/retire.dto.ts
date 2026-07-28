@@ -25,4 +25,6 @@ export class FullRetireDto {
   tonnes: string;
   reason: string;
   nonce: number;
+  /** Issue #589 — vintage year from credit metadata; stored on the retirement record. */
+  vintageYear?: number;
 }

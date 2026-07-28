@@ -10,6 +10,8 @@ export interface CertificateData {
   tonnes: string;
   reason: string;
   timestamp: number;
+  /** Issue #589 — vintage year of the credit (e.g. 2024). */
+  vintageYear?: number;
 }
 
 /**
