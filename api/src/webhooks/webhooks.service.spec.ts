@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { CacheService } from '../common/cache.service';
+import axios from 'axios';
 import { WebhooksService } from './webhooks.service';
+
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 const mockConfigService = {
   get: jest.fn((key: string, def?: string) => {
@@ -20,6 +24,9 @@ describe('WebhooksService', () => {
   let service: WebhooksService;
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+    mockedAxios.post = jest.fn().mockResolvedValue({ status: 200 });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WebhooksService,

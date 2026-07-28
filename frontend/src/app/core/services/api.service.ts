@@ -92,7 +92,7 @@ export class ApiService {
   /** POST /projects */
   createProject(data: Omit<ProjectProfile, 'id'>, token: string): Observable<ProjectProfile> {
     return this.http.post<ProjectProfile>(`${this.baseUrl}/projects`, data, {
-      headers: this.authHeaders(token),
+      headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()),
     });
   }
 
@@ -101,6 +101,19 @@ export class ApiService {
   /** GET /credits/:id */
   getCredit(id: string): Observable<CreditMetadata> {
     return this.http.get<CreditMetadata>(`${this.baseUrl}/credits/${id}`);
+  }
+
+  /** POST /credits/:id/split */
+  splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Observable<{ childCredit1: string; childCredit2: string }> {
+    return this.http.post<{ childCredit1: string; childCredit2: string }>(
+      `${this.baseUrl}/credits/${creditId}/split`,
+      { splitTonnes },
+      { headers: this.authHeaders(token) },
+    );
   }
 
   /** GET /credits/:id/provenance */
@@ -118,6 +131,20 @@ export class ApiService {
   /** GET /marketplace/listings — all active offers */
   getListings(): Observable<Offer[]> {
     return this.http.get<Offer[]>(`${this.baseUrl}/marketplace/listings`);
+  }
+
+  /**
+   * GET /marketplace/listings — cursor-based pagination.
+   * Pass `cursor` from a previous response's `next_cursor` to get the next page.
+   * When `cursor` is omitted the first page is returned.
+   */
+  getListingsCursor(
+    params: Record<string, string>,
+  ): Observable<{ data: Offer[]; next_cursor: string | null; limit: number }> {
+    return this.http.get<{ data: Offer[]; next_cursor: string | null; limit: number }>(
+      `${this.baseUrl}/credits`,
+      { params },
+    );
   }
 
   /** GET /marketplace/offer/:id */
@@ -138,7 +165,7 @@ export class ApiService {
     token: string,
   ): Observable<{ retirementId: string }> {
     return this.http.post<{ retirementId: string }>(`${this.baseUrl}/retirement`, body, {
-      headers: this.authHeaders(token),
+      headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()),
     });
   }
 
@@ -147,13 +174,26 @@ export class ApiService {
     return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/retirement/${id}`);
   }
 
+  /** GET /certificates/:id — fetch a retirement certificate by ID */
+  getCertificate(id: string): Observable<import('@shared').RetirementRecord> {
+    return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/certificates/${id}`);
+  }
+
+  /** GET /certificates/:id/download — returns a PDF blob */
+  downloadCertificate(id: string, token: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/certificates/${id}/download`, {
+      headers: this.authHeaders(token),
+      responseType: 'blob',
+    });
+  }
+
   /** POST /marketplace/offer */
   createOffer(
     body: { sellerPublicKey: string; creditId: string; priceXlm: string; tonnes: string },
     token: string,
   ): Observable<{ offerId: string }> {
     return this.http.post<{ offerId: string }>(`${this.baseUrl}/marketplace/offer`, body, {
-      headers: this.authHeaders(token),
+      headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()),
     });
   }
 
@@ -203,6 +243,51 @@ export class ApiService {
     return this.http.post<{ configured: boolean; verifierId: string }>(
       `${this.baseUrl}/admin/verifiers/${id}/configure`,
       config,
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * POST /admin/methodologies — register a new carbon credit methodology.
+   * Requires admin JWT.
+   */
+  registerMethodology(
+    name: string,
+    description: string,
+    token: string,
+  ): Observable<{ registered: boolean; name: string; description: string }> {
+    return this.http.post<{ registered: boolean; name: string; description: string }>(
+      `${this.baseUrl}/admin/methodologies`,
+      { name, description },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * GET /admin/nonce/:address — fetch the current replay-protection nonce.
+   * Must be called before every mutating admin action.
+   */
+  getAdminNonce(
+    address: string,
+    token: string,
+  ): Observable<{ address: string; nonce: number }> {
+    return this.http.get<{ address: string; nonce: number }>(
+      `${this.baseUrl}/admin/nonce/${address}`,
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * POST /admin/required-approvals — set the minimum verifier approval threshold.
+   * Requires admin JWT.
+   */
+  setRequiredApprovals(
+    threshold: number,
+    token: string,
+  ): Observable<{ requiredApprovals: number }> {
+    return this.http.post<{ requiredApprovals: number }>(
+      `${this.baseUrl}/admin/required-approvals`,
+      { threshold },
       { headers: this.authHeaders(token) },
     );
   }

@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { StreamableFile, NotFoundException } from '@nestjs/common';
 import { RetirementController } from './retirement.controller';
 import { RetirementService } from './retirement.service';
 import { CertificateService } from './certificate.service';
 import { NotFoundException } from '@nestjs/common';
-import { RetirementRecord } from '../shared';
+import { RetirementRecord } from '../../../shared';
 
 const mockRetirementService = {
   retire: jest.fn(),
@@ -20,8 +21,6 @@ const mockCertificateService = {
 
 describe('RetirementController', () => {
   let controller: RetirementController;
-  let retirementService: RetirementService;
-  let certificateService: CertificateService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -33,8 +32,6 @@ describe('RetirementController', () => {
     }).compile();
 
     controller = module.get<RetirementController>(RetirementController);
-    retirementService = module.get<RetirementService>(RetirementService);
-    certificateService = module.get<CertificateService>(CertificateService);
   });
 
   afterEach(() => {
@@ -42,7 +39,7 @@ describe('RetirementController', () => {
   });
 
   describe('downloadCertificate', () => {
-    it('should generate and return PDF with correct headers', async () => {
+    it('should return a StreamableFile with correct type and disposition', async () => {
       const retirementId = 'test-retirement-id';
       const mockRetirement: RetirementRecord = {
         id: retirementId,
@@ -53,24 +50,40 @@ describe('RetirementController', () => {
         retired_at: 1234567890,
         tx_hash: 'hash-123',
       };
-
       const mockPdfBuffer = Buffer.from('PDF content');
 
-      mockRetirementService.getRetirement.mockResolvedValueOnce(
-        mockRetirement,
-      );
+      mockRetirementService.getRetirement.mockResolvedValueOnce(mockRetirement);
       mockCertificateService.generatePdf.mockResolvedValueOnce(mockPdfBuffer);
 
-      const mockResponse = {
-        setHeader: jest.fn(),
-        send: jest.fn(),
-      } as any;
+      const result = await controller.downloadCertificate(retirementId);
 
-      await controller.downloadCertificate(retirementId, mockResponse);
-
-      expect(mockRetirementService.getRetirement).toHaveBeenCalledWith(
-        retirementId,
+      expect(result).toBeInstanceOf(StreamableFile);
+      // Verify the StreamableFile carries the correct metadata.
+      const options = (result as StreamableFile).getHeaders();
+      expect(options['content-type']).toBe('application/pdf');
+      expect(options['content-disposition']).toBe(
+        `attachment; filename="retirement-certificate-${retirementId}.pdf"`,
       );
+    });
+
+    it('should call generatePdf with the correct CertificateData', async () => {
+      const retirementId = 'abc-123';
+      const mockRetirement: RetirementRecord = {
+        id: retirementId,
+        credit_id: 'credit-456',
+        buyer: 'GBUYER',
+        tonnes_retired: '2000000',
+        reason: 'Scope 3',
+        retired_at: 9999999,
+        tx_hash: 'txhash',
+      };
+      const mockPdfBuffer = Buffer.from('%PDF-1.4');
+
+      mockRetirementService.getRetirement.mockResolvedValueOnce(mockRetirement);
+      mockCertificateService.generatePdf.mockResolvedValueOnce(mockPdfBuffer);
+
+      await controller.downloadCertificate(retirementId);
+
       expect(mockCertificateService.generatePdf).toHaveBeenCalledWith({
         retirementId,
         creditId: mockRetirement.credit_id,
@@ -79,36 +92,22 @@ describe('RetirementController', () => {
         reason: mockRetirement.reason,
         timestamp: mockRetirement.retired_at,
       });
-      expect(mockResponse.setHeader).toHaveBeenCalledWith(
-        'Content-Type',
-        'application/pdf',
-      );
-      expect(mockResponse.setHeader).toHaveBeenCalledWith(
-        'Content-Disposition',
-        `attachment; filename="certificate-${retirementId}.pdf"`,
-      );
-      expect(mockResponse.send).toHaveBeenCalledWith(mockPdfBuffer);
     });
 
-    it('should throw NotFoundException when retirement not found', async () => {
+    it('should throw NotFoundException when retirement is not found', async () => {
       const retirementId = 'non-existent-id';
 
+      // Service returns null to simulate a missing record.
       mockRetirementService.getRetirement.mockResolvedValueOnce(null);
 
-      const mockResponse = {
-        setHeader: jest.fn(),
-        send: jest.fn(),
-      } as any;
-
-      await expect(
-        controller.downloadCertificate(retirementId, mockResponse),
-      ).rejects.toThrow(NotFoundException);
-      expect(mockRetirementService.getRetirement).toHaveBeenCalledWith(
-        retirementId,
+      await expect(controller.downloadCertificate(retirementId)).rejects.toThrow(
+        NotFoundException,
       );
+      expect(mockRetirementService.getRetirement).toHaveBeenCalledWith(retirementId);
+      expect(mockCertificateService.generatePdf).not.toHaveBeenCalled();
     });
 
-    it('should handle certificate generation errors gracefully', async () => {
+    it('should propagate errors from generatePdf', async () => {
       const retirementId = 'test-id';
       const mockRetirement: RetirementRecord = {
         id: retirementId,
@@ -120,21 +119,20 @@ describe('RetirementController', () => {
         tx_hash: 'hash-123',
       };
 
-      mockRetirementService.getRetirement.mockResolvedValueOnce(
-        mockRetirement,
-      );
+      mockRetirementService.getRetirement.mockResolvedValueOnce(mockRetirement);
       mockCertificateService.generatePdf.mockRejectedValueOnce(
         new Error('PDF generation failed'),
       );
 
-      const mockResponse = {
-        setHeader: jest.fn(),
-        send: jest.fn(),
-      } as any;
+      await expect(controller.downloadCertificate(retirementId)).rejects.toThrow(
+        'PDF generation failed',
+      );
+    });
 
-      await expect(
-        controller.downloadCertificate(retirementId, mockResponse),
-      ).rejects.toThrow('PDF generation failed');
+    it('should not use @Res() — method signature has no Response parameter', () => {
+      // Verify the handler accepts only `certificateId` (no raw Response injection).
+      const paramLength = controller.downloadCertificate.length;
+      expect(paramLength).toBe(1);
     });
   });
 });

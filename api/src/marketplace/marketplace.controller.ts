@@ -9,11 +9,12 @@ import {
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { MarketplaceService } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
-import { Offer } from '../shared';
+import { Offer } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
 
 @ApiTags('marketplace')
 @Controller('marketplace')
@@ -26,6 +27,7 @@ export class MarketplaceController {
   @ApiQuery({ name: 'methodology', required: false, type: String })
   @ApiQuery({ name: 'minPrice', required: false, type: Number })
   @ApiQuery({ name: 'maxPrice', required: false, type: Number })
+  @UseReplicaForRead()
   @Get('listings')
   getListings(
     @Query('page') page = '1',
@@ -43,7 +45,9 @@ export class MarketplaceController {
     });
   }
 
-  /** POST /marketplace/offer — protected: requires JWT */
+  @ApiOperation({ summary: 'Create a new marketplace offer' })
+  @ApiResponse({ status: 201, description: 'Offer created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post('offer')
   createOffer(@Body() dto: CreateOfferDto): Promise<{ offerId: string }> {
@@ -51,6 +55,7 @@ export class MarketplaceController {
   }
 
   @ApiOperation({ summary: 'Get offer by ID' })
+  @UseReplicaForRead()
   @Get('offer/:id')
   getOffer(@Param('id', ParseIntPipe) id: number): Promise<Offer> {
     return this.marketplaceService.getOffer(id);
@@ -71,7 +76,10 @@ export class MarketplaceController {
     return this.marketplaceService.cancelOffer(address, id);
   }
 
-  /** POST /marketplace/offer/:id/buy — protected: requires JWT */
+  @ApiOperation({ summary: 'Buy an offer from the marketplace' })
+  @ApiResponse({ status: 200, description: 'Offer purchased' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 410, description: 'Offer has expired' })
   @UseGuards(JwtAuthGuard)
   @Post('offer/:id/buy')
   buyOffer(

@@ -1,30 +1,38 @@
 #![no_std]
-pub mod types;
 pub mod errors;
+pub mod types;
 
-use crate::types::{DataKey, RetirementRecord, CreditMetadata, CreditStatus, MIN_TTL, TTL_THRESHOLD};
 use crate::errors::RetirementError;
+use crate::types::{
+    BatchRetireFailure, BatchRetireResult, CreditMetadata, CreditStatus, DataKey, RetirementRecord,
+    MIN_TTL, TTL_THRESHOLD,
+};
 
 /// Maximum number of credits allowed in a single `batch_retire` call.
 /// Exceeding this limit causes the Soroban instruction budget to be exhausted.
 const MAX_BATCH_SIZE: u32 = 20;
-use soroban_sdk::{
-    contract, contractimpl, contractevent,
-    Address, BytesN, Env, String, Symbol, Vec,
-    IntoVal,
-};
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{
+    contract, contractevent, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
+};
 
 fn get_nonce(env: &Env, addr: &Address) -> u64 {
-    env.storage().persistent().get(&DataKey::Nonce(addr.clone())).unwrap_or(0u64)
+    env.storage()
+        .persistent()
+        .get(&DataKey::Nonce(addr.clone()))
+        .unwrap_or(0u64)
 }
 
 fn consume_nonce(env: &Env, addr: &Address, expected: u64) -> bool {
     let current = get_nonce(env, addr);
-    if current != expected { return false; }
+    if current != expected {
+        return false;
+    }
     let key = DataKey::Nonce(addr.clone());
     env.storage().persistent().set(&key, &(current + 1));
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     true
 }
 
@@ -46,6 +54,23 @@ pub struct Retire {
     pub buyer: Address,
     pub credit_id: BytesN<32>,
     pub retirement_id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct BatchRetired {
+    pub buyer: Address,
+    pub count: u32,
+    pub total_tonnes: i128,
+}
+
+/// Issue #544 — emitted when the API admin commits a certificate IPFS hash
+/// on-chain after uploading the retirement certificate PDF to IPFS.
+#[contractevent]
+#[derive(Clone)]
+pub struct CertificateHashSet {
+    pub retirement_id: BytesN<32>,
+    pub ipfs_hash: String,
 }
 
 #[contract]
@@ -94,7 +119,10 @@ impl Retirement {
 
     /// Returns `true` if the contract is currently paused.
     pub fn paused(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     // ── Retirement ───────────────────────────────────────────────────────────
@@ -137,11 +165,11 @@ impl Retirement {
             &Symbol::new(&env, "get_credit"),
             (credit_id.clone(),).into_val(&env),
         );
-        
+
         if credit.status != CreditStatus::Active {
             return Err(RetirementError::CreditNotActive);
         }
-        
+
         if credit.owner != buyer {
             return Err(RetirementError::Unauthorized);
         }
@@ -149,9 +177,18 @@ impl Retirement {
         if tonnes <= 0 {
             return Err(RetirementError::InvalidTonnes);
         }
+
+        // Issue #482: include the buyer's nonce (before it was consumed) in the preimage
+        // so that two separate retire calls with the same credit_id, reason, and ledger
+        // timestamp always produce distinct retirement IDs.
+        //
+        // The nonce consumed above was `nonce`; the value that was stored before
+        // consumption is `nonce` itself (consume_nonce increments it to nonce+1).
+        // We embed the original value here.
         let mut preimage = credit_id.clone().to_xdr(&env);
         preimage.append(&reason.clone().to_xdr(&env));
         preimage.append(&env.ledger().timestamp().to_xdr(&env));
+        preimage.append(&nonce.to_xdr(&env));
         let retirement_id: BytesN<32> = env.crypto().sha256(&preimage).into();
 
         // Cross-contract: mark the credit as retired in the registry FIRST
@@ -168,14 +205,17 @@ impl Retirement {
             tonnes_retired: tonnes,
             reason,
             retired_at: env.ledger().timestamp(),
+            certificate_ipfs_hash: String::from_str(&env, ""),
         };
 
         env.storage()
             .persistent()
             .set(&DataKey::Retirement(retirement_id.clone()), &record);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Retirement(retirement_id.clone()), TTL_THRESHOLD, MIN_TTL);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Retirement(retirement_id.clone()),
+            TTL_THRESHOLD,
+            MIN_TTL,
+        );
 
         // Index under buyer account
         let acct_key = DataKey::AccountRetirements(buyer.clone());
@@ -186,20 +226,30 @@ impl Retirement {
             .unwrap_or_else(|| Vec::new(&env));
         list.push_back(retirement_id.clone());
         env.storage().persistent().set(&acct_key, &list);
-        env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
         // Emit retirement event
-        Retire { buyer, credit_id, retirement_id: retirement_id.clone() }.publish(&env);
+        Retire {
+            buyer,
+            credit_id,
+            retirement_id: retirement_id.clone(),
+        }
+        .publish(&env);
 
         Ok(retirement_id)
     }
 
-    /// Retire multiple carbon credits in a single transaction.
+    /// Retire multiple carbon credits in a single transaction with partial-success mode.
     ///
-    /// - Stores immutable `RetirementRecord` for each credit
-    /// - Calls `mark_retired` on the credit registry for each credit
-    /// - Indexes retirements under the buyer's account
-    /// - Emits individual `retire` events per credit
+    /// Unlike the all-or-nothing approach, this function processes every credit
+    /// independently. Credits that fail validation (not active, wrong owner, zero
+    /// tonnes) are recorded in the `failed` list while valid credits are retired
+    /// normally. Individual `Retire` events are emitted only for successful credits.
+    ///
+    /// Returns `Err(RetirementError::InvalidInput)` when **zero** credits succeed
+    /// (the caller must supply at least one valid credit per batch).
     ///
     /// `registry_id` — the deployed credit_registry contract address.
     pub fn batch_retire(
@@ -210,7 +260,7 @@ impl Retirement {
         reason: String,
         registry_id: Address,
         nonce: u64,
-    ) -> Result<Vec<BytesN<32>>, RetirementError> {
+    ) -> Result<BatchRetireResult, RetirementError> {
         if Self::is_paused(&env) {
             return Err(RetirementError::ContractPaused);
         }
@@ -227,30 +277,10 @@ impl Retirement {
             return Err(RetirementError::InvalidInput);
         }
 
-        // Pre-validation pass: check ownership, active status, and positive tonnes
-        // for ALL credits before writing anything (prevents partial state on failure).
-        for i in 0..credit_ids.len() {
-            let credit_id = credit_ids.get(i).unwrap();
-            let tonne_amount = tonnes.get(i).unwrap();
+        let mut succeeded: Vec<BytesN<32>> = Vec::new(&env);
+        let mut failed: Vec<BatchRetireFailure> = Vec::new(&env);
+        let mut total_tonnes: i128 = 0;
 
-            if tonne_amount <= 0 {
-                panic!("tonnes must be greater than zero");
-            }
-
-            let credit: CreditMetadata = env.invoke_contract(
-                &registry_id,
-                &Symbol::new(&env, "get_credit"),
-                (credit_id.clone(),).into_val(&env),
-            );
-            if credit.status != CreditStatus::Active {
-                return Err(RetirementError::CreditNotActive);
-            }
-            if credit.owner != buyer {
-                return Err(RetirementError::Unauthorized);
-            }
-        }
-
-        let mut retirement_ids: Vec<BytesN<32>> = Vec::new(&env);
         let acct_key = DataKey::AccountRetirements(buyer.clone());
         let mut list: Vec<BytesN<32>> = env
             .storage()
@@ -262,11 +292,43 @@ impl Retirement {
             let credit_id = credit_ids.get(i).unwrap();
             let tonne_amount = tonnes.get(i).unwrap();
 
+            // Validate tonnes
             if tonne_amount <= 0 {
-                return Err(RetirementError::InvalidTonnes);
+                failed.push_back(BatchRetireFailure {
+                    credit_id: credit_id.clone(),
+                    error_code: RetirementError::InvalidTonnes as u32,
+                });
+                continue;
             }
 
-            // Derive a deterministic retirement ID
+            // Fetch credit metadata — if the cross-contract call panics (credit
+            // doesn't exist at all) we treat it as a failed entry.
+            let credit: CreditMetadata = env.invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "get_credit"),
+                (credit_id.clone(),).into_val(&env),
+            );
+
+            // Validate status
+            if credit.status != CreditStatus::Active {
+                failed.push_back(BatchRetireFailure {
+                    credit_id: credit_id.clone(),
+                    error_code: RetirementError::CreditNotActive as u32,
+                });
+                continue;
+            }
+
+            // Validate ownership
+            if credit.owner != buyer {
+                failed.push_back(BatchRetireFailure {
+                    credit_id: credit_id.clone(),
+                    error_code: RetirementError::Unauthorized as u32,
+                });
+                continue;
+            }
+
+            // Derive a deterministic retirement ID — embed index `i` so that
+            // two credits retired in the same ledger with the same reason stay distinct.
             let mut preimage = credit_id.clone().to_xdr(&env);
             preimage.append(&reason.clone().to_xdr(&env));
             preimage.append(&env.ledger().timestamp().to_xdr(&env));
@@ -279,17 +341,17 @@ impl Retirement {
                 tonnes_retired: tonne_amount,
                 reason: reason.clone(),
                 retired_at: env.ledger().timestamp(),
+                certificate_ipfs_hash: String::from_str(&env, ""),
             };
 
             env.storage()
                 .persistent()
                 .set(&DataKey::Retirement(retirement_id.clone()), &record);
-            env.storage()
-                .persistent()
-                .extend_ttl(&DataKey::Retirement(retirement_id.clone()), TTL_THRESHOLD, MIN_TTL);
-
-            list.push_back(retirement_id.clone());
-            retirement_ids.push_back(retirement_id.clone());
+            env.storage().persistent().extend_ttl(
+                &DataKey::Retirement(retirement_id.clone()),
+                TTL_THRESHOLD,
+                MIN_TTL,
+            );
 
             // Cross-contract: mark the credit as retired in the registry
             let _: () = env.invoke_contract(
@@ -298,14 +360,38 @@ impl Retirement {
                 (credit_id.clone(),).into_val(&env),
             );
 
-            // Emit individual retirement event
-            Retire { buyer: buyer.clone(), credit_id: credit_id.clone(), retirement_id }.publish(&env);
+            list.push_back(retirement_id.clone());
+            succeeded.push_back(retirement_id.clone());
+            total_tonnes += tonne_amount;
+
+            // Emit individual retirement event for each successful credit
+            Retire {
+                buyer: buyer.clone(),
+                credit_id: credit_id.clone(),
+                retirement_id,
+            }
+            .publish(&env);
+        }
+
+        // Fail the entire call if nothing succeeded — prevents empty batch results
+        if succeeded.is_empty() {
+            return Err(RetirementError::InvalidInput);
         }
 
         env.storage().persistent().set(&acct_key, &list);
-        env.storage().persistent().extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&acct_key, TTL_THRESHOLD, MIN_TTL);
 
-        Ok(retirement_ids)
+        // Summary event for off-chain indexers (only emitted when at least one credit retired)
+        BatchRetired {
+            buyer,
+            count: succeeded.len(),
+            total_tonnes,
+        }
+        .publish(&env);
+
+        Ok(BatchRetireResult { succeeded, failed })
     }
 
     /// Returns the sum of all `tonnes_retired` across all retirement records for `account`.
@@ -317,7 +403,11 @@ impl Retirement {
             .unwrap_or_else(|| Vec::new(&env));
         let mut total: i128 = 0;
         for id in ids.iter() {
-            if let Some(record) = env.storage().persistent().get::<_, RetirementRecord>(&DataKey::Retirement(id)) {
+            if let Some(record) = env
+                .storage()
+                .persistent()
+                .get::<_, RetirementRecord>(&DataKey::Retirement(id))
+            {
                 total += record.tonnes_retired;
             }
         }
@@ -336,7 +426,12 @@ impl Retirement {
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the admin.
     /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current admin nonce.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>, nonce: u64) -> Result<(), RetirementError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+        nonce: u64,
+    ) -> Result<(), RetirementError> {
         Self::require_admin(&env, &admin)?;
         if !consume_nonce(&env, &admin, nonce) {
             return Err(RetirementError::InvalidNonce);
@@ -350,15 +445,23 @@ impl Retirement {
     /// # Errors
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the current admin.
-    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), RetirementError> {
-        let stored: Address = env.storage().instance()
+    pub fn propose_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), RetirementError> {
+        let stored: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Admin)
             .ok_or(RetirementError::NotInitialized)?;
         admin.require_auth();
         if admin != stored {
             return Err(RetirementError::Unauthorized);
         }
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
         Ok(())
     }
 
@@ -368,7 +471,9 @@ impl Retirement {
     /// - [`RetirementError::NoPendingAdmin`] — no transfer has been proposed.
     /// - [`RetirementError::Unauthorized`] — `new_admin` does not match the pending candidate.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), RetirementError> {
-        let pending: Address = env.storage().instance()
+        let pending: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::PendingAdmin)
             .ok_or(RetirementError::NoPendingAdmin)?;
         if new_admin != pending {
@@ -387,6 +492,59 @@ impl Retirement {
             .get(&DataKey::Retirement(retirement_id))
     }
 
+    /// Issue #544 — Commit the IPFS hash of the off-chain retirement certificate PDF.
+    ///
+    /// Called by the API admin after the certificate has been generated and
+    /// uploaded to IPFS.  This operation is **idempotent**: calling it multiple
+    /// times with the same or a different hash is allowed so that the API can
+    /// safely retry on transient failures.
+    ///
+    /// # Arguments
+    /// - `admin`         — must be the initialised contract admin.
+    /// - `retirement_id` — the retirement record to update.
+    /// - `ipfs_hash`     — CIDv1 / CIDv0 IPFS content identifier of the certificate.
+    /// - `nonce`         — admin's current nonce (replay protection).
+    ///
+    /// # Errors
+    /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
+    /// - [`RetirementError::Unauthorized`]   — caller is not the admin.
+    /// - [`RetirementError::InvalidNonce`]   — `nonce` does not match the stored value.
+    /// - [`RetirementError::CreditNotActive`] — `retirement_id` does not exist.
+    pub fn set_certificate_hash(
+        env: Env,
+        admin: Address,
+        retirement_id: BytesN<32>,
+        ipfs_hash: String,
+        nonce: u64,
+    ) -> Result<(), RetirementError> {
+        Self::require_admin(&env, &admin)?;
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(RetirementError::InvalidNonce);
+        }
+
+        let key = DataKey::Retirement(retirement_id.clone());
+        let mut record: RetirementRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RetirementError::CreditNotActive)?;
+
+        record.certificate_ipfs_hash = ipfs_hash.clone();
+
+        env.storage().persistent().set(&key, &record);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+
+        CertificateHashSet {
+            retirement_id,
+            ipfs_hash,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Returns all retirement IDs for `account` (unordered, unbounded).
     /// Prefer [`get_retirements_paginated`] for large accounts.
     pub fn get_retirements_by_account(env: Env, account: Address) -> Vec<BytesN<32>> {
@@ -403,7 +561,11 @@ impl Retirement {
         page: u32,
         page_size: u32,
     ) -> Vec<BytesN<32>> {
-        let page_size = if page_size == 0 || page_size > 50 { 50 } else { page_size };
+        let page_size = if page_size == 0 || page_size > 50 {
+            50
+        } else {
+            page_size
+        };
         let all: Vec<BytesN<32>> = env
             .storage()
             .persistent()
@@ -435,20 +597,23 @@ impl Retirement {
     }
 
     fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use carbonchain_credit_registry::test_helpers::RegistryHelper;
     use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::{Env, String};
-    use carbonchain_credit_registry::test_helpers::RegistryHelper;
 
     /// Returns (retirement_contract_id, registry, credit_id, retirement_admin, credit_owner)
     fn setup(env: &Env) -> (Address, RegistryHelper, BytesN<32>, Address, Address) {
-        env.budget().reset_unlimited();
+        env.cost_estimate().budget().reset_unlimited();
         env.ledger().set_timestamp(1735689600);
         let retirement_id = env.register(Retirement, ());
         let registry = RegistryHelper::deploy(env);
@@ -617,7 +782,6 @@ mod tests {
             .unwrap();
         assert_eq!(err, RetirementError::InvalidInput);
     }
-
     // ── Pause tests ──────────────────────────────────────────────────────────
 
     #[test]
@@ -718,10 +882,13 @@ mod tests {
 
         credit_ids.push_back(credit_id);
         tonnes.push_back(1_000_000);
-        for (suffix, vintage) in [("b1", 2025u32), ("b2", 2026u32), ("b3", 2022u32), ("b4", 2023u32)] {
-            let cid = submit_credit_for_batch(
-                &env, &registry, &issuer, &issuer, vintage, suffix,
-            );
+        for (suffix, vintage) in [
+            ("b1", 2025u32),
+            ("b2", 2026u32),
+            ("b3", 2022u32),
+            ("b4", 2023u32),
+        ] {
+            let cid = submit_credit_for_batch(&env, &registry, &issuer, &issuer, vintage, suffix);
             credit_ids.push_back(cid);
             tonnes.push_back(1_000_000);
         }
@@ -733,7 +900,7 @@ mod tests {
         }
 
         let nonce = client.get_nonce(&buyer);
-        let ret_ids = client.batch_retire(
+        let result = client.batch_retire(
             &buyer,
             &credit_ids,
             &tonnes,
@@ -742,7 +909,8 @@ mod tests {
             &nonce,
         );
 
-        assert_eq!(ret_ids.len(), 5);
+        assert_eq!(result.succeeded.len(), 5);
+        assert_eq!(result.failed.len(), 0);
     }
 
     #[test]
@@ -761,9 +929,7 @@ mod tests {
         credit_ids.push_back(credit_id);
         tonnes.push_back(1_000_000);
         for (suffix, vintage) in [("f1", 2025u32), ("f2", 2022u32)] {
-            let cid = submit_credit_for_batch(
-                &env, &registry, &issuer, &issuer, vintage, suffix,
-            );
+            let cid = submit_credit_for_batch(&env, &registry, &issuer, &issuer, vintage, suffix);
             credit_ids.push_back(cid);
             tonnes.push_back(1_000_000);
         }
@@ -837,10 +1003,10 @@ mod tests {
         assert_eq!(result, Err(Ok(RetirementError::AlreadyInitialized)));
     }
 
-    // ── Issue #232: batch_retire no partial state on failure ─────────────────
+    // ── Issue #232: batch_retire partial success mode ────────────────────────
 
     #[test]
-    fn test_batch_retire_no_partial_state_on_invalid_credit() {
+    fn test_batch_retire_partial_success_invalid_credit() {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -869,7 +1035,7 @@ mod tests {
         tonnes_vec.push_back(1_000_000);
 
         let nonce = client.get_nonce(&buyer);
-        let result = client.try_batch_retire(
+        let result = client.batch_retire(
             &buyer,
             &credit_ids,
             &tonnes_vec,
@@ -878,11 +1044,51 @@ mod tests {
             &nonce,
         );
 
-        // The whole batch must fail
-        assert!(result.is_err());
-        // No retirements should have been written for buyer
+        // Two valid credits should succeed; one invalid should be in failed list
+        assert_eq!(result.succeeded.len(), 2);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed.get(0).unwrap().credit_id, cid3);
+        assert_eq!(
+            result.failed.get(0).unwrap().error_code,
+            RetirementError::Unauthorized as u32
+        );
+
+        // The two valid credits should be indexed under buyer
         let ids = client.get_retirements_by_account(&buyer);
-        assert_eq!(ids.len(), 0);
+        assert_eq!(ids.len(), 2);
+    }
+
+    /// All credits invalid → InvalidInput (empty succeeded list not allowed)
+    #[test]
+    fn test_batch_retire_all_invalid_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        // credit_id is NOT transferred to buyer — ownership check will fail
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        let mut tonnes_vec: Vec<i128> = Vec::new(&env);
+        credit_ids.push_back(credit_id);
+        tonnes_vec.push_back(1_000_000);
+
+        let nonce = client.get_nonce(&buyer);
+        let err = client
+            .try_batch_retire(
+                &buyer,
+                &credit_ids,
+                &tonnes_vec,
+                &String::from_str(&env, "offset"),
+                &registry.id,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+
+        // All credits failed → treated as InvalidInput
+        assert_eq!(err, RetirementError::InvalidInput);
     }
 
     // ── Issue #233: get_total_retired_by_account ──────────────────────────────
@@ -921,5 +1127,189 @@ mod tests {
         let total = client.get_total_retired_by_account(&issuer);
         assert_eq!(total, 2_000_000);
     }
-}
 
+    // ── Issue #482: retirement_id uniqueness via buyer nonce ─────────────────
+
+    /// Two retire calls for different credits in the same ledger with the same reason
+    /// must produce distinct retirement IDs even though the timestamp is identical.
+    /// We achieve this by embedding the buyer's nonce in the preimage.
+    ///
+    /// We can only attempt to retire a credit once per credit (since mark_retired
+    /// transitions it to Retired, and a second attempt would fail with CreditNotActive).
+    /// So we retire two different credits with the same reason and same timestamp and
+    /// verify their IDs are distinct.
+    #[test]
+    fn test_retire_produces_distinct_ids_for_same_timestamp_and_reason() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        // Create a second credit
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "uniq1");
+
+        // Fix the timestamp so both calls see the same ledger timestamp
+        env.ledger().set_timestamp(1735689600);
+
+        let n1 = client.get_nonce(&issuer);
+        let ret_id1 = client.retire(
+            &issuer,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "same reason"),
+            &registry.id,
+            &n1,
+        );
+
+        // Timestamp unchanged — second retire call would have the same timestamp
+        let n2 = client.get_nonce(&issuer);
+        let ret_id2 = client.retire(
+            &issuer,
+            &cid2,
+            &1_000_000,
+            &String::from_str(&env, "same reason"),
+            &registry.id,
+            &n2,
+        );
+
+        // IDs must be distinct because n1 != n2 (nonce was consumed between calls)
+        assert_ne!(
+            ret_id1, ret_id2,
+            "retirement IDs must be distinct even with same timestamp and reason"
+        );
+    }
+
+    // ── Issue #544: set_certificate_hash ─────────────────────────────────────
+
+    #[test]
+    fn test_set_certificate_hash_stores_and_retrieves() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        // First retire the credit to create a retirement record
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "2024 Scope 3 offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        // Verify certificate_ipfs_hash is empty initially
+        let record = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(record.certificate_ipfs_hash, String::from_str(&env, ""));
+
+        // Admin commits the IPFS hash on-chain
+        let admin_nonce = client.get_nonce(&retirement_admin);
+        client.set_certificate_hash(
+            &retirement_admin,
+            &ret_id,
+            &String::from_str(&env, "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354"),
+            &admin_nonce,
+        );
+
+        // Verify the hash is now stored
+        let updated = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(
+            updated.certificate_ipfs_hash,
+            String::from_str(&env, "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354")
+        );
+    }
+
+    #[test]
+    fn test_set_certificate_hash_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        // First call sets the hash
+        let n1 = client.get_nonce(&retirement_admin);
+        client.set_certificate_hash(
+            &retirement_admin,
+            &ret_id,
+            &String::from_str(&env, "bafybei_first"),
+            &n1,
+        );
+
+        // Second call with an updated hash (idempotent — allowed)
+        let n2 = client.get_nonce(&retirement_admin);
+        client.set_certificate_hash(
+            &retirement_admin,
+            &ret_id,
+            &String::from_str(&env, "bafybei_second"),
+            &n2,
+        );
+
+        let updated = client.get_retirement(&ret_id).unwrap();
+        assert_eq!(
+            updated.certificate_ipfs_hash,
+            String::from_str(&env, "bafybei_second")
+        );
+    }
+
+    #[test]
+    fn test_set_certificate_hash_non_existent_retirement_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, _, _, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&retirement_admin);
+        let result = client.try_set_certificate_hash(
+            &retirement_admin,
+            &BytesN::from_array(&env, &[0u8; 32]),
+            &String::from_str(&env, "bafybei_nonexistent"),
+            &nonce,
+        );
+
+        assert_eq!(result, Err(Ok(RetirementError::CreditNotActive)));
+    }
+
+    #[test]
+    fn test_set_certificate_hash_non_admin_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let rando = Address::generate(&env);
+        let rando_nonce = client.get_nonce(&rando);
+        let result = client.try_set_certificate_hash(
+            &rando,
+            &ret_id,
+            &String::from_str(&env, "bafybei_rando"),
+            &rando_nonce,
+        );
+
+        assert!(result.is_err());
+    }

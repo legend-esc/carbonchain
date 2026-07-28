@@ -1,28 +1,40 @@
+import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
+
 /**
  * Off-chain index of an on-chain retirement record.
- * Ready for TypeORM — uncomment decorators and add @nestjs/typeorm when DB is wired.
  *
- * @Entity('retirements')
+ * @Index decorator mirrors the SQL index created by migration
+ * 1748476800000-AddRetirementRetiredAtIndex.ts so that TypeORM's migration
+ * generator produces a no-op when the schema is already up to date.
  */
+import { Entity, PrimaryColumn, Column } from 'typeorm';
+
+@Entity('retirements')
 export class RetirementEntity {
-  // @PrimaryColumn()
+  @PrimaryColumn()
   id: string;
 
-  // @Column()
+  @Column()
   creditId: string;
 
-  // @Column()
+  @Column()
   buyer: string;
 
-  // @Column()
+  @Column()
   tonnesRetired: string;
 
-  // @Column()
+  @Column()
   reason: string;
 
-  // @Column({ type: 'bigint' })
+  @Index('idx_retirements_retired_at')
+  @Column({ type: 'bigint' })
   retiredAt: number;
 
-  // @Column({ default: '' })
+  @Column({ default: '' })
   txHash: string;
+
+  /** Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
+   *  Empty string for legacy retirements. */
+  @Column({ default: '' })
+  certificateIpfsHash: string;
 }

@@ -1,12 +1,33 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  GoneException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { Offer } from '../shared';
+import { Offer } from '../../../shared';
 import { CreateOfferDto } from './dto/create-offer.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
+
+/**
+ * Maps Soroban marketplace contract error codes to HTTP exceptions.
+ * Error code reference: docs/features/ERROR_CODES_REFERENCE.md
+ */
+function mapMarketplaceError(error: Error): never {
+  const errorMessage = error.message.toLowerCase();
+
+  // OfferExpired = 123
+  if (errorMessage.includes('123') || errorMessage.includes('expired')) {
+    throw new GoneException('Offer has expired and is no longer available');
+  }
+
+  // Re-throw unrecognized errors
+  throw error;
+}
 
 @Injectable()
 export class MarketplaceService {
@@ -47,15 +68,20 @@ export class MarketplaceService {
   }
 
   async getOffer(offerId: number): Promise<Offer> {
-    const args = [nativeToScVal(offerId, { type: 'u64' })];
-    const retval = await this.stellarService.readContract(
-      this.contractId,
-      'get_offer',
-      args,
-    );
-    if (!retval) throw new NotFoundException(`Offer ${offerId} not found`);
+    try {
+      const args = [nativeToScVal(offerId, { type: 'u64' })];
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_offer',
+        args,
+      );
+      if (!retval) throw new NotFoundException(`Offer ${offerId} not found`);
 
-    return this.mapOffer(offerId, scValToNative(retval));
+      return this.mapOffer(offerId, scValToNative(retval));
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      mapMarketplaceError(error as Error);
+    }
   }
 
   /** Returns paginated active offers with optional filters. */
@@ -65,7 +91,12 @@ export class MarketplaceService {
     methodology?: string;
     minPrice?: number;
     maxPrice?: number;
-  }): Promise<{ data: Offer[]; total: number; page: number; pageSize: number }> {
+  }): Promise<{
+    data: Offer[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
     let offers = await this.getListings();
 
     if (params.methodology) {
@@ -135,22 +166,26 @@ export class MarketplaceService {
   }
 
   async buyOffer(buyerPublicKey: string, offerId: number): Promise<void> {
-    const nativeTokenId = this.configService.get<string>(
-      'NATIVE_TOKEN_CONTRACT_ID',
-      '',
-    );
-    const args = [
-      nativeToScVal(buyerPublicKey, { type: 'address' }),
-      nativeToScVal(offerId, { type: 'u64' }),
-      nativeToScVal(nativeTokenId, { type: 'address' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    await this.stellarService.invokeContract(
-      this.contractId,
-      'buy_offer',
-      args,
-      signer,
-    );
+    try {
+      const nativeTokenId = this.configService.get<string>(
+        'NATIVE_TOKEN_CONTRACT_ID',
+        '',
+      );
+      const args = [
+        nativeToScVal(buyerPublicKey, { type: 'address' }),
+        nativeToScVal(offerId, { type: 'u64' }),
+        nativeToScVal(nativeTokenId, { type: 'address' }),
+      ];
+      const signer = this.keypairService.getAdminKeypair();
+      await this.stellarService.invokeContract(
+        this.contractId,
+        'buy_offer',
+        args,
+        signer,
+      );
+    } catch (error) {
+      mapMarketplaceError(error as Error);
+    }
   }
 
   private mapOffer(id: number, n: any): Offer {

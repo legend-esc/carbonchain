@@ -14,6 +14,10 @@ const mockRedisClient = {
   set: jest.fn().mockResolvedValue('OK'),
   del: jest.fn().mockResolvedValue(1),
   scan: jest.fn().mockResolvedValue({ cursor: '0', keys: [] }),
+  keys: jest.fn().mockResolvedValue([]),
+  sAdd: jest.fn().mockResolvedValue(1),
+  sMembers: jest.fn().mockResolvedValue([]),
+  expire: jest.fn().mockResolvedValue(true),
   on: jest.fn(),
 };
 
@@ -190,6 +194,68 @@ describe('CacheService', () => {
     const result = await service.get('key');
     expect(result).toBeNull();
     expect(mockRedisClient.get).toHaveBeenCalledTimes(6);
+  // ── setTagged / invalidateTag (issue #540) ─────────────────────────────────
+
+  it('setTagged() sets the value and registers the key against every tag', async () => {
+    await service.setTagged('credits:list:foo', { a: 1 }, ['credits:list'], 60);
+
+    expect(mockRedisClient.set).toHaveBeenCalledWith(
+      'credits:list:foo',
+      JSON.stringify({ a: 1 }),
+      { EX: 60 },
+    );
+    expect(mockRedisClient.sAdd).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+      'credits:list:foo',
+    );
+    expect(mockRedisClient.expire).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+      60,
+    );
+  });
+
+  it('setTagged() registers a key against multiple tags', async () => {
+    await service.setTagged('credits:abc', { id: 'abc' }, [
+      'credit:abc',
+      'credits:list',
+    ]);
+
+    expect(mockRedisClient.sAdd).toHaveBeenCalledWith(
+      'cache:tag:credit:abc',
+      'credits:abc',
+    );
+    expect(mockRedisClient.sAdd).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+      'credits:abc',
+    );
+  });
+
+  it('invalidateTag() deletes only the keys registered under that tag, not the whole keyspace', async () => {
+    mockRedisClient.sMembers.mockResolvedValue([
+      'credits:list:a',
+      'credits:list:b',
+    ]);
+
+    await service.invalidateTag('credits:list');
+
+    expect(mockRedisClient.sMembers).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+    );
+    expect(mockRedisClient.del).toHaveBeenCalledWith([
+      'credits:list:a',
+      'credits:list:b',
+    ]);
+    // The tag set itself is removed too, so a stale entry can't leak next round.
+    expect(mockRedisClient.del).toHaveBeenCalledWith('cache:tag:credits:list');
+    // No KEYS scan of the wider keyspace — targeted invalidation only.
+    expect(mockRedisClient.keys).not.toHaveBeenCalled();
+  });
+
+  it('invalidateTag() is a no-op DEL when no keys are tagged', async () => {
+    mockRedisClient.sMembers.mockResolvedValue([]);
+    await service.invalidateTag('credits:list');
+    expect(mockRedisClient.del).toHaveBeenCalledWith('cache:tag:credits:list');
+    expect(mockRedisClient.del).not.toHaveBeenCalledWith([]);
   });
 
   // ── no-op mode (no REDIS_URL) ─────────────────────────────────────────────
