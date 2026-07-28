@@ -122,6 +122,8 @@ export class RetirementController {
       tonnes: retirement.tonnes_retired,
       reason: retirement.reason,
       timestamp: retirement.retired_at,
+      // Issue #589 — pass vintage year when available for full provenance
+      ...(retirement.vintage_year ? { vintageYear: retirement.vintage_year } : {}),
     });
 
     return new StreamableFile(pdfBuffer, {

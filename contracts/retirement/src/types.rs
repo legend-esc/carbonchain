@@ -47,6 +47,10 @@ pub struct RetirementRecord {
     /// Empty string for legacy retirements that pre-date this field.
     /// Set after retirement via `set_certificate_hash`.
     pub certificate_ipfs_hash: String,
+    /// Issue #589 — vintage year of the credit (e.g. 2024). Populated from
+    /// credit metadata at retirement time to enable complete provenance on
+    /// the certificate without a secondary registry lookup.
+    pub vintage_year: u32,
 }
 
 #[derive(Clone)]

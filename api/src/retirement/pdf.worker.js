@@ -66,6 +66,10 @@ function run() {
     field('Credit ID', data.creditId);
     field('Buyer', data.buyer);
     field('Tonnes Retired', `${tonnesDisplay} tonne(s)`);
+    // Issue #589 — display vintage year when available for compliance auditing.
+    if (data.vintageYear) {
+      field('Credit Vintage Year', String(data.vintageYear));
+    }
     field('Reason', data.reason);
     field('Retired At', retiredAt);
 

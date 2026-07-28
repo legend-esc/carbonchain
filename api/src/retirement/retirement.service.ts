@@ -130,6 +130,7 @@ export class RetirementService {
       tonnes: credit.tonnes,
       reason: dto.reason,
       nonce: dto.nonce,
+      vintageYear: credit.vintageYear,
     });
 
     credit.status = CreditStatus.Retired;
@@ -217,6 +218,8 @@ export class RetirementService {
     entity.reason = dto.reason;
     entity.retiredAt = Math.floor(Date.now() / 1000);
     entity.txHash = '';
+    // Issue #589 — persist vintage year for certificate provenance
+    entity.vintageYear = dto.vintageYear ?? 0;
     await this.retirementRepo.save(entity);
 
     // ── Step 2: Emit CreditRetired event ─────────────────────────────────────
@@ -245,6 +248,8 @@ export class RetirementService {
           tonnes: dto.tonnes,
           reason: dto.reason,
           timestamp: entity.retiredAt,
+          // Issue #589 — include vintage year in certificate data
+          ...(dto.vintageYear ? { vintageYear: dto.vintageYear } : {}),
         });
         certificateIpfsHash = result.ipfsHash;
 
@@ -489,6 +494,8 @@ export class RetirementService {
       reason: String(n.reason),
       retired_at: Number(n.retired_at),
       tx_hash: '',
+      // Issue #589 — vintage_year added to on-chain struct; undefined for legacy
+      ...(n.vintage_year ? { vintage_year: Number(n.vintage_year) } : {}),
     };
   }
 
@@ -519,6 +526,8 @@ export class RetirementService {
       retired_at: e.retiredAt,
       tx_hash: e.txHash,
       certificate_ipfs_hash: e.certificateIpfsHash ?? '',
+      // Issue #589 — only include vintage_year when non-zero (0 = legacy record)
+      ...(e.vintageYear ? { vintage_year: e.vintageYear } : {}),
     };
   }
 

@@ -54,6 +54,8 @@ export interface RetirementRecord {
   tx_hash: string;
   /** Issue #544 — IPFS hash of the retirement certificate PDF. Empty for legacy records. */
   certificate_ipfs_hash?: string;
+  /** Issue #589 — vintage year of the credit (e.g. 2024). Absent for legacy records. */
+  vintage_year?: number;
 }
 
 export interface Offer {
