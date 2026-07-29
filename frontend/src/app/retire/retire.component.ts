@@ -66,20 +66,28 @@ export type WizardStep = 1 | 2 | 3;
           }
         </nav>
 
-        <!-- ── Step 1: Select Credit ── -->
+        <!-- ── Step 1: Select Credits ── -->
         @if (currentStep() === 1) {
           <section class="step-panel" aria-labelledby="step1-heading">
-            <h2 id="step1-heading">Step 1: Select a credit to retire</h2>
+            <h2 id="step1-heading">Step 1: Select credits to retire</h2>
 
             @if (store.isLoading()) {
               <p class="status">Loading your credits…</p>
             } @else if (activeCredits().length === 0) {
               <p class="status">You have no active credits to retire.</p>
             } @else {
+              <p class="selection-hint">{{ selectedCredits().length }} credit(s) selected</p>
               <table class="credit-table" aria-label="Your active credits">
                 <thead>
                   <tr>
-                    <th scope="col">Select</th>
+                    <th scope="col">
+                      <input
+                        type="checkbox"
+                        [checked]="allSelected()"
+                        (change)="toggleSelectAll()"
+                        aria-label="Select all credits"
+                      />
+                    </th>
                     <th scope="col">Credit ID</th>
                     <th scope="col">Project</th>
                     <th scope="col">Vintage</th>
@@ -91,22 +99,21 @@ export type WizardStep = 1 | 2 | 3;
                   @for (credit of activeCredits(); track credit.id) {
                     <tr
                       class="credit-row"
-                      [class.credit-row--selected]="selectedCredit()?.id === credit.id"
-                      (click)="selectCredit(credit)"
+                      [class.credit-row--selected]="isSelected(credit)"
+                      (click)="toggleCredit(credit)"
                       role="button"
                       tabindex="0"
-                      (keydown.enter)="selectCredit(credit)"
-                      (keydown.space)="$event.preventDefault(); selectCredit(credit)"
-                      [attr.aria-pressed]="selectedCredit()?.id === credit.id"
+                      (keydown.enter)="toggleCredit(credit)"
+                      (keydown.space)="$event.preventDefault(); toggleCredit(credit)"
+                      [attr.aria-selected]="isSelected(credit)"
                       [attr.aria-label]="'Select credit ' + credit.id"
                     >
                       <td>
                         <input
-                          type="radio"
-                          [name]="'credit-select'"
-                          [value]="credit.id"
-                          [checked]="selectedCredit()?.id === credit.id"
-                          (change)="selectCredit(credit)"
+                          type="checkbox"
+                          [checked]="isSelected(credit)"
+                          (change)="toggleCredit(credit)"
+                          (click)="$event.stopPropagation()"
                           [attr.aria-label]="'Select credit ' + credit.id"
                         />
                       </td>
@@ -125,11 +132,11 @@ export type WizardStep = 1 | 2 | 3;
               <button
                 class="btn btn-primary"
                 type="button"
-                [disabled]="!selectedCredit()"
+                [disabled]="selectedCredits().length === 0"
                 (click)="goToStep(2)"
                 aria-label="Continue to step 2"
               >
-                Next: Enter Reason →
+                Next: Enter Reason ({{ selectedCredits().length }}) →
               </button>
             </div>
           </section>
@@ -141,8 +148,8 @@ export type WizardStep = 1 | 2 | 3;
             <h2 id="step2-heading">Step 2: Enter retirement reason</h2>
 
             <div class="selected-summary">
-              <span>Selected: <strong class="mono">{{ selectedCredit()!.id | slice: 0 : 16 }}…</strong></span>
-              <span>· {{ formatTonnes(selectedCredit()!.tonnes) }}</span>
+              <span>{{ selectedCredits().length }} credit(s) selected</span>
+              <span>· Total: {{ formatTonnes(totalSelectedTonnes()) }}</span>
             </div>
 
             <label class="reason-label" for="retirement-reason">
@@ -193,15 +200,23 @@ export type WizardStep = 1 | 2 | 3;
 
             <div class="confirm-box">
               <dl>
-                <dt>Credit ID</dt>
-                <dd class="mono">{{ selectedCredit()!.id }}</dd>
-                <dt>Tonnes to Retire</dt>
-                <dd>{{ formatTonnes(selectedCredit()!.tonnes) }}</dd>
+                <dt>Credits to Retire</dt>
+                <dd>{{ selectedCredits().length }} credit(s)</dd>
+                <dt>Total Tonnes</dt>
+                <dd>{{ formatTonnes(totalSelectedTonnes()) }}</dd>
                 <dt>Retirement Reason</dt>
                 <dd>{{ reasonControl.value }}</dd>
                 <dt>Your Wallet</dt>
                 <dd class="mono">{{ wallet.publicKey() }}</dd>
               </dl>
+              <details class="credit-details">
+                <summary>View selected credits</summary>
+                <ul>
+                  @for (c of selectedCredits(); track c.id) {
+                    <li class="mono">{{ c.id | slice: 0 : 20 }}… — {{ formatTonnes(c.tonnes) }}</li>
+                  }
+                </ul>
+              </details>
             </div>
 
             <p class="sign-info">
@@ -219,7 +234,7 @@ export type WizardStep = 1 | 2 | 3;
                 [disabled]="submitting()"
                 (click)="submit()"
                 [attr.aria-busy]="submitting()"
-                aria-label="Sign and retire credit"
+                aria-label="Sign and retire credits"
               >
                 {{ submitting() ? 'Signing…' : 'Sign & Retire' }}
               </button>
@@ -367,6 +382,10 @@ export type WizardStep = 1 | 2 | 3;
         margin-top: 1.25rem;
         flex-wrap: wrap;
       }
+      .selection-hint { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; }
+      .credit-details { margin-top: 0.75rem; font-size: 0.85rem; }
+      .credit-details ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+      .credit-details li { line-height: 1.6; }
       .status { color: #888; }
       .btn {
         padding: 0.45rem 1.1rem;
@@ -395,7 +414,7 @@ export class RetireComponent implements OnInit {
   private readonly router = inject(Router);
 
   readonly currentStep = signal<WizardStep>(1);
-  readonly selectedCredit = signal<CreditMetadata | null>(null);
+  readonly selectedCredits = signal<CreditMetadata[]>([]);
   readonly submitting = signal(false);
   readonly signingError = signal<string | null>(null);
 
@@ -411,17 +430,39 @@ export class RetireComponent implements OnInit {
     ),
   );
 
+  readonly allSelected = computed(
+    () => this.activeCredits().length > 0 && this.selectedCredits().length === this.activeCredits().length,
+  );
+
+  readonly totalSelectedTonnes = computed(() =>
+    this.selectedCredits().reduce((sum, c) => sum + BigInt(c.tonnes), 0n).toString(),
+  );
+
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
     if (pk && this.auth.isAuthenticated()) {
-      // Load credits for the connected wallet — we fetch by project broadly;
-      // the store will filter to Active + owned in the computed above.
-      // If the store is already seeded, activeCredits() will reflect that.
     }
   }
 
-  selectCredit(credit: CreditMetadata): void {
-    this.selectedCredit.set(credit);
+  isSelected(credit: CreditMetadata): boolean {
+    return this.selectedCredits().some((c) => c.id === credit.id);
+  }
+
+  toggleCredit(credit: CreditMetadata): void {
+    this.selectedCredits.update((list) => {
+      const idx = list.findIndex((c) => c.id === credit.id);
+      return idx >= 0
+        ? [...list.slice(0, idx), ...list.slice(idx + 1)]
+        : [...list, credit];
+    });
+  }
+
+  toggleSelectAll(): void {
+    if (this.allSelected()) {
+      this.selectedCredits.set([]);
+    } else {
+      this.selectedCredits.set([...this.activeCredits()]);
+    }
   }
 
   goToStep(step: WizardStep): void {
@@ -434,7 +475,7 @@ export class RetireComponent implements OnInit {
 
   stepLabel(step: number): string {
     switch (step) {
-      case 1: return 'Select Credit';
+      case 1: return 'Select Credits';
       case 2: return 'Reason';
       case 3: return 'Confirm';
       default: return '';
@@ -442,11 +483,11 @@ export class RetireComponent implements OnInit {
   }
 
   async submit(): Promise<void> {
-    const credit = this.selectedCredit();
+    const credits = this.selectedCredits();
     const reason = this.reasonControl.value;
     const pk = this.wallet.publicKey();
 
-    if (!credit || !pk) return;
+    if (credits.length === 0 || !pk) return;
 
     this.submitting.set(true);
     this.signingError.set(null);
@@ -454,38 +495,55 @@ export class RetireComponent implements OnInit {
     try {
       const token = this.auth.token()!;
 
-      // Sign the retirement transaction with Freighter
-      let signedXdr: string;
-      try {
-        const { networkPassphrase } = await this.wallet.getNetworkDetails();
-        signedXdr = await this.wallet.signTransaction(credit.id, networkPassphrase);
-      } catch (freighterErr) {
-        // Freighter rejection — return user to step 3 with error, do NOT reset form
-        const msg =
-          freighterErr instanceof Error ? freighterErr.message : 'Wallet signing was rejected.';
-        this.signingError.set(msg);
-        this.currentStep.set(3);
-        return;
+      if (credits.length === 1) {
+        const credit = credits[0];
+        let signedXdr: string;
+        try {
+          const { networkPassphrase } = await this.wallet.getNetworkDetails();
+          signedXdr = await this.wallet.signTransaction(credit.id, networkPassphrase);
+        } catch (freighterErr) {
+          const msg =
+            freighterErr instanceof Error ? freighterErr.message : 'Wallet signing was rejected.';
+          this.signingError.set(msg);
+          this.currentStep.set(3);
+          return;
+        }
+
+        const { retirementId } = await firstValueFrom(
+          this.api.retireCredit(
+            { buyerPublicKey: pk, creditId: credit.id, tonnes: credit.tonnes, reason },
+            token,
+          ),
+        );
+
+        this.store.loadOne(credit.id).catch(() => {});
+        await this.router.navigate(['/certificates', retirementId]);
+      } else {
+        const { succeeded, failed } = await firstValueFrom(
+          this.api.batchRetire(
+            {
+              buyerPublicKey: pk,
+              creditIds: credits.map((c) => c.id),
+              tonnes: credits.map((c) => c.tonnes),
+              reason,
+            },
+            token,
+          ),
+        );
+
+        for (const c of credits) {
+          this.store.loadOne(c.id).catch(() => {});
+        }
+
+        if (failed.length > 0) {
+          this.signingError.set(`${failed.length} credit(s) failed: ${failed.map((f) => f.reason).join(', ')}`);
+        }
+
+        if (succeeded.length > 0) {
+          this.toast.showSuccess(`${succeeded.length} credit(s) retired successfully`);
+          await this.router.navigate(['/certificates', succeeded[0]]);
+        }
       }
-
-      // Submit retirement to the API
-      const { retirementId } = await firstValueFrom(
-        this.api.retireCredit(
-          {
-            buyerPublicKey: pk,
-            creditId: credit.id,
-            tonnes: credit.tonnes,
-            reason,
-          },
-          token,
-        ),
-      );
-
-      // Invalidate cached credit
-      this.store.loadOne(credit.id).catch(() => {});
-
-      // Navigate to the certificate page
-      await this.router.navigate(['/certificates', retirementId]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Retirement failed.';
       this.signingError.set(msg);
@@ -497,7 +555,7 @@ export class RetireComponent implements OnInit {
 
   reset(): void {
     this.currentStep.set(1);
-    this.selectedCredit.set(null);
+    this.selectedCredits.set([]);
     this.reasonControl.reset('');
     this.signingError.set(null);
   }
@@ -506,17 +564,15 @@ export class RetireComponent implements OnInit {
     return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
   }
 
-  // ── Legacy helpers kept for backward compatibility with existing specs ──────
-
   get creditId(): string {
-    return this.selectedCredit()?.id ?? '';
+    return this.selectedCredits()[0]?.id ?? '';
   }
   set creditId(v: string) {
-    /* no-op: credit is now selected from the table */
+    /* no-op */
   }
 
   get tonnes(): number {
-    return Number(this.selectedCredit()?.tonnes ?? 1_000_000);
+    return Number(this.selectedCredits()[0]?.tonnes ?? 1_000_000);
   }
   set tonnes(_: number) {
     /* no-op */

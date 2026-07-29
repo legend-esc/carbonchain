@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import { RetirementService, EVENT_EMITTER } from './retirement.service';
 import { RetirementController } from './retirement.controller';
 import { CreditRetirementController } from './credit-retirement.controller';
+import { CertificatesController } from './certificates.controller';
 import { CertificateService } from './certificate.service';
 import { StellarModule } from '../stellar/stellar.module';
 import { AuthModule } from '../auth/auth.module';
@@ -16,7 +17,7 @@ import { NonceService } from '../common/nonce.service';
 
 @Module({
   imports: [ConfigModule, StellarModule, AuthModule, CreditsModule],
-  controllers: [RetirementController, CreditRetirementController],
+  controllers: [RetirementController, CreditRetirementController, CertificatesController],
   providers: [
     RetirementService,
     CertificateService,

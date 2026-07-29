@@ -169,6 +169,18 @@ export class ApiService {
     });
   }
 
+  /** POST /retirement/batch */
+  batchRetire(
+    body: { buyerPublicKey: string; creditIds: string[]; tonnes: string[]; reason: string },
+    token: string,
+  ): Observable<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
+    return this.http.post<{ succeeded: string[]; failed: { id: string; reason: string }[] }>(
+      `${this.baseUrl}/retirement/batch`,
+      body,
+      { headers: this.authHeaders(token).set('Idempotency-Key', crypto.randomUUID()) },
+    );
+  }
+
   /** GET /retirement/:id */
   getRetirement(id: string): Observable<import('@shared').RetirementRecord> {
     return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/retirement/${id}`);

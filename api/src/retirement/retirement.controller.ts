@@ -11,9 +11,10 @@ import {
   NotFoundException,
   StreamableFile,
   Header,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import type { Response as ExpressResponse } from 'express';
+import type { Response } from 'express';
 import {
   RetirementService,
   BatchRetireResult,
@@ -26,7 +27,6 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
-import { Throttle } from '../common/throttler.guard';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -103,9 +103,7 @@ export class RetirementController {
   @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
-    @Response() res: ExpressResponse,
-  ): Promise<void> {
-    // Retrieve the retirement record to ensure it exists
+  ): Promise<StreamableFile> {
     const retirement =
       await this.retirementService.getRetirement(certificateId);
     if (!retirement) {
@@ -114,7 +112,6 @@ export class RetirementController {
       );
     }
 
-    // Generate the PDF buffer (CPU-intensive; bounded by worker thread pool).
     const pdfBuffer = await this.certificateService.generatePdf({
       retirementId: certificateId,
       creditId: retirement.credit_id,
@@ -122,7 +119,6 @@ export class RetirementController {
       tonnes: retirement.tonnes_retired,
       reason: retirement.reason,
       timestamp: retirement.retired_at,
-      // Issue #589 — pass vintage year when available for full provenance
       ...(retirement.vintage_year ? { vintageYear: retirement.vintage_year } : {}),
     });
 

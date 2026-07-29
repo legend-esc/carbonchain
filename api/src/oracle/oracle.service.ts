@@ -179,19 +179,6 @@ export class OracleService {
     ];
 
     const signer = this.keypairService.getAdminKeypair();
-    let response;
-    try {
-      response = await this.stellarService.invokeContract(
-        this.contractId,
-        'update_mrv_data',
-        args,
-        signer,
-      );
-    } catch (error: unknown) {
-      // Map oracle contract error codes (400–410) to HTTP exceptions.
-      mapOracleContractError(error);
-    }
-
     let response: unknown;
     try {
       response = await this.stellarService.invokeContract(

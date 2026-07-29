@@ -2,21 +2,12 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Body,
   Param,
   Query,
   ParseIntPipe,
   DefaultValuePipe,
-} from '@nestjs/common';
-import {
-  OracleService,
-  MrvWebhookDto,
-  MrvHistoryResponse,
-  MrvAggregateResponse,
-} from './oracle.service';
-  Patch,
-  Body,
-  Param,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -28,7 +19,12 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { OracleService, MrvWebhookDto } from './oracle.service';
+import {
+  OracleService,
+  MrvWebhookDto,
+  MrvHistoryResponse,
+  MrvAggregateResponse,
+} from './oracle.service';
 import { AdminGuard } from '../admin/admin.guard';
 
 @ApiTags('oracle')
@@ -88,6 +84,8 @@ export class OracleController {
     const excludeAnomalies =
       excludeAnomaliesParam?.toLowerCase() === 'true';
     return this.oracleService.getAggregate(projectId, excludeAnomalies);
+  }
+
   @ApiOperation({
     summary:
       'Set per-project anomaly threshold override (admin only). Pass thresholdBps=0 to clear.',
