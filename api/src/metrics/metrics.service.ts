@@ -19,6 +19,20 @@ export class MetricsService implements OnModuleInit {
    */
   contractCallFeeStroops: client.Histogram<string>;
 
+  // ── Issue #495: New observability metrics ─────────────────────────────────
+
+  /** Counter: total Stellar contract invocations (success/failure). */
+  stellarContractInvocationsTotal: client.Counter<string>;
+
+  /** Histogram: wall-clock duration of contract invocations in ms. */
+  stellarContractInvocationDurationMs: client.Histogram<string>;
+
+  /** Counter: total retirements by type (single / batch). */
+  carbonchainRetirementsTotal: client.Counter<string>;
+
+  /** Gauge: current number of active (non-retired) credits on-chain. */
+  carbonchainCreditsActiveTotal: client.Gauge<string>;
+
   constructor() {
     this.register = new client.Registry();
     client.collectDefaultMetrics({ register: this.register });
@@ -57,6 +71,36 @@ export class MetricsService implements OnModuleInit {
         100, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000,
         250_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000,
       ],
+      registers: [this.register],
+    });
+
+    // ── Issue #495: Contract invocation metrics ─────────────────────────────
+    this.stellarContractInvocationsTotal = new client.Counter({
+      name: 'stellar_contract_invocations_total',
+      help: 'Total number of Stellar contract invocations',
+      labelNames: ['contract', 'method', 'status'],
+      registers: [this.register],
+    });
+
+    this.stellarContractInvocationDurationMs = new client.Histogram({
+      name: 'stellar_contract_invocation_duration_ms',
+      help: 'Wall-clock duration of Stellar contract invocations in milliseconds',
+      labelNames: ['contract', 'method'],
+      // Buckets spanning fast (50ms) to very slow (30s) Soroban calls
+      buckets: [50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000],
+      registers: [this.register],
+    });
+
+    this.carbonchainRetirementsTotal = new client.Counter({
+      name: 'carbonchain_retirements_total',
+      help: 'Total number of carbon credit retirements by type',
+      labelNames: ['type'],
+      registers: [this.register],
+    });
+
+    this.carbonchainCreditsActiveTotal = new client.Gauge({
+      name: 'carbonchain_credits_active_total',
+      help: 'Current number of active carbon credits on-chain',
       registers: [this.register],
     });
   }

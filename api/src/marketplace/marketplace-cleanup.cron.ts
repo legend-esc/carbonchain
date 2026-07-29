@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { MarketplaceService } from './marketplace.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
-import { MetricsService } from '../metrics/metrics.service';
 
 /**
  * Issue: expired marketplace offers accumulate in contract storage because
@@ -23,7 +22,6 @@ export class MarketplaceCleanupCron {
     private readonly config: ConfigService,
     private readonly marketplaceService: MarketplaceService,
     private readonly adminKeypair: StellarKeypairService,
-    private readonly metrics: MetricsService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -56,8 +54,7 @@ export class MarketplaceCleanupCron {
         gasSpent += result.feeCharged;
       }
 
-      this.metrics.increment('marketplace.cleanup.offers_removed', removed);
-      this.metrics.increment('marketplace.cleanup.gas_spent', gasSpent);
+      // TODO(#495): Emit metrics event for marketplace cleanup stats.
       this.logger.log(
         `marketplace cleanup: removed=${removed} gasSpent=${gasSpent}`,
       );

@@ -6,6 +6,7 @@ import {
   BadRequestException,
   ConflictException,
   Inject,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
@@ -21,6 +22,12 @@ import type { ICreditRepository } from '../credits/credit.repository';
 import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
 import { RetireDto, FullRetireDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
+import {
+  METRICS_EVENT_EMITTER,
+  RETIREMENT_COMPLETED,
+} from '../metrics/metrics-events';
+import type { RetirementCompletedEvent } from '../metrics/metrics-events';
+import type { EventEmitter } from 'events';
 
 export const MAX_BATCH_SIZE = 10;
 
@@ -38,6 +45,8 @@ export class BatchRetireDto {
   creditIds: string[];
   tonnes: string[];
   reason: string;
+}
+
 export interface BatchRetireResult {
   succeeded: string[];
   failed: { id: string; reason: string }[];
@@ -94,6 +103,8 @@ export class RetirementService {
     @Inject(EVENT_EMITTER) private readonly eventEmitter: IEventEmitter,
     private readonly nonceService?: NonceService,
     @Optional() private readonly certificateService?: CertificateService,
+    @Optional() @Inject(METRICS_EVENT_EMITTER)
+    private readonly metricsEmitter?: EventEmitter,
   ) {
     this.retirementContractId = this.configService.get<string>(
       'RETIREMENT_CONTRACT_ID',
@@ -304,6 +315,15 @@ export class RetirementService {
       }
     }
 
+    // Issue #495 — emit retirement metric event (single retirement).
+    this.metricsEmitter?.emit(
+      RETIREMENT_COMPLETED,
+      {
+        type: 'single',
+        count: 1,
+      } satisfies RetirementCompletedEvent,
+    );
+
     return { retirementId, certificateIpfsHash: certificateIpfsHash ?? '' };
   }
 
@@ -454,6 +474,18 @@ export class RetirementService {
       };
       this.eventEmitter.emit('CreditRetired', event);
       succeeded.push(entities[i].id);
+    }
+
+    // Issue #495 — emit batch retirement metric event.
+    const successCount = succeeded.length;
+    if (successCount > 0) {
+      this.metricsEmitter?.emit(
+        RETIREMENT_COMPLETED,
+        {
+          type: 'batch',
+          count: successCount,
+        } satisfies RetirementCompletedEvent,
+      );
     }
 
     // Merge contract-reported failures with any additional context

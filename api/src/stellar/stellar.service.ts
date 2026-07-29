@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Account,
@@ -14,7 +14,12 @@ import {
 } from '@stellar/stellar-sdk';
 import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RequestContextStore } from '../common/request-context';
-import { MetricsService } from '../metrics/metrics.service';
+import {
+  METRICS_EVENT_EMITTER,
+  CONTRACT_INVOCATION_COMPLETED,
+} from '../metrics/metrics-events';
+import type { ContractInvocationCompletedEvent } from '../metrics/metrics-events';
+import type { EventEmitter } from 'events';
 
 /**
  * Default fee-buffer multiplier applied on top of the simulated minResourceFee.
@@ -58,7 +63,8 @@ export class StellarService implements OnModuleInit {
   constructor(
     private configService: ConfigService,
     private seqNoManager: SequenceNumberManager,
-    @Optional() private readonly metricsService?: MetricsService,
+    @Optional() @Inject(METRICS_EVENT_EMITTER)
+    private readonly metricsEmitter?: EventEmitter,
   ) {
     const rawMultiplier = configService.get<string>('FEE_BUFFER_MULTIPLIER');
     const parsed =
@@ -162,6 +168,46 @@ export class StellarService implements OnModuleInit {
     signerKeypair: Keypair,
     retries = 1,
   ): Promise<rpc.Api.GetTransactionResponse> {
+    const startTime = Date.now();
+
+    try {
+      return await this.invokeContractImpl(
+        contractId,
+        method,
+        args,
+        signerKeypair,
+        retries,
+        startTime,
+      );
+    } catch (error: unknown) {
+      // Emit failure event for any unhandled error (simulation failure,
+      // max fee bump retries, unexpected errors, etc.).
+      this.metricsEmitter?.emit(
+        CONTRACT_INVOCATION_COMPLETED,
+        {
+          contract: contractId,
+          method,
+          status: 'failure',
+          durationMs: Date.now() - startTime,
+        } satisfies ContractInvocationCompletedEvent,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Core implementation of invokeContract, extracted so the public method
+   * can wrap it with timing and failure-event emission without interfering
+   * with the recursive bad-seq retry path.
+   */
+  private async invokeContractImpl(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[] = [],
+    signerKeypair: Keypair,
+    retries = 1,
+    startTime: number,
+  ): Promise<rpc.Api.GetTransactionResponse> {
     const pk = signerKeypair.publicKey();
     const seq = await this.getNextSequenceNumber(pk);
     const account = new Account(pk, seq.toString());
@@ -229,10 +275,17 @@ export class StellarService implements OnModuleInit {
             const result = await this.pollTransactionStatus(response.hash);
             this.invalidateAccountInfoCache(pk);
 
-            // Issue #546 — record the actual fee paid in the histogram.
-            this.metricsService?.contractCallFeeStroops
-              ?.labels({ contract: contractId, method })
-              .observe(currentFee);
+            // Issue #495 — emit success event (replaces direct MetricsService call).
+            this.metricsEmitter?.emit(
+              CONTRACT_INVOCATION_COMPLETED,
+              {
+                contract: contractId,
+                method,
+                status: 'success',
+                durationMs: Date.now() - startTime,
+                feeStroops: currentFee,
+              } satisfies ContractInvocationCompletedEvent,
+            );
             this.logger.log(
               `[issue#546] Contract call fee paid: method=${method} fee_stroops=${currentFee}`,
             );
@@ -279,12 +332,13 @@ export class StellarService implements OnModuleInit {
             await new Promise((resolve) =>
               setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
             );
-            return this.invokeContract(
+            return this.invokeContractImpl(
               contractId,
               method,
               args,
               signerKeypair,
               retries - 1,
+              startTime,
             );
           }
           throw error;

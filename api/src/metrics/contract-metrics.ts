@@ -1,11 +1,20 @@
 import client from 'prom-client';
 
 /**
- * Standalone Prometheus instruments for Stellar contract invocations.
- * Kept separate from MetricsService so they can be registered against
- * the app's default registry without touching existing MetricsService
- * wiring: `import { register } from 'prom-client'` picks these up
- * automatically since no custom Registry is passed here.
+ * @deprecated Issue #495 — These standalone instruments are superseded by the
+ * equivalent metrics defined in MetricsService (which uses a custom Registry
+ * so they appear in the /metrics endpoint output).
+ *
+ * The metrics here register against the **default** prom-client registry and
+ * thus DO NOT appear in the GET /metrics response exposed by MetricsController.
+ *
+ * They are kept temporarily for backward compatibility until all downstream
+ * consumers (e.g. Datadog agent scraping the default /metrics endpoint) are
+ * migrated to scrape the MetricsController endpoint.
+ *
+ * Replacement metrics in MetricsService (custom registry):
+ *   - stellar_contract_invocations_total{contract, method, status}
+ *   - stellar_contract_invocation_duration_ms{contract, method}
  */
 export const contractCallTotal = new client.Counter({
   name: 'contract_call_total',
@@ -21,6 +30,8 @@ export const contractCallDurationSeconds = new client.Histogram({
 });
 
 /**
+ * @deprecated Use the event emitter pattern from metrics-events.ts instead.
+ *
  * Wrap a contract call to emit contract_call_total{contract,method,status}
  * and contract_call_duration_seconds{contract,method}. Use around
  * StellarService.invokeContract call sites, e.g.:
