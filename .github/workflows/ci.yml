@@ -190,6 +190,15 @@ jobs:
         run: |
           chmod +x scripts/deploy-testnet.sh scripts/smoke-test.sh
           ./scripts/deploy-testnet.sh
+      # #496 — inject deployed contract IDs into the environment so downstream
+      # steps (smoke tests, future API integration) can read them without
+      # manual copy-paste from the JSON artifact.
+      - name: Set contract IDs for downstream steps
+        run: |
+          echo "CREDIT_REGISTRY_CONTRACT_ID=$(jq -r '.credit_registry' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
+          echo "RETIREMENT_CONTRACT_ID=$(jq -r '.retirement' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
+          echo "MARKETPLACE_CONTRACT_ID=$(jq -r '.marketplace' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
+          echo "MRV_ORACLE_CONTRACT_ID=$(jq -r '.mrv_oracle' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
       # #250 — run smoke tests after deployment
       - name: Run Smoke Tests
         env:

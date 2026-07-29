@@ -1,12 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
+import { StellarService } from '../stellar/stellar.service';
+import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CreditStatus } from '../../../shared';
+import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 
 export interface AdminStats {
   totalCredits: number;
   totalRetirements: number;
   activeVerifiers: number;
+  paused: boolean;
 }
 
 export interface VerifierCapabilities {
@@ -16,18 +21,70 @@ export interface VerifierCapabilities {
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+  private readonly creditRegistryContractId: string;
+
   constructor(
     private readonly creditsService: CreditsService,
     private readonly verifiersService: VerifiersService,
-  ) {}
+    private readonly configService: ConfigService,
+    private readonly stellarService: StellarService,
+    private readonly keypairService: StellarKeypairService,
+  ) {
+    this.creditRegistryContractId =
+      this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
+  }
 
   async getStats(): Promise<AdminStats> {
     const verifiers = await this.verifiersService.listVerifiers();
+    let paused = false;
+    try {
+      paused = await this.getContractPaused();
+    } catch {
+      // Non-fatal — default to false if contract call fails.
+    }
     return {
       totalCredits: 0, // on-chain aggregate; requires contract-level count endpoint
       totalRetirements: 0, // on-chain aggregate; requires contract-level count endpoint
       activeVerifiers: verifiers.length,
+      paused,
     };
+  }
+
+  private async getContractPaused(): Promise<boolean> {
+    if (!this.creditRegistryContractId) return false;
+    const result = await this.stellarService.readContract(
+      this.creditRegistryContractId,
+      'paused',
+      [],
+    );
+    return result ? (scValToNative(result) as boolean) : false;
+  }
+
+  async pauseContract(): Promise<{ paused: boolean }> {
+    const admin = this.keypairService.getAdminKeypair();
+    const args = [nativeToScVal(admin.publicKey(), { type: 'address' })];
+    await this.stellarService.invokeContract(
+      this.creditRegistryContractId,
+      'pause',
+      args,
+      admin,
+    );
+    this.logger.log('Contract paused via credit_registry.pause()');
+    return { paused: true };
+  }
+
+  async unpauseContract(): Promise<{ paused: boolean }> {
+    const admin = this.keypairService.getAdminKeypair();
+    const args = [nativeToScVal(admin.publicKey(), { type: 'address' })];
+    await this.stellarService.invokeContract(
+      this.creditRegistryContractId,
+      'unpause',
+      args,
+      admin,
+    );
+    this.logger.log('Contract unpaused via credit_registry.unpause()');
+    return { paused: false };
   }
 
   async registerVerifier(

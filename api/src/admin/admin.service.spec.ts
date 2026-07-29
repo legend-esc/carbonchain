@@ -1,9 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AdminService } from './admin.service';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
+import { StellarService } from '../stellar/stellar.service';
+import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CreditStatus } from '../../../shared';
+import { Keypair } from '@stellar/stellar-sdk';
 
 const mockCredit = {
   id: 'abc123',
@@ -22,6 +26,10 @@ describe('AdminService', () => {
   let service: AdminService;
   let creditsService: jest.Mocked<CreditsService>;
   let verifiersService: jest.Mocked<VerifiersService>;
+  let stellarService: jest.Mocked<StellarService>;
+  let keypairService: jest.Mocked<StellarKeypairService>;
+
+  const mockAdminKeypair = Keypair.random();
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -42,20 +50,56 @@ describe('AdminService', () => {
             getVerifier: jest.fn().mockResolvedValue({ address: 'GVER1' }),
           },
         },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn().mockImplementation((key: string) => {
+              if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return 'CCGJQV2J3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3';
+              return undefined;
+            }),
+          },
+        },
+        {
+          provide: StellarService,
+          useValue: {
+            readContract: jest.fn(),
+            invokeContract: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: StellarKeypairService,
+          useValue: {
+            getAdminKeypair: jest.fn().mockReturnValue(mockAdminKeypair),
+            getAdminPublicKey: jest.fn().mockReturnValue(mockAdminKeypair.publicKey()),
+          },
+        },
       ],
     }).compile();
 
     service = module.get(AdminService);
     creditsService = module.get(CreditsService);
     verifiersService = module.get(VerifiersService);
+    stellarService = module.get(StellarService);
+    keypairService = module.get(StellarKeypairService);
   });
 
   describe('getStats', () => {
-    it('should return stats with active verifier count', async () => {
+    it('should return stats with active verifier count and paused state', async () => {
+      stellarService.readContract.mockResolvedValue(
+        { type: 'bool', value: false } as any,
+      );
       const stats = await service.getStats();
       expect(stats.activeVerifiers).toBe(2);
       expect(stats).toHaveProperty('totalCredits');
       expect(stats).toHaveProperty('totalRetirements');
+      expect(stats).toHaveProperty('paused');
+      expect(stats.paused).toBe(false);
+    });
+
+    it('should default paused to false when contract call fails', async () => {
+      stellarService.readContract.mockRejectedValue(new Error('Contract unavailable'));
+      const stats = await service.getStats();
+      expect(stats.paused).toBe(false);
     });
   });
 
@@ -89,6 +133,32 @@ describe('AdminService', () => {
       creditsService.getCredit.mockRejectedValue(new NotFoundException());
       await expect(service.flagCredit('UNKNOWN')).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe('pauseContract', () => {
+    it('should invoke pause on the credit registry and return paused: true', async () => {
+      const result = await service.pauseContract();
+      expect(result).toEqual({ paused: true });
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'pause',
+        expect.any(Array),
+        mockAdminKeypair,
+      );
+    });
+  });
+
+  describe('unpauseContract', () => {
+    it('should invoke unpause on the credit registry and return paused: false', async () => {
+      const result = await service.unpauseContract();
+      expect(result).toEqual({ paused: false });
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'unpause',
+        expect.any(Array),
+        mockAdminKeypair,
       );
     });
   });

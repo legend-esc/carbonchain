@@ -95,6 +95,20 @@ describe('AdminController', () => {
     expect(result).toEqual({ requiredApprovals: 2 });
     expect(service.setRequiredApprovals).toHaveBeenCalledWith(2);
   });
+
+  it('POST /admin/pause calls pauseContract', async () => {
+    jest.spyOn(service, 'pauseContract').mockResolvedValue({ paused: true });
+    const result = await controller.pause();
+    expect(result).toEqual({ paused: true });
+    expect(service.pauseContract).toHaveBeenCalled();
+  });
+
+  it('POST /admin/unpause calls unpauseContract', async () => {
+    jest.spyOn(service, 'unpauseContract').mockResolvedValue({ paused: false });
+    const result = await controller.unpause();
+    expect(result).toEqual({ paused: false });
+    expect(service.unpauseContract).toHaveBeenCalled();
+  });
 });
 
 describe('AdminGuard', () => {

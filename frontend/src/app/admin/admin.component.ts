@@ -225,8 +225,10 @@ export class AdminComponent implements OnInit {
       const stats = await firstValueFrom(this.api.getAdminStats(token));
       // Ensure at least 1 so the slider is always usable.
       this.maxApprovals.set(Math.max(stats.activeVerifiers, 1));
+      this.contractPaused.set(stats.paused);
     } catch {
       // Non-fatal — slider defaults to max=10 if stats cannot be fetched.
+      // pause state defaults to false.
     }
   }
 
@@ -300,11 +302,14 @@ export class AdminComponent implements OnInit {
     this.isPausing.set(true);
     this.pauseError.set(null);
     try {
-      // Toggle the pause state (actual contract call would go here).
-      const newState = !this.contractPaused();
-      this.contractPaused.set(newState);
+      const token = this.auth.token()!;
+      const currentlyPaused = this.contractPaused();
+      const result = currentlyPaused
+        ? await firstValueFrom(this.api.unpauseContract(token))
+        : await firstValueFrom(this.api.pauseContract(token));
+      this.contractPaused.set(result.paused);
       this.toast.show(
-        newState ? 'Contract paused. All operations stopped.' : 'Contract unpaused. Operations resumed.',
+        result.paused ? 'Contract paused. All operations stopped.' : 'Contract unpaused. Operations resumed.',
         'success',
       );
       this.showPauseConfirm.set(false);

@@ -304,6 +304,30 @@ export class ApiService {
     );
   }
 
+  /**
+   * POST /admin/pause — pause all contract operations.
+   * Requires admin JWT.
+   */
+  pauseContract(token: string): Observable<{ paused: boolean }> {
+    return this.http.post<{ paused: boolean }>(
+      `${this.baseUrl}/admin/pause`,
+      {},
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /**
+   * POST /admin/unpause — resume all contract operations.
+   * Requires admin JWT.
+   */
+  unpauseContract(token: string): Observable<{ paused: boolean }> {
+    return this.http.post<{ paused: boolean }>(
+      `${this.baseUrl}/admin/unpause`,
+      {},
+      { headers: this.authHeaders(token) },
+    );
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private authHeaders(token: string): HttpHeaders {

@@ -15,10 +15,12 @@ describe('AdminComponent', () => {
 
   function createApiSpy() {
     return {
-      getAdminStats: vi.fn().mockReturnValue(of({ totalCredits: 0, totalRetirements: 0, activeVerifiers: 3 })),
+      getAdminStats: vi.fn().mockReturnValue(of({ totalCredits: 0, totalRetirements: 0, activeVerifiers: 3, paused: false })),
       registerMethodology: vi.fn(),
       getAdminNonce: vi.fn().mockReturnValue(of({ address: 'GADMIN', nonce: 0 })),
       setRequiredApprovals: vi.fn(),
+      pauseContract: vi.fn().mockReturnValue(of({ paused: true })),
+      unpauseContract: vi.fn().mockReturnValue(of({ paused: false })),
       // AdminVerifiersComponent uses these:
       listVerifiers: vi.fn().mockReturnValue(of([])),
       registerVerifier: vi.fn(),
@@ -173,13 +175,32 @@ describe('AdminComponent', () => {
     expect((component as any)['showPauseConfirm']()).toBe(false);
   });
 
-  it('toggles contract paused state on confirm', async () => {
+  it('calls pauseContract API on confirm and updates state', async () => {
     expect((component as any)['contractPaused']()).toBe(false);
     (component as any).openPauseConfirm();
     await (component as any).confirmPause();
+    expect(apiSpy.pauseContract).toHaveBeenCalledWith(MOCK_TOKEN);
     expect((component as any)['contractPaused']()).toBe(true);
     expect(toastSpy.show).toHaveBeenCalled();
     expect((component as any)['showPauseConfirm']()).toBe(false);
+  });
+
+  it('calls unpauseContract API when already paused', async () => {
+    (component as any)['contractPaused'].set(true);
+    (component as any).openPauseConfirm();
+    await (component as any).confirmPause();
+    expect(apiSpy.unpauseContract).toHaveBeenCalledWith(MOCK_TOKEN);
+    expect((component as any)['contractPaused']()).toBe(false);
+    expect(toastSpy.show).toHaveBeenCalledWith('Contract unpaused. Operations resumed.', 'success');
+  });
+
+  it('sets error when pauseContract fails', async () => {
+    apiSpy.pauseContract.mockReturnValue(
+      throwError(() => new Error('Contract call failed')),
+    );
+    (component as any).openPauseConfirm();
+    await (component as any).confirmPause();
+    expect((component as any)['pauseError']()).toBe('Contract call failed');
   });
 
   it('loads maxApprovals from admin stats on init', async () => {

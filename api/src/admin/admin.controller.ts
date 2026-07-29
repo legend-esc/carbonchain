@@ -88,4 +88,22 @@ export class AdminController {
   ): { requiredApprovals: number } {
     return this.adminService.setRequiredApprovals(body.threshold);
   }
+
+  /**
+   * POST /admin/pause — pause all contract operations.
+   * Only the on-chain admin may call this.
+   */
+  @Post('pause')
+  pause(): Promise<{ paused: boolean }> {
+    return this.adminService.pauseContract();
+  }
+
+  /**
+   * POST /admin/unpause — resume all contract operations.
+   * Only the on-chain admin may call this.
+   */
+  @Post('unpause')
+  unpause(): Promise<{ paused: boolean }> {
+    return this.adminService.unpauseContract();
+  }
 }
