@@ -148,6 +148,35 @@ export class VerifiersService {
     }
   }
 
+  /**
+   * Approve a pending credit on behalf of a registered verifier.
+   *
+   * ## Signing Model
+   *
+   * The credit registry contract's `approve_and_mint` function invokes
+   * `verifier.require_auth()`, which means the transaction **must** be signed
+   * by the verifier's own Stellar keypair — the admin keypair alone is
+   * insufficient for a properly configured network.
+   *
+   * **Current behaviour (temporary / test-mode):**
+   * The API signs the transaction with the admin keypair and submits it
+   * directly. This works in local / testnet environments where the contract
+   * is deployed with `mock_all_auths()` or equivalent auth bypass, but it
+   * will **fail** on a production network that enforces real authorisation.
+   *
+   * **Planned production flow (TODO):**
+   * 1. The API builds the transaction envelope, simulates it, and returns
+   *    the unsigned XDR to the verifier's frontend (e.g. Freighter / Albedo).
+   * 2. The verifier signs the XDR client-side using their wallet.
+   * 3. The signed XDR is posted back to the API for submission.
+   *
+   * This two-phase submit flow ensures that the verifier's secret key never
+   * leaves their wallet while still allowing the API to manage nonce
+   * fetching, contract address resolution, and response handling.
+   *
+   * @see {@link https://github.com/stellar/freighter | Freighter} for
+   *      browser-based Stellar signing.
+   */
   async approveCredit(
     address: string,
     creditId: string,
@@ -159,16 +188,35 @@ export class VerifiersService {
 
     await this.getVerifier(address);
 
-    this.logger.log(`Verifier ${address} approving credit ${creditId}`);
+    // Fetch the verifier's current replay-protection nonce from the contract.
+    // This must be done atomically with the transaction build to avoid
+    // TOCTOU races — the nonce is consumed inside `approve_and_mint`.
+    const nonceRetval = await this.stellarService.readContract(
+      this.contractId,
+      'get_nonce',
+      [nativeToScVal(address, { type: 'address' })],
+    );
+    if (!nonceRetval) {
+      throw new Error(`Failed to fetch nonce for verifier ${address}: contract returned no value`);
+    }
+    const nonce = scValToNative(nonceRetval) as bigint;
+
+    this.logger.log(`Verifier ${address} approving credit ${creditId} (nonce=${nonce})`);
+
     const args = [
       nativeToScVal(address, { type: 'address' }),
       nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      nativeToScVal(nonce, { type: 'u64' }),
     ];
+
+    // NOTE: Signing with the admin keypair is a test-mode convenience.
+    // In production the verifier MUST sign this transaction themselves.
+    // See the class-level JSDoc for the planned Freighter signing flow.
     const signer = this.keypairService.getAdminKeypair();
     try {
       await this.stellarService.invokeContract(
         this.contractId,
-        'approve_credit',
+        'approve_and_mint',
         args,
         signer,
       );
