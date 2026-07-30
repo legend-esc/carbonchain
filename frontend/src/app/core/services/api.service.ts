@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { CreditMetadata, ProjectProfile, Offer } from '@shared';
+import { CreditMetadata, ProjectProfile, Offer, VerifierReputation } from '@shared';
 
 // ---------------------------------------------------------------------------
 // Response types mirroring the NestJS controllers
@@ -22,6 +22,13 @@ export interface MeResponse {
 
 export interface VerifierInfo {
   address: string;
+  name?: string | null;
+  capabilities?: string[];
+  reputation?: {
+    approvalCount: number;
+    disputeCount: number;
+  };
+  registeredAt?: Date;
 }
 
 export interface AdminStats {
@@ -214,6 +221,11 @@ export class ApiService {
   /** GET /verifiers */
   listVerifiers(): Observable<VerifierInfo[]> {
     return this.http.get<VerifierInfo[]>(`${this.baseUrl}/verifiers`);
+  }
+
+  /** GET /verifiers/:address/reputation */
+  getVerifierReputation(address: string): Observable<VerifierReputation> {
+    return this.http.get<VerifierReputation>(`${this.baseUrl}/verifiers/${address}/reputation`);
   }
 
   // ── Admin ─────────────────────────────────────────────────────────────────
