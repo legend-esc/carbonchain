@@ -17,7 +17,7 @@ soroban-sdk = "=26.0.1"
 # built against. Target-gated to non-wasm so the constraint unifies the
 # native test builds on 2.2.0 without bloating the 128 KiB-limited WASM.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["alloc", "rand_core"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["alloc", "rand_core"] }
 
 [dev-dependencies]
 soroban-sdk = { version = "=26.0.1", features = ["testutils"] }
