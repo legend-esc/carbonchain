@@ -47,7 +47,7 @@
     "@angular/cli": "^21.2.13",
     "@angular/compiler-cli": "^21.2.14",
     "@types/jasmine": "^6.0.0",
-    "@vitest/coverage-v8": "4.1.8",
+    "@vitest/coverage-v8": "4.1.10",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
