@@ -9,7 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = "=26.0.1"
+soroban-sdk = "=27.0.5"
 # Pin to the rand_core 0.6 stack. soroban-env-host 26.1.3 declares loose
 # `>=` bounds on ed25519-dalek/curve25519-dalek, which resolve to the new
 # digest 0.11 / rand_core 0.10 stack; its testutils PRNG (rand_chacha 0.3)
@@ -20,7 +20,7 @@ soroban-sdk = "=26.0.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["alloc", "rand_core"] }
 
 [dev-dependencies]
-soroban-sdk = { version = "=26.0.1", features = ["testutils"] }
+soroban-sdk = { version = "=27.0.5", features = ["testutils"] }
 
 [features]
 library = []
