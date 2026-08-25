@@ -4,13 +4,14 @@ use soroban_sdk::contracterror;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum RetirementError {
-    CreditNotActive = 110,
-    AlreadyInitialized = 111,
-    NotInitialized = 112,
-    Unauthorized = 113,
-    ContractPaused = 114,
-    InvalidNonce = 115,
-    NoPendingAdmin = 116,
-    InvalidTonnes = 117,
-    InvalidInput = 118,
+    CreditNotActive = 200,
+    AlreadyInitialized = 201,
+    NotInitialized = 202,
+    Unauthorized = 203,
+    ContractPaused = 204,
+    InvalidNonce = 205,
+    NoPendingAdmin = 206,
+    InvalidTonnes = 207,
+    InvalidInput = 208,
+    InvalidRegistry = 209,
 }
