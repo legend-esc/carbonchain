@@ -363,3 +363,24 @@ pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
         .get(&DataKey::CreditsByOwner(owner.clone()))
         .unwrap_or_else(|| Vec::new(env))
 }
+
+/// Remove a credit ID from an owner's index (e.g. after merge or transfer).
+/// No-op if the ID is not present.
+pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::CreditsByOwner(owner.clone());
+    let list: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut updated: Vec<BytesN<32>> = Vec::new(env);
+    for id in list.iter() {
+        if id != *credit_id {
+            updated.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &updated);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}

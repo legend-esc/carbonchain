@@ -42,9 +42,9 @@ use crate::storage::{
     get_session_op_count, get_verifier_pending_count, get_verifier_reputation, get_verifiers,
     has_admin, increment_approval_count, increment_dispute_count, increment_session_op_count,
     increment_verifier_pending, is_issuer as storage_is_issuer, is_methodology_valid, is_paused,
-    is_verifier, remove_credit_approvals, set_admin, set_credit, set_credit_approvals,
-    set_credit_by_project_vintage, set_issuers, set_methodologies, set_paused,
-    set_required_approvals, set_retirement_contract, set_session, set_verifiers,
+    is_verifier, remove_credit_approvals, remove_credit_from_owner, set_admin, set_credit,
+    set_credit_approvals, set_credit_by_project_vintage, set_issuers, set_methodologies,
+    set_paused, set_required_approvals, set_retirement_contract, set_session, set_verifiers,
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, Methodology, ProjectMetadata,
@@ -729,9 +729,33 @@ impl CreditRegistry {
         get_credits_by_project(&env, &project_id)
     }
 
-    /// Returns credit IDs currently owned by `owner`.
-    /// Filters out stale entries (transferred credits remain in the index of the previous owner).
+    /// Returns credit IDs currently owned by `owner` that are in a tradable (non-terminal) status.
+    /// Excludes credits with status Retired, Disputed, or Expired, so the owner view only
+    /// reflects credits that can still be traded or transferred.
+    ///
+    /// Use [`list_credits_by_owner_history`] to retrieve the full history including terminal
+    /// statuses.
     pub fn list_credits_by_owner(env: Env, owner: Address) -> Vec<BytesN<32>> {
+        let all = get_credits_by_owner(&env, &owner);
+        let mut owned: Vec<BytesN<32>> = Vec::new(&env);
+        for id in all.iter() {
+            if let Some(credit) = get_credit(&env, &id) {
+                if credit.owner == owner
+                    && credit.status != CreditStatus::Retired
+                    && credit.status != CreditStatus::Disputed
+                    && credit.status != CreditStatus::Expired
+                {
+                    owned.push_back(id);
+                }
+            }
+        }
+        owned
+    }
+
+    /// Returns all credit IDs ever owned by `owner`, including those in terminal statuses
+    /// (Retired, Disputed, Expired). Use this for audit trails, accounting reconciliation,
+    /// and showing retirement history to the user.
+    pub fn list_credits_by_owner_history(env: Env, owner: Address) -> Vec<BytesN<32>> {
         let all = get_credits_by_owner(&env, &owner);
         let mut owned: Vec<BytesN<32>> = Vec::new(&env);
         for id in all.iter() {
@@ -1195,6 +1219,9 @@ impl CreditRegistry {
             let mut credit = get_credit(&env, &id).ok_or(CarbonChainError::CreditNotFound)?;
             credit.status = CreditStatus::Retired;
             set_credit(&env, &id, &credit);
+            // Remove merged source from the owner's active index so it no longer
+            // appears in list_credits_by_owner (fixes #665).
+            remove_credit_from_owner(&env, &caller, &id);
         }
 
         CreditsMerged {
@@ -2695,5 +2722,251 @@ mod tests {
         client.approve_and_mint(&verifier, &id, &vnonce);
         let credit = client.get_credit(&id);
         assert_eq!(credit.status, CreditStatus::Active);
+    }
+
+    // ── Tests for Issues #665-668: list_credits_by_owner status filter ───────
+
+    /// Helper: submit a credit and get it to Active by having the verifier approve it.
+    fn mint_active_credit(
+        env: &Env,
+        client: &CreditRegistryClient,
+        admin: &Address,
+        verifier: &Address,
+        issuer: &Address,
+    ) -> BytesN<32> {
+        let id = submit_test_credit(env, client, admin, issuer);
+        let vnonce = client.get_nonce(verifier);
+        client.approve_and_mint(verifier, &id, &vnonce);
+        id
+    }
+
+    #[test]
+    fn test_list_by_owner_excludes_retired_credits() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        let id = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+
+        // Retire the credit; it should disappear from the active listing.
+        client.mark_retired(&id);
+
+        let active = client.list_credits_by_owner(&issuer);
+        assert!(
+            !active.contains(&id),
+            "retired credit must not appear in list_credits_by_owner"
+        );
+        assert_eq!(active.len(), 0);
+    }
+
+    #[test]
+    fn test_list_by_owner_excludes_disputed_credits() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        let id = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+
+        // Dispute the credit.
+        client.dispute_credit(
+            &verifier,
+            &id,
+            &String::from_str(&env, "evidence-hash"),
+        );
+
+        let active = client.list_credits_by_owner(&issuer);
+        assert!(
+            !active.contains(&id),
+            "disputed credit must not appear in list_credits_by_owner"
+        );
+    }
+
+    #[test]
+    fn test_list_by_owner_excludes_expired_credits() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        let id = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+
+        // Admin explicitly expires the credit.
+        client.expire_credit(&admin, &id);
+
+        let active = client.list_credits_by_owner(&issuer);
+        assert!(
+            !active.contains(&id),
+            "expired credit must not appear in list_credits_by_owner"
+        );
+    }
+
+    #[test]
+    fn test_list_by_owner_returns_active_credits() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        let id = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+
+        let active = client.list_credits_by_owner(&issuer);
+        assert!(
+            active.contains(&id),
+            "active credit must appear in list_credits_by_owner"
+        );
+        assert_eq!(active.len(), 1);
+    }
+
+    // ── Tests for Issue #666/#668: list_credits_by_owner_history ─────────────
+
+    #[test]
+    fn test_list_by_owner_history_includes_retired_credits() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        let id = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+
+        // Retire the credit via mark_retired (mocked auth satisfies retirement contract check).
+        client.mark_retired(&id);
+
+        // Active listing should not contain it.
+        let active = client.list_credits_by_owner(&issuer);
+        assert!(!active.contains(&id));
+
+        // History listing must still contain it.
+        let history = client.list_credits_by_owner_history(&issuer);
+        assert!(
+            history.contains(&id),
+            "retired credit must appear in list_credits_by_owner_history"
+        );
+    }
+
+    #[test]
+    fn test_list_by_owner_history_includes_all_statuses() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        // Create an active credit and a retired credit.
+        let active_id = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+
+        // Submit a second credit for retirement (reuse existing project/methodology/issuer).
+        let nonce2 = client.get_nonce(&issuer);
+        let retired_id = client.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei456"),
+            &nonce2,
+        );
+        let vnonce2 = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &retired_id, &vnonce2);
+        client.mark_retired(&retired_id);
+
+        let history = client.list_credits_by_owner_history(&issuer);
+        assert!(history.contains(&active_id), "active credit in history");
+        assert!(history.contains(&retired_id), "retired credit in history");
+        assert_eq!(history.len(), 2);
+    }
+
+    // ── Tests for Issue #665: merge_credits cleans owner index ───────────────
+
+    #[test]
+    fn test_merge_sources_disappear_from_owner_index() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        // Mint two active credits to merge.
+        let id1 = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+        let nonce2 = client.get_nonce(&issuer);
+        let id2 = client.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei456"),
+            &nonce2,
+        );
+        let vnonce2 = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id2, &vnonce2);
+
+        // Both should be visible before merge.
+        let before = client.list_credits_by_owner(&issuer);
+        assert!(before.contains(&id1));
+        assert!(before.contains(&id2));
+        assert_eq!(before.len(), 2);
+
+        // Merge them.
+        let mut ids = soroban_sdk::Vec::new(&env);
+        ids.push_back(id1.clone());
+        ids.push_back(id2.clone());
+        let merged_id = client.merge_credits(&issuer, &ids);
+
+        // Source credits must not appear in the active listing.
+        let after = client.list_credits_by_owner(&issuer);
+        assert!(
+            !after.contains(&id1),
+            "merged source id1 must not be in list_credits_by_owner"
+        );
+        assert!(
+            !after.contains(&id2),
+            "merged source id2 must not be in list_credits_by_owner"
+        );
+
+        // The new merged credit must appear.
+        assert!(
+            after.contains(&merged_id),
+            "merged credit must appear in list_credits_by_owner"
+        );
+        assert_eq!(after.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_sources_ownership_counts_reconcile() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+
+        let id1 = mint_active_credit(&env, &client, &admin, &verifier, &issuer);
+        let nonce2 = client.get_nonce(&issuer);
+        let id2 = client.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei789"),
+            &nonce2,
+        );
+        let vnonce2 = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id2, &vnonce2);
+
+        let mut ids = soroban_sdk::Vec::new(&env);
+        ids.push_back(id1.clone());
+        ids.push_back(id2.clone());
+        let merged_id = client.merge_credits(&issuer, &ids);
+
+        // After merge: only the merged credit remains active.
+        let active = client.list_credits_by_owner(&issuer);
+        assert_eq!(active.len(), 1, "exactly one active credit after merge");
+        assert_eq!(active.get(0).unwrap(), merged_id);
+
+        // Total tonnes reconcile: 2 × 1_000_000 = 2_000_000.
+        let merged = client.get_credit(&merged_id);
+        assert_eq!(merged.tonnes, 2_000_000);
     }
 }
