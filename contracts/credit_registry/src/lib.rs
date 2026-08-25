@@ -30,20 +30,20 @@ pub mod types;
 
 use crate::errors::CarbonChainError;
 use crate::events::{
-    ContractInitialized, ContractPaused, ContractUnpaused, CreditDisputed, CreditExpired,
-    CreditFlagged, CreditMinted, CreditSplit, CreditSubmitted, CreditTransferred, CreditsMerged,
-    DisputeResolved, FlagResolved, ProjectRegistered, RetirementContractUpdated, SessionNew,
-    StakeDeposited, StakeWithdrawn, UnbondingInitiated, VerifierRegistered, VerifierRemoved,
-    VerifierServicesConfigured, VerifierSlashed,
+    ContractInitialized, ContractPaused, ContractUnpaused, ContractUpgraded, CreditDisputed,
+    CreditExpired, CreditFlagged, CreditMinted, CreditSplit, CreditSubmitted, CreditTransferred,
+    CreditsMerged, DisputeResolved, FlagResolved, ProjectRegistered, RetirementContractUpdated,
+    SessionNew, StakeDeposited, StakeWithdrawn, UnbondingInitiated, VerifierRegistered,
+    VerifierRemoved, VerifierServicesConfigured, VerifierSlashed,
 };
 use crate::storage::{
     add_credit_to_owner, add_credit_to_project, add_to_pending_credits, append_audit_log,
-    consume_nonce, decrement_verifier_pending, get_admin, get_audit_log, get_credit,
-    get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
+    consume_nonce, consume_session_count, decrement_verifier_pending, get_admin, get_audit_log,
+    get_credit, get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
     get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies, get_min_stake,
     get_nonce, get_pending_credits, get_required_approvals, get_retirement_contract, get_session,
     get_session_op_count, get_total_credits, get_unbonding_request, get_verifier_reputation,
-    get_verifier_services_for, get_verifier_stake, get_verifiers, has_admin,
+    get_verifier_services_for, get_verifier_stake, get_version, get_verifiers, has_admin,
     increment_approval_count, increment_dispute_count, increment_session_op_count,
     increment_total_credits, increment_verifier_pending, is_issuer as storage_is_issuer,
     is_methodology_valid, is_paused, is_verifier, remove_credit_approvals,
@@ -54,6 +54,7 @@ use crate::storage::{
     set_unbonding_request, set_verifier_services, set_verifier_stake, set_verifiers,
     verifier_has_credit_approval, SLASH_PERCENT, UNBONDING_PERIOD_SECS,
 };
+use crate::migrations::{run_migrations, CURRENT_VERSION};
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, DisputeResolution, Methodology,
     ProjectMetadata, ServiceType, Session, UnbondingRequest, VerifierReputation,
@@ -1002,6 +1003,8 @@ impl CreditRegistry {
         set_credit(&env, &child1_id, &child1);
         add_credit_to_project(&env, &original.project_id, &child1_id);
         add_credit_to_owner(&env, &caller, &child1_id);
+        // Issue #669: count both new child credits toward TotalCredits.
+        increment_total_credits(&env);
 
         let mut child2 = original.clone();
         child2.tonnes = remaining_tonnes;
@@ -1009,6 +1012,8 @@ impl CreditRegistry {
         set_credit(&env, &child2_id, &child2);
         add_credit_to_project(&env, &original.project_id, &child2_id);
         add_credit_to_owner(&env, &caller, &child2_id);
+        // Issue #669: count both new child credits toward TotalCredits.
+        increment_total_credits(&env);
 
         // Issue #470: Remove the original credit from the caller's owner index
         // before retiring it, so get_credits_by_owner returns accurate results.
@@ -1548,6 +1553,8 @@ impl CreditRegistry {
         set_credit(&env, &merged_id, &merged_credit);
         add_credit_to_project(&env, &merged_credit.project_id, &merged_id);
         add_credit_to_owner(&env, &caller, &merged_id);
+        // Issue #669: count the new merged credit toward TotalCredits.
+        increment_total_credits(&env);
 
         for id in credit_ids.iter() {
             let mut credit = get_credit(&env, &id).ok_or(CarbonChainError::CreditNotFound)?;
@@ -1570,10 +1577,17 @@ impl CreditRegistry {
     /// After this call the contract executes the new WASM on the next invocation.
     /// The admin must supply a valid nonce to prevent replay attacks.
     ///
+    /// Guardrails (Issue #670):
+    /// 1. Rejects a zero WASM hash (all bytes zero) — indicates a missing/corrupt hash.
+    /// 2. Runs all pending schema migrations up to `CURRENT_VERSION` before
+    ///    swapping the WASM so that storage is always consistent with the new code.
+    /// 3. Emits a [`ContractUpgraded`] event so off-chain indexers can track upgrades.
+    ///
     /// # Errors
     /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
     /// - [`CarbonChainError::Unauthorized`] — caller is not the admin.
     /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    /// - [`CarbonChainError::InvalidMetadata`] — `new_wasm_hash` is all-zero bytes.
     pub fn upgrade(
         env: Env,
         admin: Address,
@@ -1588,6 +1602,35 @@ impl CreditRegistry {
         if !consume_nonce(&env, &admin, nonce) {
             return Err(CarbonChainError::InvalidNonce);
         }
+
+        // Guard: reject an all-zero hash — it indicates a missing or corrupt WASM hash.
+        let zero_hash: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+        if new_wasm_hash == zero_hash {
+            return Err(CarbonChainError::InvalidMetadata);
+        }
+
+        // Downgrade guard: refuse to install a WASM whose schema version is older
+        // than what is already stored. CURRENT_VERSION is compiled into the running
+        // binary; if the stored version already exceeds it, the caller is trying to
+        // deploy an older WASM against newer storage — reject to protect data.
+        let pre_upgrade_version = get_version(&env);
+        if pre_upgrade_version > CURRENT_VERSION {
+            return Err(CarbonChainError::InvalidApprovalThreshold);
+        }
+
+        // Run all pending schema migrations before switching the WASM so the new
+        // code always finds storage in the expected layout.
+        run_migrations(&env, CURRENT_VERSION)?;
+
+        let migrated_to = get_version(&env);
+
+        ContractUpgraded {
+            admin: admin.clone(),
+            new_wasm_hash: new_wasm_hash.clone(),
+            migrated_to_version: migrated_to,
+        }
+        .publish(&env);
+
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -1598,12 +1641,10 @@ impl CreditRegistry {
     /// Returns a deterministic session ID derived from the initiator address and ledger timestamp.
     pub fn create_session(env: Env, initiator: Address) -> Result<BytesN<32>, CarbonChainError> {
         initiator.require_auth();
-        // Derive a unique session ID from initiator + current timestamp + session nonce.
-        let session_nonce: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::AuditLogCount)
-            .unwrap_or(0u64);
+        // Issue #671: derive the nonce from a dedicated SessionCount key, not
+        // from AuditLogCount. This ensures session IDs and audit-log IDs are
+        // computed from independent counters and can never collide.
+        let session_nonce = consume_session_count(&env);
         let mut preimage = initiator.clone().to_xdr(&env);
         preimage.append(&env.ledger().timestamp().to_xdr(&env));
         preimage.append(&session_nonce.to_xdr(&env));
@@ -3702,5 +3743,187 @@ mod tests {
         let recipient_credits = client.list_credits_by_owner(&recipient);
         assert_eq!(recipient_credits.len(), 1, "recipient should have 1 credit");
         assert!(recipient_credits.contains(&transferred_id));
+    }
+
+    // ── Issue #669: TotalCredits count drift after split/merge ───────────────
+
+    /// Helper: mint an active credit for a given issuer and return its ID.
+    fn mint_active_credit(
+        env: &Env,
+        client: &CreditRegistryClient,
+        admin: &Address,
+        verifier: &Address,
+        issuer: &Address,
+        project_suffix: &str,
+    ) -> BytesN<32> {
+        let anonce = client.get_nonce(admin);
+        client.register_issuer(admin, issuer, &anonce);
+        let anonce2 = client.get_nonce(admin);
+        client.register_methodology(
+            admin,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "Verified Carbon Standard"),
+            &anonce2,
+        );
+        let proj = String::from_str(env, project_suffix);
+        client.register_project(
+            admin,
+            &proj,
+            &String::from_str(env, "Test Project"),
+            &String::from_str(env, "Desc"),
+            &String::from_str(env, "NG"),
+        );
+        let inonce = client.get_nonce(issuer);
+        let credit_id = client.submit_credit(
+            issuer,
+            &proj,
+            &2024,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "NG"),
+            &1_000_000,
+            &String::from_str(env, "bafybei123"),
+            &inonce,
+        );
+        let vnonce = client.get_nonce(verifier);
+        client.approve_and_mint(verifier, &credit_id, &vnonce);
+        credit_id
+    }
+
+    #[test]
+    fn test_count_increments_on_split() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+
+        let credit_id = mint_active_credit(&env, &client, &admin, &verifier, &issuer, "PROJ-S1");
+
+        let count_before = client.get_credit_count();
+        // count_before == 1 (the original credit submitted above)
+
+        let inonce = client.get_nonce(&issuer);
+        client.split_credit(&issuer, &credit_id, &500_000, &inonce);
+
+        // A split creates 2 new credits, so count should increase by 2.
+        assert_eq!(
+            client.get_credit_count(),
+            count_before + 2,
+            "split should add 2 to TotalCredits"
+        );
+    }
+
+    #[test]
+    fn test_count_increments_on_merge() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+
+        // Mint one credit (count = 1), then split it to get two children (count = 3).
+        // Then merge the two children into one (count should become 4).
+        let credit_id = mint_active_credit(&env, &client, &admin, &verifier, &issuer, "PROJ-MRG");
+
+        let count_after_submit = client.get_credit_count();
+        assert_eq!(count_after_submit, 1);
+
+        // Split the original into two children (each 500_000 units).
+        let snonce = client.get_nonce(&issuer);
+        let (cid1, cid2) = client.split_credit(&issuer, &credit_id, &500_000, &snonce);
+
+        let count_after_split = client.get_credit_count();
+        // split created 2 new credits → 1 + 2 = 3
+        assert_eq!(count_after_split, 3);
+
+        // Now merge the two children back into one.
+        let mut ids: Vec<BytesN<32>> = Vec::new(&env);
+        ids.push_back(cid1);
+        ids.push_back(cid2);
+        let mnonce = client.get_nonce(&issuer);
+        client.merge_credits(&issuer, &ids, &mnonce);
+
+        // merge created 1 new credit → 3 + 1 = 4
+        assert_eq!(
+            client.get_credit_count(),
+            count_after_split + 1,
+            "merge should add 1 to TotalCredits"
+        );
+    }
+
+    // ── Issue #671: Session nonce must use dedicated SessionCount key ─────────
+
+    #[test]
+    fn test_session_ids_unique_across_sessions() {
+        let (env, client, _admin, _verifier) = setup();
+        let initiator = Address::generate(&env);
+
+        let sid1 = client.create_session(&initiator);
+        // Advance ledger to ensure different timestamp helps produce a distinct preimage
+        env.ledger().set_timestamp(env.ledger().timestamp() + 1);
+        let sid2 = client.create_session(&initiator);
+
+        assert_ne!(sid1, sid2, "successive session IDs must be unique");
+    }
+
+    #[test]
+    fn test_session_id_does_not_collide_with_audit_log_id() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+
+        let credit_id = mint_active_credit(&env, &client, &admin, &verifier, &issuer, "PROJ-A1");
+
+        // Create a session
+        let initiator = Address::generate(&env);
+        let session_id = client.create_session(&initiator);
+
+        // Record some audit log entries via submit_credit_with_session
+        let inonce = client.get_nonce(&issuer);
+        client.submit_credit_with_session(
+            &session_id,
+            &issuer,
+            &String::from_str(&env, "PROJ-A1"),
+            &2025,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &200_000,
+            &String::from_str(&env, "bafybeiaudit"),
+            &inonce,
+        );
+
+        // The session_id must still resolve to a valid session (not corrupted
+        // by audit log writes that formerly shared the same counter).
+        let op_count = client.get_session_operation_count(&session_id);
+        assert_eq!(op_count, 1, "session should record 1 operation");
+
+        // Create a second session — its ID must differ from the first even after
+        // audit log entries have been appended.
+        let sid2 = client.create_session(&initiator);
+        assert_ne!(
+            session_id, sid2,
+            "session IDs must remain unique after audit log writes"
+        );
+        let _ = credit_id; // suppress unused warning
+    }
+
+    // ── Issue #670: upgrade() guardrails ─────────────────────────────────────
+
+    #[test]
+    fn test_upgrade_rejects_zero_hash() {
+        let (env, client, admin, _verifier) = setup();
+        let zero_hash: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+        let nonce = client.get_nonce(&admin);
+        let result = client.try_upgrade(&admin, &zero_hash, &nonce);
+        assert!(result.is_err(), "upgrade with zero hash must be rejected");
+    }
+
+    #[test]
+    fn test_upgrade_rejects_non_admin() {
+        let (env, client, _admin, _verifier) = setup();
+        let rando = Address::generate(&env);
+        let fake_hash: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
+        let nonce = client.get_nonce(&rando);
+        let result = client.try_upgrade(&rando, &fake_hash, &nonce);
+        assert!(result.is_err(), "non-admin upgrade must be rejected");
     }
 }

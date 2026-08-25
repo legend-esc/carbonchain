@@ -137,6 +137,9 @@ pub enum DataKey {
     AuditLog(BytesN<32>),
     /// Counter for audit log entries.
     AuditLogCount,
+    /// Monotonic counter for session IDs — kept separate from AuditLogCount so
+    /// that session IDs and audit-log IDs can never collide. (Issue #671)
+    SessionCount,
     /// Dispute evidence keyed by credit ID.
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
