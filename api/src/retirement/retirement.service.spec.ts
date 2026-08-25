@@ -32,11 +32,15 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
+import { nativeToScVal } from '@stellar/stellar-sdk';
 
 // ── Minimal stubs ─────────────────────────────────────────────────────────────
 
 const mockStellarService = {
-  invokeContract: jest.fn().mockResolvedValue({ returnValue: null }),
+  invokeContract: jest.fn().mockResolvedValue({
+    returnValue: null,
+    hash: 'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+  }),
   readContract: jest.fn(),
   getContractEvents: jest.fn().mockResolvedValue([]),
 };
@@ -202,6 +206,9 @@ describe('RetirementService — event ordering (issue #162)', () => {
       'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
     );
     expect(record!.tonnesRetired).toBe('1000000');
+    expect(record!.txHash).toBe(
+      'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+    );
   });
 });
 
@@ -379,5 +386,158 @@ describe('RetirementService — retireCredit (issue #403)', () => {
 
     const credit = await creditRepo.findById('active-credit');
     expect(credit!.status).toBe(CreditStatus.Retired);
+  });
+});
+
+describe('RetirementService — batchRetire transaction safety', () => {
+  let service: RetirementService;
+  let repo: InMemoryRetirementRepository;
+  let creditRepo: InMemoryCreditRepository;
+  let emittedEvents: Array<{ event: string; payload: unknown }>;
+  let eventEmitter: IEventEmitter;
+
+  const buyer = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
+
+  beforeEach(async () => {
+    emittedEvents = [];
+    eventEmitter = {
+      emit(event: string, payload: unknown): boolean {
+        emittedEvents.push({ event, payload });
+        return true;
+      },
+    };
+
+    repo = new InMemoryRetirementRepository();
+    creditRepo = new InMemoryCreditRepository();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RetirementService,
+        { provide: StellarService, useValue: mockStellarService },
+        { provide: StellarKeypairService, useValue: mockKeypairService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: RETIREMENT_REPOSITORY, useValue: repo },
+        { provide: CREDIT_REPOSITORY, useValue: creditRepo },
+        { provide: EVENT_EMITTER, useValue: eventEmitter },
+      ],
+    }).compile();
+
+    service = module.get<RetirementService>(RetirementService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // The contract returns BatchRetireResult { succeeded: Vec<BytesN<32>>, failed: Vec<BatchRetireFailure> }
+  // encoded as a ScVal map. Build one with the requested retirement IDs.
+  function batchResultVal(
+    ...retirementIds: string[]
+  ): ReturnType<typeof nativeToScVal> {
+    return nativeToScVal({
+      succeeded: retirementIds.map((id) => Buffer.from(id, 'hex')),
+      failed: [],
+    });
+  }
+
+  const RET1 = 'aa'.repeat(32);
+  const RET2 = 'bb'.repeat(32);
+  const RET3 = 'cc'.repeat(32);
+
+  it('creates zero DB records when contract call fails', async () => {
+    mockStellarService.invokeContract.mockRejectedValueOnce(
+      new Error('Contract reverted'),
+    );
+
+    const result = await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb'],
+      tonnes: ['1000000', '500000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(result.succeeded).toHaveLength(0);
+    expect(result.failed).toHaveLength(2);
+    const allRecords = await repo.findAll(1, 100);
+    expect(allRecords.total).toBe(0);
+    const creditRetiredEvents = emittedEvents.filter(
+      (e) => e.event === 'CreditRetired',
+    );
+    expect(creditRetiredEvents).toHaveLength(0);
+  });
+
+  it('rolls back all DB writes when saveAll fails', async () => {
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: batchResultVal(RET1, RET2),
+    });
+
+    repo.saveAll = jest
+      .fn()
+      .mockRejectedValue(new Error('DB transaction failed'));
+
+    const result = await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb'],
+      tonnes: ['1000000', '500000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(result.succeeded).toHaveLength(0);
+    expect(result.failed).toHaveLength(2);
+    const allRecords = await repo.findAll(1, 100);
+    expect(allRecords.total).toBe(0);
+    const creditRetiredEvents = emittedEvents.filter(
+      (e) => e.event === 'CreditRetired',
+    );
+    expect(creditRetiredEvents).toHaveLength(0);
+  });
+
+  it('never emits partial CreditRetired events', async () => {
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: batchResultVal(RET1, RET2, RET3),
+    });
+
+    await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb', 'cc'],
+      tonnes: ['1000000', '500000', '250000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    const creditRetiredEvents = emittedEvents.filter(
+      (e) => e.event === 'CreditRetired',
+    );
+    // All 3 should be emitted atomically (all or none)
+    expect(creditRetiredEvents).toHaveLength(3);
+  });
+
+  it('persists all records in a single transaction', async () => {
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: batchResultVal(RET1, RET2),
+    });
+
+    const saveAllSpy = jest.spyOn(repo, 'saveAll');
+
+    await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb'],
+      tonnes: ['1000000', '500000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(saveAllSpy).toHaveBeenCalledTimes(1);
+    expect(saveAllSpy).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: RET1 }),
+        expect.objectContaining({ id: RET2 }),
+      ]),
+    );
+
+    const allRecords = await repo.findAll(1, 100);
+    expect(allRecords.total).toBe(2);
   });
 });

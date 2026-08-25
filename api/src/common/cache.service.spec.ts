@@ -8,18 +8,39 @@ import { CacheService } from './cache.service';
 
 const mockRedisClient = {
   isOpen: true,
-  connect: jest.fn().mockResolvedValue(undefined),
-  quit: jest.fn().mockResolvedValue(undefined),
+  ping: jest.fn(),
+  quit: jest.fn(),
   get: jest.fn(),
-  set: jest.fn().mockResolvedValue('OK'),
-  del: jest.fn().mockResolvedValue(1),
-  keys: jest.fn().mockResolvedValue([]),
+  set: jest.fn(),
+  del: jest.fn(),
+  scan: jest.fn(),
+  keys: jest.fn(),
+  sadd: jest.fn(),
+  smembers: jest.fn(),
+  expire: jest.fn(),
   on: jest.fn(),
 };
 
-// Intercept `createClient` from the `redis` package
-jest.mock('redis', () => ({
-  createClient: jest.fn(() => mockRedisClient),
+function resetMockClient(): void {
+  jest.clearAllMocks();
+  mockRedisClient.isOpen = true;
+  mockRedisClient.ping.mockResolvedValue('PONG');
+  mockRedisClient.quit.mockResolvedValue(undefined);
+  mockRedisClient.get.mockResolvedValue(null);
+  mockRedisClient.set.mockResolvedValue('OK');
+  mockRedisClient.del.mockResolvedValue(1);
+  mockRedisClient.scan.mockResolvedValue(['0', []]);
+  mockRedisClient.keys.mockResolvedValue([]);
+  mockRedisClient.sadd.mockResolvedValue(1);
+  mockRedisClient.smembers.mockResolvedValue([]);
+  mockRedisClient.expire.mockResolvedValue(true);
+  mockRedisClient.on.mockReturnValue(mockRedisClient);
+}
+
+// Intercept the default export from `ioredis` so `new Redis(...)` returns the mock
+jest.mock('ioredis', () => ({
+  __esModule: true,
+  default: jest.fn(() => mockRedisClient),
 }));
 
 // ---------------------------------------------------------------------------
@@ -52,8 +73,7 @@ describe('CacheService', () => {
   let service: CacheService;
 
   beforeEach(async () => {
-    jest.clearAllMocks();
-    mockRedisClient.isOpen = true;
+    resetMockClient();
     const module = await buildModule('redis://localhost:6379');
     service = module.get<CacheService>(CacheService);
     await service.connect();
@@ -98,7 +118,8 @@ describe('CacheService', () => {
     expect(mockRedisClient.set).toHaveBeenCalledWith(
       'credits:abc',
       JSON.stringify({ id: 'abc' }),
-      { EX: 30 },
+      'EX',
+      30,
     );
   });
 
@@ -107,7 +128,8 @@ describe('CacheService', () => {
     expect(mockRedisClient.set).toHaveBeenCalledWith(
       'credits:xyz',
       expect.any(String),
-      { EX: 60 },
+      'EX',
+      60,
     );
   });
 
@@ -133,12 +155,19 @@ describe('CacheService', () => {
 
   // ── delPattern ───────────────────────────────────────────────────────────
 
-  it('delPattern() deletes all keys matching the pattern', async () => {
-    mockRedisClient.keys.mockResolvedValue([
-      'credits:list:1',
-      'credits:list:2',
+  it('delPattern() uses SCAN to find matching keys', async () => {
+    mockRedisClient.scan.mockResolvedValueOnce([
+      '0',
+      ['credits:list:1', 'credits:list:2'],
     ]);
     await service.delPattern('credits:list:*');
+    expect(mockRedisClient.scan).toHaveBeenCalledWith(
+      '0',
+      'MATCH',
+      'credits:list:*',
+      'COUNT',
+      100,
+    );
     expect(mockRedisClient.del).toHaveBeenCalledWith([
       'credits:list:1',
       'credits:list:2',
@@ -146,9 +175,111 @@ describe('CacheService', () => {
   });
 
   it('delPattern() is a no-op when no keys match', async () => {
-    mockRedisClient.keys.mockResolvedValue([]);
+    mockRedisClient.scan.mockResolvedValue(['0', []]);
     await service.delPattern('credits:list:*');
     expect(mockRedisClient.del).not.toHaveBeenCalled();
+  });
+
+  it('delPattern() does not throw when Redis errors', async () => {
+    mockRedisClient.scan.mockRejectedValue(new Error('scan failed'));
+    await expect(service.delPattern('credits:*')).resolves.toBeUndefined();
+  });
+
+  it('delPattern() handles paginated SCAN results', async () => {
+    mockRedisClient.scan
+      .mockResolvedValueOnce(['1', ['credits:list:1']])
+      .mockResolvedValueOnce(['0', ['credits:list:2']]);
+    await service.delPattern('credits:list:*');
+    expect(mockRedisClient.scan).toHaveBeenCalledTimes(2);
+    expect(mockRedisClient.del).toHaveBeenCalledWith([
+      'credits:list:1',
+      'credits:list:2',
+    ]);
+  });
+
+  // ── circuit breaker ──────────────────────────────────────────────────────
+
+  it('opens circuit breaker after repeated failures', async () => {
+    mockRedisClient.get.mockRejectedValue(new Error('connection lost'));
+    for (let i = 0; i < 6; i++) {
+      await service.get('key');
+    }
+    expect(service.isConnected).toBe(false);
+  });
+
+  it('get() returns null when circuit breaker is open', async () => {
+    mockRedisClient.get.mockRejectedValue(new Error('connection lost'));
+    for (let i = 0; i < 6; i++) {
+      await service.get('key');
+    }
+    const result = await service.get('key');
+    expect(result).toBeNull();
+    expect(mockRedisClient.get).toHaveBeenCalledTimes(6);
+  });
+
+  // ── setTagged / invalidateTag (issue #540) ─────────────────────────────────
+
+  it('setTagged() sets the value and registers the key against every tag', async () => {
+    await service.setTagged('credits:list:foo', { a: 1 }, ['credits:list'], 60);
+
+    expect(mockRedisClient.set).toHaveBeenCalledWith(
+      'credits:list:foo',
+      JSON.stringify({ a: 1 }),
+      'EX',
+      60,
+    );
+    expect(mockRedisClient.sadd).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+      'credits:list:foo',
+    );
+    expect(mockRedisClient.expire).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+      60,
+    );
+  });
+
+  it('setTagged() registers a key against multiple tags', async () => {
+    await service.setTagged('credits:abc', { id: 'abc' }, [
+      'credit:abc',
+      'credits:list',
+    ]);
+
+    expect(mockRedisClient.sadd).toHaveBeenCalledWith(
+      'cache:tag:credit:abc',
+      'credits:abc',
+    );
+    expect(mockRedisClient.sadd).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+      'credits:abc',
+    );
+  });
+
+  it('invalidateTag() deletes only the keys registered under that tag, not the whole keyspace', async () => {
+    mockRedisClient.smembers.mockResolvedValue([
+      'credits:list:a',
+      'credits:list:b',
+    ]);
+
+    await service.invalidateTag('credits:list');
+
+    expect(mockRedisClient.smembers).toHaveBeenCalledWith(
+      'cache:tag:credits:list',
+    );
+    expect(mockRedisClient.del).toHaveBeenCalledWith([
+      'credits:list:a',
+      'credits:list:b',
+    ]);
+    // The tag set itself is removed too, so a stale entry can't leak next round.
+    expect(mockRedisClient.del).toHaveBeenCalledWith('cache:tag:credits:list');
+    // No KEYS scan of the wider keyspace — targeted invalidation only.
+    expect(mockRedisClient.keys).not.toHaveBeenCalled();
+  });
+
+  it('invalidateTag() is a no-op DEL when no keys are tagged', async () => {
+    mockRedisClient.smembers.mockResolvedValue([]);
+    await service.invalidateTag('credits:list');
+    expect(mockRedisClient.del).toHaveBeenCalledWith('cache:tag:credits:list');
+    expect(mockRedisClient.del).not.toHaveBeenCalledWith([]);
   });
 
   // ── no-op mode (no REDIS_URL) ─────────────────────────────────────────────

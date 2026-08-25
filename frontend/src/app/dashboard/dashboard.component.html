@@ -169,6 +169,7 @@
               <th scope="col">Reason</th>
               <th scope="col">Date</th>
               <th scope="col">Tx Hash</th>
+              <th scope="col">Certificate</th>
             </tr>
           </thead>
           <tbody>
@@ -180,6 +181,15 @@
                 <td>{{ r.reason }}</td>
                 <td>{{ formatDate(r.retired_at) }}</td>
                 <td class="monospace">{{ r.tx_hash | slice: 0 : 12 }}…</td>
+                <td>
+                  <a
+                    class="btn btn--ghost btn--sm"
+                    [routerLink]="['/certificates', r.id]"
+                    aria-label="View retirement certificate for {{ r.id | slice: 0 : 8 }}"
+                  >
+                    View
+                  </a>
+                </td>
               </tr>
             }
           </tbody>

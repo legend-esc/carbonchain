@@ -1,5 +1,6 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { CreditStore } from '../core/store/credit.store';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
@@ -10,7 +11,7 @@ import { firstValueFrom } from 'rxjs';
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, TranslatePipe],
+  imports: [CommonModule, RouterLink, TranslatePipe],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css',
 })

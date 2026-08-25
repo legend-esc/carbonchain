@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import axios, { AxiosError } from 'axios';
+import { CacheService } from '../common/cache.service';
 
 export interface Webhook {
   id: string;
@@ -23,22 +24,85 @@ export interface WebhookDelivery {
   nextRetryAt?: Date;
 }
 
+const WEBHOOKS_KEY = 'webhooks:registry';
+const DELIVERIES_KEY = 'webhooks:deliveries';
+const DELIVERY_QUEUE_KEY = 'webhooks:queue';
+
 @Injectable()
-export class WebhooksService {
+export class WebhooksService implements OnModuleInit {
   private readonly logger = new Logger(WebhooksService.name);
   private webhooks: Map<string, Webhook> = new Map();
   private deliveries: Map<string, WebhookDelivery> = new Map();
   private readonly MAX_RETRIES = 5;
-  private readonly RETRY_DELAY_MS = 5000;
+  private readonly BASE_RETRY_DELAY_MS = 1000;
   private readonly signatureHeaderName: string;
   private readonly signatureAlgorithm: string;
+  private isProcessingQueue = false;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly cache: CacheService,
+  ) {
     this.signatureHeaderName =
       this.configService.get<string>('WEBHOOK_SIGNATURE_HEADER') ||
       'x-mrv-signature';
     this.signatureAlgorithm =
       this.configService.get<string>('WEBHOOK_SIGNATURE_ALGO') || 'sha256';
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.loadFromDurableStore();
+  }
+
+  private async loadFromDurableStore(): Promise<void> {
+    try {
+      const stored = await this.cache.get<Webhook[]>(WEBHOOKS_KEY);
+      if (stored) {
+        this.webhooks = new Map(stored.map((w) => [w.id, w]));
+        this.logger.log(
+          `Loaded ${this.webhooks.size} webhooks from durable store`,
+        );
+      }
+
+      const storedDeliveries =
+        await this.cache.get<WebhookDelivery[]>(DELIVERIES_KEY);
+      if (storedDeliveries) {
+        this.deliveries = new Map(storedDeliveries.map((d) => [d.id, d]));
+        this.logger.log(
+          `Loaded ${this.deliveries.size} deliveries from durable store`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Failed to load webhooks from durable store: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async persistWebhooks(): Promise<void> {
+    try {
+      await this.cache.set(
+        WEBHOOKS_KEY,
+        Array.from(this.webhooks.values()),
+        86400,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to persist webhooks: ${(err as Error).message}`);
+    }
+  }
+
+  private async persistDeliveries(): Promise<void> {
+    try {
+      await this.cache.set(
+        DELIVERIES_KEY,
+        Array.from(this.deliveries.values()),
+        86400,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to persist deliveries: ${(err as Error).message}`,
+      );
+    }
   }
 
   registerWebhook(url: string, events: string[]): Webhook {
@@ -52,6 +116,7 @@ export class WebhooksService {
       failureCount: 0,
     };
     this.webhooks.set(id, webhook);
+    this.persistWebhooks();
     this.logger.log(
       `Registered webhook ${id} for events: ${events.join(', ')}`,
     );
@@ -67,7 +132,11 @@ export class WebhooksService {
   }
 
   deleteWebhook(id: string): boolean {
-    return this.webhooks.delete(id);
+    const deleted = this.webhooks.delete(id);
+    if (deleted) {
+      this.persistWebhooks();
+    }
+    return deleted;
   }
 
   async triggerWebhooks(eventType: string, eventData: any): Promise<void> {
@@ -76,26 +145,63 @@ export class WebhooksService {
     );
 
     for (const webhook of matchingWebhooks) {
-      await this.deliverWebhook(webhook, eventType, eventData);
+      const deliveryId = `delivery_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const delivery: WebhookDelivery = {
+        id: deliveryId,
+        webhookId: webhook.id,
+        eventId: eventData.id || 'unknown',
+        status: 'pending',
+        attempts: 0,
+        nextRetryAt: new Date(),
+      };
+
+      this.deliveries.set(deliveryId, delivery);
+      await this.enqueueDelivery(webhook, delivery, eventType, eventData);
+      await this.persistDeliveries();
     }
   }
 
-  private async deliverWebhook(
+  private async enqueueDelivery(
     webhook: Webhook,
+    delivery: WebhookDelivery,
     eventType: string,
     eventData: any,
   ): Promise<void> {
-    const deliveryId = `delivery_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const delivery: WebhookDelivery = {
-      id: deliveryId,
-      webhookId: webhook.id,
-      eventId: eventData.id || 'unknown',
-      status: 'pending',
-      attempts: 0,
-    };
+    try {
+      const job = { webhook, delivery, eventType, eventData };
+      await this.cache.set(`${DELIVERY_QUEUE_KEY}:${delivery.id}`, job, 3600);
+      this.logger.debug(
+        `Enqueued webhook delivery ${delivery.id} for ${webhook.url}`,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to enqueue delivery: ${(err as Error).message}`);
+    }
+  }
 
-    this.deliveries.set(deliveryId, delivery);
-    await this.attemptDelivery(webhook, delivery, eventType, eventData);
+  async processQueue(): Promise<void> {
+    if (this.isProcessingQueue) {
+      return;
+    }
+    this.isProcessingQueue = true;
+    try {
+      const pendingDeliveries = Array.from(this.deliveries.values()).filter(
+        (d) =>
+          d.status === 'pending' &&
+          (!d.nextRetryAt || d.nextRetryAt <= new Date()),
+      );
+
+      for (const delivery of pendingDeliveries) {
+        const webhook = this.webhooks.get(delivery.webhookId);
+        if (webhook) {
+          await this.attemptDelivery(webhook, delivery, 'retry', {
+            deliveryId: delivery.id,
+          });
+        }
+      }
+      await this.persistDeliveries();
+    } finally {
+      this.isProcessingQueue = false;
+    }
   }
 
   private async attemptDelivery(
@@ -126,9 +232,9 @@ export class WebhooksService {
 
       if (delivery.attempts < this.MAX_RETRIES) {
         delivery.status = 'pending';
-        delivery.nextRetryAt = new Date(
-          Date.now() + this.RETRY_DELAY_MS * delivery.attempts,
-        );
+        const backoffMs =
+          this.BASE_RETRY_DELAY_MS * Math.pow(2, delivery.attempts - 1);
+        delivery.nextRetryAt = new Date(Date.now() + backoffMs);
         this.logger.warn(
           `Webhook ${webhook.id} delivery failed (attempt ${delivery.attempts}/${this.MAX_RETRIES}), retrying at ${delivery.nextRetryAt}`,
         );
@@ -150,50 +256,16 @@ export class WebhooksService {
     return deliveries;
   }
 
-  async retryFailedDeliveries(): Promise<void> {
-    const now = new Date();
-    const pendingDeliveries = Array.from(this.deliveries.values()).filter(
-      (d) =>
-        d.status === 'pending' &&
-        d.nextRetryAt &&
-        d.nextRetryAt <= now &&
-        d.attempts < this.MAX_RETRIES,
-    );
-
-    for (const delivery of pendingDeliveries) {
-      const webhook = this.webhooks.get(delivery.webhookId);
-      if (webhook) {
-        await this.attemptDelivery(webhook, delivery, 'retry', {
-          deliveryId: delivery.id,
-        });
-      }
-    }
-  }
-
-  /**
-   * Generate HMAC signature for webhook payload using configured algorithm.
-   * @param payload - The payload string to sign
-   * @param secret - The secret key for HMAC
-   * @returns Hex-encoded signature
-   */
   generateSignature(payload: string, secret: string): string {
     return createHmac(this.signatureAlgorithm, secret)
       .update(payload)
       .digest('hex');
   }
 
-  /**
-   * Get the configured webhook signature header name.
-   * @returns The header name (e.g., 'x-mrv-signature')
-   */
   getSignatureHeaderName(): string {
     return this.signatureHeaderName;
   }
 
-  /**
-   * Get the configured webhook signature algorithm.
-   * @returns The algorithm name (e.g., 'sha256')
-   */
   getSignatureAlgorithm(): string {
     return this.signatureAlgorithm;
   }

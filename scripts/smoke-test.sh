@@ -98,6 +98,17 @@ VERIFIER_ADDRESS=$(stellar keys address smoke-verifier 2>/dev/null)
 [[ -n "$VERIFIER_ADDRESS" ]] || fail "Could not generate smoke-verifier keypair"
 stellar keys fund "$VERIFIER_ADDRESS" --network testnet 2>/dev/null || true
 
+# Issue #565: register_verifier now requires the verifier to have locked at
+# least get_min_stake() via deposit_stake. This pipeline does not deploy a
+# stake token, so lower the minimum to zero for the smoke run (mirrors
+# test_helpers.rs initialize()).
+NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
+invoke "$CREDIT_REGISTRY_ID" set_min_stake \
+  --admin "$ADMIN_ADDRESS" \
+  --amount 0 \
+  --nonce "$NONCE" > /dev/null
+pass "credit_registry.set_min_stake(0) succeeded"
+
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 invoke "$CREDIT_REGISTRY_ID" register_verifier \
   --admin "$ADMIN_ADDRESS" \
