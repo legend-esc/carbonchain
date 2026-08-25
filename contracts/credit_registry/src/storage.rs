@@ -349,6 +349,26 @@ pub fn get_audit_log_count(env: &Env) -> u64 {
         .unwrap_or(0u64)
 }
 
+/// Returns the monotonic session counter used to derive unique session IDs.
+/// Kept independent of `AuditLogCount` so that session IDs never collide with
+/// audit-log IDs. (Issue #671)
+pub fn get_session_count(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::SessionCount)
+        .unwrap_or(0u64)
+}
+
+/// Increments the session counter and returns the *previous* value (the one
+/// that was used to derive the current session ID).
+pub fn consume_session_count(env: &Env) -> u64 {
+    let count = get_session_count(env);
+    env.storage()
+        .instance()
+        .set(&DataKey::SessionCount, &(count + 1));
+    count
+}
+
 pub fn append_audit_log(env: &Env, entry: &AuditLogEntry) -> BytesN<32> {
     use soroban_sdk::xdr::ToXdr;
     let count = get_audit_log_count(env);

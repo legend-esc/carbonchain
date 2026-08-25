@@ -100,39 +100,46 @@ pub enum DataKey {
     ActiveOffers,
 }
 
+/// Stable error codes for the CarbonChain marketplace contract.
+///
+/// All codes are in the 300–309 range — reserved exclusively for the
+/// marketplace. Codes 100–130 belong to `credit_registry`; 200–209 to
+/// `retirement`; 400–409 to `mrv_oracle`.
+///
+/// Codes are intentionally stable — do not renumber existing variants.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum MarketplaceError {
-    OfferNotFound      = 115,
-    Unauthorized       = 116,
-    InvalidPrice       = 117,
-    InvalidTonnes      = 125,
-    AlreadyClosed      = 118,
-    CreditNotActive    = 119,
-    NotInitialized     = 120,
-    ContractPaused     = 121,
-    InvalidNonce       = 122,
-    OfferExpired       = 123,
-    Overflow           = 124,
-    AlreadyInitialized = 130,
-    OfferNotFound = 115,
-    Unauthorized = 116,
-    InvalidPrice = 117,
-    InvalidTonnes = 125,
-    AlreadyClosed = 118,
-    CreditNotActive = 119,
-    NotInitialized = 120,
-    ContractPaused = 121,
-    InvalidNonce = 122,
-    OfferExpired = 123,
-    Overflow = 124,
-    AlreadyInitialized = 126,
+    /// No offer exists for the given offer ID.
+    OfferNotFound = 300,
+    /// Caller is not authorised to perform the operation.
+    Unauthorized = 301,
+    /// Price is zero, negative, or below the configured minimum.
+    InvalidPrice = 302,
+    /// Tonnes is zero, negative, or not a multiple of 100_000.
+    InvalidTonnes = 303,
+    /// Offer has already been cancelled or filled.
+    AlreadyClosed = 304,
+    /// The listed credit is not in Active status.
+    CreditNotActive = 305,
+    /// Contract has not been initialised.
+    NotInitialized = 306,
+    /// All state-mutating operations are paused.
+    ContractPaused = 307,
+    /// Nonce does not match the caller's current nonce.
+    InvalidNonce = 308,
+    /// Offer has passed its expiry timestamp.
+    OfferExpired = 309,
+    /// Integer overflow detected.
+    Overflow = 310,
+    /// Contract has already been initialised.
+    AlreadyInitialized = 311,
     /// Buyer does not hold enough of the payment asset to cover the offer price.
-    InsufficientFunds = 127,
+    InsufficientFunds = 312,
     /// Escrow transfer succeeded but the offer record failed to persist;
     /// the credit was returned to the seller to avoid a stuck escrow.
-    EscrowFailed = 128,
+    EscrowFailed = 313,
 }
 
 #[contractevent]
@@ -2184,5 +2191,52 @@ mod tests {
 
         // Offer should no longer appear in active list
         assert_eq!(client.list_active_offers(&0, &50).len(), 0);
+    }
+
+    // ── Issue #698: all MarketplaceError codes must be in the 300–313 range ─
+
+    #[test]
+    fn test_error_codes_in_300_range() {
+        // Verify every variant is within the documented 300-313 band so that
+        // codes never collide with credit_registry (100-130), retirement
+        // (200-209), or mrv_oracle (400-409).
+        assert_eq!(MarketplaceError::OfferNotFound as u32, 300);
+        assert_eq!(MarketplaceError::Unauthorized as u32, 301);
+        assert_eq!(MarketplaceError::InvalidPrice as u32, 302);
+        assert_eq!(MarketplaceError::InvalidTonnes as u32, 303);
+        assert_eq!(MarketplaceError::AlreadyClosed as u32, 304);
+        assert_eq!(MarketplaceError::CreditNotActive as u32, 305);
+        assert_eq!(MarketplaceError::NotInitialized as u32, 306);
+        assert_eq!(MarketplaceError::ContractPaused as u32, 307);
+        assert_eq!(MarketplaceError::InvalidNonce as u32, 308);
+        assert_eq!(MarketplaceError::OfferExpired as u32, 309);
+        assert_eq!(MarketplaceError::Overflow as u32, 310);
+        assert_eq!(MarketplaceError::AlreadyInitialized as u32, 311);
+        assert_eq!(MarketplaceError::InsufficientFunds as u32, 312);
+        assert_eq!(MarketplaceError::EscrowFailed as u32, 313);
+
+        // Ensure all codes fall within the expected band (300–399).
+        let all_codes: [u32; 14] = [
+            MarketplaceError::OfferNotFound as u32,
+            MarketplaceError::Unauthorized as u32,
+            MarketplaceError::InvalidPrice as u32,
+            MarketplaceError::InvalidTonnes as u32,
+            MarketplaceError::AlreadyClosed as u32,
+            MarketplaceError::CreditNotActive as u32,
+            MarketplaceError::NotInitialized as u32,
+            MarketplaceError::ContractPaused as u32,
+            MarketplaceError::InvalidNonce as u32,
+            MarketplaceError::OfferExpired as u32,
+            MarketplaceError::Overflow as u32,
+            MarketplaceError::AlreadyInitialized as u32,
+            MarketplaceError::InsufficientFunds as u32,
+            MarketplaceError::EscrowFailed as u32,
+        ];
+        for code in all_codes {
+            assert!(
+                (300..400).contains(&code),
+                "MarketplaceError code {code} is outside the 300-399 band"
+            );
+        }
     }
 }

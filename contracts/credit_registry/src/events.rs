@@ -182,3 +182,14 @@ pub struct VerifierSlashed {
     pub amount: i128,
     pub credit_id: BytesN<32>,
 }
+
+/// Emitted when the contract WASM is upgraded via `upgrade()`. Records the
+/// new WASM hash and the schema version that migrations were run against.
+/// (Issue #670)
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractUpgraded {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub migrated_to_version: u32,
+}
