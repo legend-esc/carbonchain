@@ -9,8 +9,8 @@ import { OnlineStatusService } from '../core/services/online-status.service';
     <main class="offline">
       <h1>You're offline</h1>
       <p>
-        Check your connection. Certificates and credit pages you've already opened
-        are still available.
+        Check your connection. Certificates and credit pages you've already opened are still
+        available.
       </p>
       <button (click)="retry()">Retry</button>
     </main>

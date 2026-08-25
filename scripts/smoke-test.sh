@@ -92,12 +92,22 @@ NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 pass "credit_registry.get_nonce() = $NONCE"
 
 log "Registering a test verifier"
-stellar keys rm smoke-verifier 2>/dev/null || true
-stellar keys generate smoke-verifier --no-fund || stellar keys generate smoke-verifier
+stellar keys generate smoke-verifier --overwrite
 VERIFIER_SECRET=$(stellar keys show smoke-verifier 2>/dev/null)
 VERIFIER_ADDRESS=$(stellar keys address smoke-verifier 2>/dev/null)
 [[ -n "$VERIFIER_ADDRESS" ]] || fail "Could not generate smoke-verifier keypair"
 stellar keys fund "$VERIFIER_ADDRESS" --network testnet 2>/dev/null || true
+
+# Issue #565: register_verifier now requires the verifier to have locked at
+# least get_min_stake() via deposit_stake. This pipeline does not deploy a
+# stake token, so lower the minimum to zero for the smoke run (mirrors
+# test_helpers.rs initialize()).
+NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
+invoke "$CREDIT_REGISTRY_ID" set_min_stake \
+  --admin "$ADMIN_ADDRESS" \
+  --amount 0 \
+  --nonce "$NONCE" > /dev/null
+pass "credit_registry.set_min_stake(0) succeeded"
 
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 invoke "$CREDIT_REGISTRY_ID" register_verifier \
@@ -111,8 +121,7 @@ IS_VERIFIER=$(invoke "$CREDIT_REGISTRY_ID" is_verifier --address "$VERIFIER_ADDR
 assert_eq "credit_registry.is_verifier()" "$IS_VERIFIER" "true"
 
 log "Registering a test issuer"
-stellar keys rm smoke-issuer 2>/dev/null || true
-stellar keys generate smoke-issuer --no-fund || stellar keys generate smoke-issuer
+stellar keys generate smoke-issuer --overwrite
 ISSUER_SECRET=$(stellar keys show smoke-issuer 2>/dev/null)
 ISSUER_ADDRESS=$(stellar keys address smoke-issuer 2>/dev/null)
 [[ -n "$ISSUER_ADDRESS" ]] || fail "Could not generate smoke-issuer keypair"
@@ -134,25 +143,33 @@ invoke "$CREDIT_REGISTRY_ID" register_methodology \
   --nonce "$NONCE" > /dev/null 2>&1 || true  # may already exist from prior run
 pass "credit_registry.register_methodology() succeeded (or already registered)"
 
-log "Registering test project"
+# Use a run-specific suffix to avoid collisions with prior smoke-test runs on
+# the shared testnet state.  $RANDOM alone is 0-32767; combine two values for
+# a larger space and format to a fixed width so the project-id length stays
+# within contract limits.
+RUN_ID=$(printf '%05d%05d' "$RANDOM" "$RANDOM")
+SMOKE_PROJECT_ID="SMOKE-${RUN_ID}"
+SMOKE_IPFS_HASH="bafybeismoke$(printf '%050d' "$RANDOM")"
+
+log "Registering test project (run-id: $RUN_ID)"
 invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" register_project \
   --owner "$ISSUER_ADDRESS" \
-  --project-id '"SMOKE-PROJ-001"' \
+  --project-id "\"${SMOKE_PROJECT_ID}\"" \
   --name '"Smoke Test Project"' \
   --description '"Automated smoke test project"' \
-  --location '"NG"' 2>&1 || true  # may already exist from prior run
-pass "credit_registry.register_project() succeeded (or already registered)"
+  --location '"NG"'
+pass "credit_registry.register_project() succeeded"
 
 log "Submitting a test credit"
 ISSUER_NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ISSUER_ADDRESS")
 CREDIT_ID=$(invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" submit_credit \
   --issuer "$ISSUER_ADDRESS" \
-  --project-id '"SMOKE-PROJ-001"' \
+  --project-id "\"${SMOKE_PROJECT_ID}\"" \
   --vintage-year 2024 \
   --methodology '"VCS"' \
   --geography '"NG"' \
   --tonnes 1000000 \
-  --ipfs-hash '"bafybeismoke000000000000000000000000000000000000000000000000"' \
+  --ipfs-hash "\"${SMOKE_IPFS_HASH}\"" \
   --nonce "$ISSUER_NONCE")
 [[ -n "$CREDIT_ID" ]] || fail "credit_registry.submit_credit() returned empty credit ID"
 pass "credit_registry.submit_credit() returned credit ID: $CREDIT_ID"

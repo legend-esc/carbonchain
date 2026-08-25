@@ -6,11 +6,12 @@ import { CreditMetadata, CreditStatus } from '@shared';
 import { ApiService, ProvenanceEvent } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
+import { ProvenanceTimelineComponent } from './provenance-timeline.component';
 
 @Component({
   selector: 'app-credit-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, ProvenanceTimelineComponent],
   template: `
     <div class="credit-detail">
       @if (loading()) {
@@ -59,16 +60,15 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         <section class="card">
           <h2>Provenance Chain</h2>
-          <ol class="provenance">
-            <li>
-              Issued by <span class="mono">{{ credit()!.issuer | slice: 0 : 12 }}…</span> on
-              {{ credit()!.issued_at | date: 'mediumDate' }}
-            </li>
-            <li>Methodology: {{ credit()!.methodology }} — Geography: {{ credit()!.geography }}</li>
-            @if (credit()!.status === 'Retired') {
-              <li class="retired">Retired ✓</li>
-            }
-          </ol>
+          @if (provenanceLoading()) {
+            <p class="status">Loading provenance…</p>
+          } @else if (provenanceError()) {
+            <p class="error">{{ provenanceError() }}</p>
+          } @else if (provenance().length > 0) {
+            <app-provenance-timeline [events]="provenance()" />
+          } @else {
+            <p class="status">No provenance data available.</p>
+          }
         </section>
 
         <section class="card">
@@ -160,15 +160,6 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
       .mono {
         font-family: monospace;
         word-break: break-all;
-      }
-      .provenance {
-        padding-left: 1.25rem;
-        font-size: 0.9rem;
-        line-height: 1.8;
-      }
-      .retired {
-        color: #2e7d32;
-        font-weight: 600;
       }
       .mrv-table {
         width: 100%;
