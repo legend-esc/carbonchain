@@ -1047,9 +1047,33 @@ impl CreditRegistry {
         get_credits_by_project(&env, &project_id)
     }
 
-    /// Returns credit IDs currently owned by `owner`.
-    /// Filters out stale entries (transferred credits remain in the index of the previous owner).
+    /// Returns credit IDs currently owned by `owner` that are in a tradable (non-terminal) status.
+    /// Excludes credits with status Retired, Disputed, or Expired, so the owner view only
+    /// reflects credits that can still be traded or transferred.
+    ///
+    /// Use [`list_credits_by_owner_history`] to retrieve the full history including terminal
+    /// statuses.
     pub fn list_credits_by_owner(env: Env, owner: Address) -> Vec<BytesN<32>> {
+        let all = get_credits_by_owner(&env, &owner);
+        let mut owned: Vec<BytesN<32>> = Vec::new(&env);
+        for id in all.iter() {
+            if let Some(credit) = get_credit(&env, &id) {
+                if credit.owner == owner
+                    && credit.status != CreditStatus::Retired
+                    && credit.status != CreditStatus::Disputed
+                    && credit.status != CreditStatus::Expired
+                {
+                    owned.push_back(id);
+                }
+            }
+        }
+        owned
+    }
+
+    /// Returns all credit IDs ever owned by `owner`, including those in terminal statuses
+    /// (Retired, Disputed, Expired). Use this for audit trails, accounting reconciliation,
+    /// and showing retirement history to the user.
+    pub fn list_credits_by_owner_history(env: Env, owner: Address) -> Vec<BytesN<32>> {
         let all = get_credits_by_owner(&env, &owner);
         let mut owned: Vec<BytesN<32>> = Vec::new(&env);
         for id in all.iter() {
@@ -1561,6 +1585,9 @@ impl CreditRegistry {
             let mut credit = get_credit(&env, &id).ok_or(CarbonChainError::CreditNotFound)?;
             credit.status = CreditStatus::Retired;
             set_credit(&env, &id, &credit);
+            // Remove merged source from the owner's active index so it no longer
+            // appears in list_credits_by_owner (fixes #665).
+            remove_credit_from_owner(&env, &caller, &id);
         }
 
         CreditsMerged {
