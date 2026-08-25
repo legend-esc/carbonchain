@@ -22,8 +22,8 @@ const MOCK_CREDIT = {
 };
 
 const MOCK_PROVENANCE = [
-  { event: 'submitted', actor: 'GABC', timestamp: 1700000001 },
-  { event: 'approved', actor: 'GVER', timestamp: 1700000100, detail: 'VCS review passed' },
+  { action: 'submitted', actor: 'GABC', timestamp: 1700000001 },
+  { action: 'approved', actor: 'GVER', timestamp: 1700000100, detail: 'VCS review passed' },
 ];
 
 describe('CreditDetailComponent', () => {
@@ -40,6 +40,7 @@ describe('CreditDetailComponent', () => {
     navigate = vi.fn();
     publicKey = signal<string | null>('GABC');
 
+    TestBed.resetTestingModule();
     await TestBed.configureTestingModule({
       imports: [CreditDetailComponent],
       providers: [

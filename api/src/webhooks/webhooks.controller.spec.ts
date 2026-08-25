@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
+import { CacheService } from '../common/cache.service';
 
 const mockConfigService = {
   get: jest.fn((key: string, def?: string) => {
@@ -21,6 +22,7 @@ describe('WebhooksController', () => {
       providers: [
         WebhooksService,
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn() } },
       ],
     }).compile();
 

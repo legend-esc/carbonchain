@@ -20,15 +20,13 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "migration:run": "typeorm migration:run -d src/data-source.ts",
-    "migration:revert": "typeorm migration:revert -d src/data-source.ts",
-    "migration:show": "typeorm migration:show -d src/data-source.ts"
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",
+    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/data-source.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
-    "helmet": "^8.0.0",
-    "joi": "^17.13.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/passport": "^11.0.5",
@@ -40,13 +38,18 @@
     "axios": "^1.7.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "compression": "1.7.5",
     "dotenv": "^16.4.5",
+    "helmet": "^8.0.0",
+    "ioredis": "5.3.2",
+    "ip-range-check": "^0.2.0",
+    "joi": "^17.13.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdfkit": "^0.15.1",
-    "pino": "^9.6.0",
     "pg": "^8.13.1",
-    "redis": "^4.7.0",
+    "pino": "^9.6.0",
+    "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "stellar-sdk": "^13.3.0",
@@ -58,6 +61,7 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.1.24",
+    "@types/compression": "1.7.5",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
@@ -88,6 +92,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^ip-range-check$": "<rootDir>/../test/__mocks__/ip-range-check.js"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

@@ -1,5 +1,5 @@
-use soroban_sdk::{Env, Address, BytesN, String, Symbol, Vec, IntoVal, vec};
 use crate::types::CreditMetadata;
+use soroban_sdk::{vec, Address, BytesN, Env, IntoVal, String, Symbol};
 
 /// Helper for cross-contract calls to CreditRegistry when the `library`
 /// feature prevents direct use of `#[contract]` / `#[contractimpl]`.
@@ -11,13 +11,16 @@ pub struct RegistryHelper {
 impl RegistryHelper {
     /// Deploy a fresh CreditRegistry contract from its pre-compiled WASM.
     pub fn deploy(env: &Env) -> Self {
-        env.budget().reset_unlimited();
+        env.cost_estimate().budget().reset_unlimited();
         let wasm: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../target/wasm32v1-none/release/carbonchain_credit_registry.wasm"
         ));
         let id = env.register(wasm, ());
-        Self { env: env.clone(), id }
+        Self {
+            env: env.clone(),
+            id,
+        }
     }
 
     pub fn initialize(&self, admin: &Address, retirement: &Address, approvals: u32) {
@@ -30,6 +33,23 @@ impl RegistryHelper {
         let _: () = self
             .env
             .invoke_contract(&self.id, &Symbol::new(&self.env, "initialize"), args);
+        // Issue #565: register_verifier now requires verifiers to hold at least
+        // the minimum stake. Test setups predate staking, so lower the minimum
+        // to zero so existing cross-contract tests keep working.
+        let nonce = self.get_nonce(admin);
+        self.set_min_stake(admin, 0, nonce);
+    }
+
+    pub fn set_min_stake(&self, admin: &Address, amount: i128, nonce: u64) {
+        let args = vec![
+            &self.env,
+            admin.into_val(&self.env),
+            amount.into_val(&self.env),
+            nonce.into_val(&self.env),
+        ];
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "set_min_stake"), args);
     }
 
     pub fn get_nonce(&self, address: &Address) -> u64 {
@@ -45,13 +65,9 @@ impl RegistryHelper {
             verifier.into_val(&self.env),
             nonce.into_val(&self.env),
         ];
-        let _: () = self
-            .env
-            .invoke_contract(
-                &self.id,
-                &Symbol::new(&self.env, "register_verifier"),
-                args,
-            );
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "register_verifier"), args);
     }
 
     pub fn register_issuer(&self, admin: &Address, issuer: &Address, nonce: u64) {
@@ -61,9 +77,9 @@ impl RegistryHelper {
             issuer.into_val(&self.env),
             nonce.into_val(&self.env),
         ];
-        let _: () = self
-            .env
-            .invoke_contract(&self.id, &Symbol::new(&self.env, "register_issuer"), args);
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "register_issuer"), args);
     }
 
     pub fn register_methodology(&self, admin: &Address, code: &String, name: &String, nonce: u64) {
@@ -74,13 +90,11 @@ impl RegistryHelper {
             name.into_val(&self.env),
             nonce.into_val(&self.env),
         ];
-        let _: () = self
-            .env
-            .invoke_contract(
-                &self.id,
-                &Symbol::new(&self.env, "register_methodology"),
-                args,
-            );
+        let _: () = self.env.invoke_contract(
+            &self.id,
+            &Symbol::new(&self.env, "register_methodology"),
+            args,
+        );
     }
 
     pub fn register_project(
@@ -99,11 +113,12 @@ impl RegistryHelper {
             description.into_val(&self.env),
             location.into_val(&self.env),
         ];
-        let _: () = self
-            .env
-            .invoke_contract(&self.id, &Symbol::new(&self.env, "register_project"), args);
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "register_project"), args);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn submit_credit(
         &self,
         issuer: &Address,
@@ -137,16 +152,18 @@ impl RegistryHelper {
             credit_id.into_val(&self.env),
             nonce.into_val(&self.env),
         ];
-        let _: () = self
-            .env
-            .invoke_contract(
-                &self.id,
-                &Symbol::new(&self.env, "approve_and_mint"),
-                args,
-            );
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "approve_and_mint"), args);
     }
 
-    pub fn transfer_credit(&self, from: &Address, to: &Address, credit_id: &BytesN<32>, nonce: u64) {
+    pub fn transfer_credit(
+        &self,
+        from: &Address,
+        to: &Address,
+        credit_id: &BytesN<32>,
+        nonce: u64,
+    ) {
         let args = vec![
             &self.env,
             from.into_val(&self.env),
@@ -154,13 +171,9 @@ impl RegistryHelper {
             credit_id.into_val(&self.env),
             nonce.into_val(&self.env),
         ];
-        let _: () = self
-            .env
-            .invoke_contract(
-                &self.id,
-                &Symbol::new(&self.env, "transfer_credit"),
-                args,
-            );
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "transfer_credit"), args);
     }
 
     pub fn get_credit(&self, credit_id: &BytesN<32>) -> CreditMetadata {

@@ -1,38 +1,57 @@
 import { Component, input, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Offer } from '@shared';
+import { RouterModule } from '@angular/router';
 
 @Component({
   selector: 'app-offer-detail',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterModule],
   template: `
-    <div class="offer-detail" role="dialog" aria-label="Offer detail">
-      <div class="offer-detail__header">
-        <h2>Offer #{{ offer().id }}</h2>
-        <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
-      </div>
+    @if (expired()) {
+      <div class="offer-detail" role="alert" aria-label="Expired offer">
+        <div class="offer-detail__header">
+          <h2>Offer Expired</h2>
+          <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+        </div>
 
-      <dl class="detail-list">
-        <dt>Credit ID</dt>
-        <dd class="mono">{{ offer().credit_id }}</dd>
-        <dt>Seller</dt>
-        <dd class="mono">{{ offer().seller }}</dd>
-        <dt>Tonnes Available</dt>
-        <dd>{{ formatTonnes(offer().tonnes_available) }}</dd>
-        <dt>Price</dt>
-        <dd>{{ formatXlm(offer().price_xlm) }}</dd>
-        <dt>Status</dt>
-        <dd>
-          <span class="badge badge-open">{{ offer().status }}</span>
-        </dd>
-      </dl>
+        <p class="error-message">This offer has expired</p>
 
-      <div class="offer-detail__actions">
-        <button class="btn btn-primary" (click)="buy.emit(offer())">Buy Credit</button>
-        <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+        <div class="offer-detail__actions">
+          <a class="btn btn-primary" [routerLink]="['/marketplace']" (click)="closed.emit()">
+            Back to marketplace
+          </a>
+          <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+        </div>
       </div>
-    </div>
+    } @else {
+      <div class="offer-detail" role="dialog" aria-label="Offer detail">
+        <div class="offer-detail__header">
+          <h2>Offer #{{ offer().id }}</h2>
+          <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+        </div>
+
+        <dl class="detail-list">
+          <dt>Credit ID</dt>
+          <dd class="mono">{{ offer().credit_id }}</dd>
+          <dt>Seller</dt>
+          <dd class="mono">{{ offer().seller }}</dd>
+          <dt>Tonnes Available</dt>
+          <dd>{{ formatTonnes(offer().tonnes_available) }}</dd>
+          <dt>Price</dt>
+          <dd>{{ formatXlm(offer().price_xlm) }}</dd>
+          <dt>Status</dt>
+          <dd>
+            <span class="badge badge-open">{{ offer().status }}</span>
+          </dd>
+        </dl>
+
+        <div class="offer-detail__actions">
+          <button class="btn btn-primary" (click)="buy.emit(offer())">Buy Credit</button>
+          <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+        </div>
+      </div>
+    }
   `,
   styles: [
     `
@@ -103,8 +122,11 @@ import { Offer } from '@shared';
 })
 export class OfferDetailComponent {
   readonly offer = input.required<Offer>();
+  readonly errorCode = input<number | null>(null);
   readonly closed = output<void>();
   readonly buy = output<Offer>();
+
+  protected readonly expired = () => this.errorCode() === 123;
 
   formatTonnes(raw: string): string {
     return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' t';

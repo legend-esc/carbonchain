@@ -1,28 +1,36 @@
-/**
- * Off-chain index of an on-chain retirement record.
- * Ready for TypeORM — uncomment decorators and add @nestjs/typeorm when DB is wired.
- *
- * @Entity('retirements')
- */
+import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
+
+@Index('idx_retirements_retired_at', ['retiredAt'])
+@Entity('retirements')
 export class RetirementEntity {
-  // @PrimaryColumn()
+  @PrimaryColumn()
   id: string;
 
-  // @Column()
+  @Column()
   creditId: string;
 
-  // @Column()
+  @Column()
   buyer: string;
 
-  // @Column()
+  @Column()
   tonnesRetired: string;
 
-  // @Column()
+  @Column()
   reason: string;
 
-  // @Column({ type: 'bigint' })
+  @Column({ type: 'bigint' })
   retiredAt: number;
 
-  // @Column({ default: '' })
+  @Column({ default: '' })
   txHash: string;
+
+  /** Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
+   *  Empty string for legacy retirements. */
+  @Column({ default: '' })
+  certificateIpfsHash: string;
+
+  /** Issue #589 — vintage year of the credit (e.g. 2024).
+   *  Zero for legacy retirements that pre-date this field. */
+  @Column({ type: 'int', default: 0 })
+  vintageYear: number;
 }

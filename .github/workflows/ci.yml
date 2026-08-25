@@ -17,23 +17,40 @@ jobs:
         with:
           toolchain: "1.91.0"
           targets: wasm32v1-none
-          components: rustfmt
+          components: rustfmt, clippy
       # #193 — enforce consistent formatting across all four contracts
       - name: Check Rust formatting
         run: cd contracts && cargo fmt --all -- --check
-      # #47 — cache cargo registry and build artifacts for all four contracts
-      - name: Cache cargo dependencies
+      # #413 — cache cargo registry, git sources, and WASM build artifacts.
+      # Key includes Cargo.lock hash so any dependency change invalidates the cache.
+      - name: Cache WASM build artifacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             contracts/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-wasm-
+      # #413 — build all four contracts to WASM before running any tests.
+      # A failed WASM build here will abort the job before tests run.
+      - name: Build Contracts (WASM)
+        run: cd contracts && cargo build --target wasm32v1-none --release
+      # #413 — cargo audit gate: fails the build on high-severity CVEs.
+      # Accepted advisories are listed in .cargo/audit.toml (auto-loaded from the
+      # repo root; `--config` was removed in cargo-audit 0.22).
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        run: cargo audit -f contracts/Cargo.lock
+      # Build WASM first — test_helpers.rs uses include_bytes! which requires the
+      # wasm32v1-none artifact to exist before clippy or cargo test compiles test targets
       - name: Build Contracts
         run: cd contracts && cargo build --target wasm32v1-none --release
+      # #192 — zero-warning clippy policy across all four contracts (after WASM build)
+      - name: Clippy
+        run: cd contracts && cargo clippy --all-targets -- -D warnings
       # #47 — run credit_registry tests standalone (avoids workspace feature unification)
       - name: Run Credit Registry Tests
         run: cd contracts/credit_registry && cargo test
@@ -63,6 +80,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # #564 — full history needed to diff which migrations changed in this PR/push
+          fetch-depth: 0
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -71,6 +91,32 @@ jobs:
           cache-dependency-path: api/package-lock.json
       - name: Install Dependencies
         run: cd api && npm ci --legacy-peer-deps
+      # #564 — only test migration rollback when the migrations directory actually changed
+      - name: Check for migration changes
+        id: migration-check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" "${{ github.sha }}" -- api/src/migrations/ | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install PostgreSQL client tools
+        if: steps.migration-check.outputs.changed == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      # #564 — apply, revert, and re-apply the newest migration; fail if the
+      # schema after rollback doesn't match (i.e. down() doesn't cleanly undo up())
+      - name: Test Migration Rollback
+        if: steps.migration-check.outputs.changed == 'true'
+        run: ./scripts/test-migration-rollback.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
       # #194 — enforce lint and format without auto-fixing
       - name: Lint
         run: cd api && npm run lint
@@ -78,6 +124,12 @@ jobs:
         run: cd api && npm run format:check
       - name: Build
         run: cd api && npm run build
+      # #412 — run all migrations against the CI database before any tests.
+      # This validates migration:run succeeds on a clean PostgreSQL 16 database.
+      - name: Run Database Migrations
+        run: cd api && npm run migration:run
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
       # #48 — run unit tests
       - name: Run Unit Tests
         run: cd api && npm run test
@@ -86,11 +138,13 @@ jobs:
         run: cd api && npm run test:e2e
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
-          JWT_SECRET: ci-test-secret
+          JWT_SECRET: ci-test-secret-for-e2e-testing-32chars
           ADMIN_SECRET_KEY: SCI7YTM2J5ZQOQ4SI5L5ZCXZDTXSMONGDFFHGQCPWAP6CCRBPYRCIATS
           STELLAR_NETWORK: testnet
           STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
           STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+          IPFS_API_KEY: ci-test-ipfs-api-key
+          IPFS_SECRET_KEY: ci-test-ipfs-secret-key
       # #249 — generate test coverage report
       - name: Generate Coverage Report
         run: cd api && npm run test:cov
@@ -136,6 +190,15 @@ jobs:
         run: |
           chmod +x scripts/deploy-testnet.sh scripts/smoke-test.sh
           ./scripts/deploy-testnet.sh
+      # #496 — inject deployed contract IDs into the environment so downstream
+      # steps (smoke tests, future API integration) can read them without
+      # manual copy-paste from the JSON artifact.
+      - name: Set contract IDs for downstream steps
+        run: |
+          echo "CREDIT_REGISTRY_CONTRACT_ID=$(jq -r '.credit_registry' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
+          echo "RETIREMENT_CONTRACT_ID=$(jq -r '.retirement' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
+          echo "MARKETPLACE_CONTRACT_ID=$(jq -r '.marketplace' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
+          echo "MRV_ORACLE_CONTRACT_ID=$(jq -r '.mrv_oracle' scripts/contract-ids.testnet.json)" >> "$GITHUB_ENV"
       # #250 — run smoke tests after deployment
       - name: Run Smoke Tests
         env:
@@ -159,11 +222,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
-        run: |-
-          cd contracts && cargo audit --deny warnings \
-            --ignore RUSTSEC-2026-0009 \
-            --ignore RUSTSEC-2024-0436 \
-            --ignore RUSTSEC-2026-0097
+        run: cargo audit -f contracts/Cargo.lock
 
   frontend:
     name: Frontend SPA (Angular)
@@ -185,5 +244,38 @@ jobs:
         run: cd frontend && npm run format:check
       - name: Build
         run: cd frontend && npm run build
+        env:
+          # Issue #543: Inject a unique release ID at build time so Sentry can
+          # correlate uploaded source maps with production error events.
+          # Format: "<npm-version>+<short-sha>" — e.g. "1.0.0+a3f2b8c"
+          SENTRY_RELEASE: ${{ format('{0}+{1}', github.sha, github.sha) }}
       - name: Run Tests
         run: cd frontend && npm run test:ci
+      # Issue #543: Upload source maps to Sentry and associate them with this
+      # release so production errors resolve to original TypeScript lines.
+      # Only runs on pushes to main (i.e. production deployments); skipped on
+      # pull-request builds where SENTRY_AUTH_TOKEN is not available.
+      - name: Upload source maps to Sentry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.SENTRY_AUTH_TOKEN != ''
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_RELEASE: ${{ format('{0}+{1}', github.sha, github.sha) }}
+        run: |
+          # Derive the same release ID used at build time.
+          PKG_VERSION=$(node -p "require('./frontend/package.json').version")
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          RELEASE="${PKG_VERSION}+${SHORT_SHA}"
+
+          npx --yes @sentry/cli@2 releases new "$RELEASE" \
+            --org "$SENTRY_ORG" --project "$SENTRY_PROJECT"
+
+          npx @sentry/cli@2 releases files "$RELEASE" upload-sourcemaps \
+            frontend/dist/carbonchain-frontend/browser \
+            --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
+            --url-prefix '~/browser' \
+            --rewrite
+
+          npx @sentry/cli@2 releases finalize "$RELEASE" \
+            --org "$SENTRY_ORG" --project "$SENTRY_PROJECT"
