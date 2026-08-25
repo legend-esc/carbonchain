@@ -64,6 +64,15 @@ pub struct BatchRetired {
     pub total_tonnes: i128,
 }
 
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractUpgraded {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub previous_version: u32,
+    pub new_version: u32,
+}
+
 /// Issue #544 — emitted when the API admin commits a certificate IPFS hash
 /// on-chain after uploading the retirement certificate PDF to IPFS.
 #[contractevent]
@@ -84,12 +93,14 @@ impl Retirement {
     ///
     /// # Errors
     /// - [`RetirementError::AlreadyInitialized`] — contract has already been initialised.
-    pub fn initialize(env: Env, admin: Address) -> Result<(), RetirementError> {
+    pub fn initialize(env: Env, admin: Address, registry_id: Address) -> Result<(), RetirementError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(RetirementError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Registry, &registry_id);
+        env.storage().instance().set(&DataKey::Version, &0u32);
         Ok(())
     }
 
@@ -140,6 +151,7 @@ impl Retirement {
     /// # Errors
     /// - [`RetirementError::ContractPaused`] — contract is paused.
     /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current buyer nonce.
+    /// - [`RetirementError::InvalidRegistry`] — `registry_id` does not match the trusted registry.
     ///
     /// Panics if `tonnes` is zero or negative.
     pub fn retire(
@@ -157,6 +169,9 @@ impl Retirement {
         buyer.require_auth();
         if !consume_nonce(&env, &buyer, nonce) {
             return Err(RetirementError::InvalidNonce);
+        }
+        if Self::get_registry(&env) != registry_id {
+            return Err(RetirementError::InvalidRegistry);
         }
 
         // Validate credit exists and caller owns it
@@ -271,6 +286,9 @@ impl Retirement {
         if !consume_nonce(&env, &buyer, nonce) {
             return Err(RetirementError::InvalidNonce);
         }
+        if Self::get_registry(&env) != registry_id {
+            return Err(RetirementError::InvalidRegistry);
+        }
 
         if credit_ids.len() != tonnes.len() {
             return Err(RetirementError::InvalidInput);
@@ -330,11 +348,12 @@ impl Retirement {
                 continue;
             }
 
-            // Derive a deterministic retirement ID — embed index `i` so that
-            // two credits retired in the same ledger with the same reason stay distinct.
+            // Derive a deterministic retirement ID — embed the buyer nonce and index `i` so that
+            // two batches in the same ledger for the same credits+reason produce distinct IDs.
             let mut preimage = credit_id.clone().to_xdr(&env);
             preimage.append(&reason.clone().to_xdr(&env));
             preimage.append(&env.ledger().timestamp().to_xdr(&env));
+            preimage.append(&nonce.to_xdr(&env));
             preimage.append(&i.to_xdr(&env));
             let retirement_id: BytesN<32> = env.crypto().sha256(&preimage).into();
 
@@ -427,6 +446,9 @@ impl Retirement {
 
     /// Upgrade the contract WASM to a new hash. Only the admin may call this.
     ///
+    /// Runs any pending migrations before upgrading, and emits a `ContractUpgraded`
+    /// event so off-chain indexers can track schema changes.
+    ///
     /// # Errors
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the admin.
@@ -441,7 +463,21 @@ impl Retirement {
         if !consume_nonce(&env, &admin, nonce) {
             return Err(RetirementError::InvalidNonce);
         }
+
+        let previous_version = Self::get_version(&env);
+        Self::run_migrations(&env, previous_version + 1)?;
+        let new_version = Self::get_version(&env);
+
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        ContractUpgraded {
+            admin,
+            new_wasm_hash,
+            previous_version,
+            new_version,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -607,6 +643,45 @@ impl Retirement {
             .get(&DataKey::Paused)
             .unwrap_or(false)
     }
+
+    fn get_registry(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Registry)
+            .unwrap_or_else(|| panic!("Registry not set"))
+    }
+
+    fn get_version(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or(0)
+    }
+
+    fn set_version(env: &Env, version: u32) {
+        env.storage().instance().set(&DataKey::Version, &version);
+    }
+
+    /// Run sequential migrations from the current version up to `target_version`.
+    fn run_migrations(env: &Env, target_version: u32) -> Result<(), RetirementError> {
+        let mut current = Self::get_version(env);
+        if target_version < current {
+            return Err(RetirementError::InvalidInput);
+        }
+        while current < target_version {
+            match current {
+                0 => migrate_v0_to_v1(env),
+                _ => break,
+            }
+            current += 1;
+            Self::set_version(env, current);
+        }
+        Ok(())
+    }
+
+    fn migrate_v0_to_v1(_env: &Env) {
+        // v1 introduced version tracking and registry validation; no data transformation needed.
+    }
 }
 
 #[cfg(test)]
@@ -666,7 +741,7 @@ mod tests {
         registry.approve_and_mint(&verifier, &credit_id, vnonce);
 
         let retirement_client = RetirementClient::new(env, &retirement_id);
-        retirement_client.initialize(&retirement_admin);
+        retirement_client.initialize(&retirement_admin, &registry.id);
 
         (retirement_id, registry, credit_id, retirement_admin, issuer)
     }
@@ -1351,5 +1426,183 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    // ── Issue #687: retirement error codes in 200–209 ─────────────────────────
+
+    #[test]
+    fn test_retirement_error_codes_in_200_209_range() {
+        assert!(RetirementError::CreditNotActive as u32 >= 200);
+        assert!(RetirementError::CreditNotActive as u32 <= 209);
+        assert!(RetirementError::AlreadyInitialized as u32 >= 200);
+        assert!(RetirementError::AlreadyInitialized as u32 <= 209);
+        assert!(RetirementError::NotInitialized as u32 >= 200);
+        assert!(RetirementError::NotInitialized as u32 <= 209);
+        assert!(RetirementError::Unauthorized as u32 >= 200);
+        assert!(RetirementError::Unauthorized as u32 <= 209);
+        assert!(RetirementError::ContractPaused as u32 >= 200);
+        assert!(RetirementError::ContractPaused as u32 <= 209);
+        assert!(RetirementError::InvalidNonce as u32 >= 200);
+        assert!(RetirementError::InvalidNonce as u32 <= 209);
+        assert!(RetirementError::NoPendingAdmin as u32 >= 200);
+        assert!(RetirementError::NoPendingAdmin as u32 <= 209);
+        assert!(RetirementError::InvalidTonnes as u32 >= 200);
+        assert!(RetirementError::InvalidTonnes as u32 <= 209);
+        assert!(RetirementError::InvalidInput as u32 >= 200);
+        assert!(RetirementError::InvalidInput as u32 <= 209);
+        assert!(RetirementError::InvalidRegistry as u32 >= 200);
+        assert!(RetirementError::InvalidRegistry as u32 <= 209);
+    }
+
+    // ── Issue #686: fake-registry attack prevention ────────────────────────────
+
+    #[test]
+    fn test_retire_rejects_unknown_registry() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let fake_registry = Address::generate(&env);
+        let nonce = client.get_nonce(&credit_owner);
+
+        let err = client
+            .try_retire(
+                &credit_owner,
+                &credit_id,
+                &1_000_000,
+                &String::from_str(&env, "offset"),
+                &fake_registry,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidRegistry);
+    }
+
+    #[test]
+    fn test_batch_retire_rejects_unknown_registry() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "reg1");
+        let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
+        credit_ids.push_back(credit_id);
+        credit_ids.push_back(cid2);
+        let mut tonnes: Vec<i128> = Vec::new(&env);
+        tonnes.push_back(1_000_000);
+        tonnes.push_back(1_000_000);
+
+        for cid in credit_ids.clone() {
+            let n = registry.get_nonce(&issuer);
+            registry.transfer_credit(&issuer, &buyer, &cid, n);
+        }
+
+        let fake_registry = Address::generate(&env);
+        let nonce = client.get_nonce(&buyer);
+        let err = client
+            .try_batch_retire(
+                &buyer,
+                &credit_ids,
+                &tonnes,
+                &String::from_str(&env, "batch"),
+                &fake_registry,
+                &nonce,
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RetirementError::InvalidRegistry);
+    }
+
+    // ── Issue #685: batch_retire ID derivation includes buyer nonce ────────────
+
+    #[test]
+    fn test_batch_retire_ids_distinct_with_same_ledger_and_reason() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _, issuer) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+        let buyer = Address::generate(&env);
+
+        let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "col1");
+
+        for cid in [credit_id.clone(), cid2.clone()] {
+            let n = registry.get_nonce(&issuer);
+            registry.transfer_credit(&issuer, &buyer, &cid, n);
+        }
+
+        env.ledger().set_timestamp(1735689600);
+
+        let n1 = client.get_nonce(&buyer);
+        let result1 = client.batch_retire(
+            &buyer,
+            &[credit_id.clone()],
+            &[1_000_000],
+            &String::from_str(&env, "same reason"),
+            &registry.id,
+            &n1,
+        );
+
+        let n2 = client.get_nonce(&buyer);
+        let result2 = client.batch_retire(
+            &buyer,
+            &[cid2.clone()],
+            &[1_000_000],
+            &String::from_str(&env, "same reason"),
+            &registry.id,
+            &n2,
+        );
+
+        assert_ne!(
+            result1.succeeded.get(0).unwrap(),
+            result2.succeeded.get(0).unwrap(),
+            "batch retirement IDs must be distinct even with same ledger timestamp and reason"
+        );
+    }
+
+    // ── Issue #688: upgrade migration trigger/validation/event ─────────────────
+
+    #[test]
+    fn test_upgrade_runs_migration_and_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, _, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&retirement_admin);
+        let new_wasm = BytesN::from_array(&env, &[1u8; 32]);
+
+        let result = client.try_upgrade(&retirement_admin, &new_wasm, &nonce);
+        assert!(result.is_ok());
+
+        let events = env.all_contract_events();
+        let upgraded_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.type == Symbol::new(&env, "ContractUpgraded"))
+            .collect();
+        assert_eq!(upgraded_events.len(), 1);
+    }
+
+    #[test]
+    fn test_upgrade_emits_contract_upgraded_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, _, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&retirement_admin);
+        let new_wasm = BytesN::from_array(&env, &[2u8; 32]);
+
+        client.upgrade(&retirement_admin, &new_wasm, &nonce);
+
+        let events = env.all_contract_events();
+        assert!(events.iter().any(|e| e.type == Symbol::new(&env, "ContractUpgraded")));
     }
 }
