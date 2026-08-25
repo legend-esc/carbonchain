@@ -81,7 +81,7 @@ pub enum MarketplaceError {
     InvalidNonce       = 122,
     OfferExpired       = 123,
     Overflow           = 124,
-    AlreadyInitialized = 126,
+    AlreadyInitialized = 130,
 }
 
 #[contractevent]

@@ -54,6 +54,29 @@ pub fn is_verifier(env: &Env, verifier: &Address) -> bool {
     get_verifiers(env).contains(verifier)
 }
 
+pub fn get_verifier_id(env: &Env, verifier: &Address) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VerifierId(verifier.clone()))
+}
+
+pub fn set_verifier_id(env: &Env, verifier: &Address, id: u32) {
+    let key = DataKey::VerifierId(verifier.clone());
+    env.storage().persistent().set(&key, &id);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+pub fn get_next_verifier_id(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::NextVerifierId)
+        .unwrap_or(0)
+}
+
+pub fn set_next_verifier_id(env: &Env, id: u32) {
+    env.storage().instance().set(&DataKey::NextVerifierId, &id);
+}
+
 /// Append a credit id to the per-project index.
 pub fn add_credit_to_project(env: &Env, project_id: &String, credit_id: &BytesN<32>) {
     let key = DataKey::ProjectCredits(project_id.clone());
@@ -239,14 +262,14 @@ pub fn set_required_approvals(env: &Env, count: u32) {
     env.storage().instance().set(&DataKey::RequiredApprovals, &count);
 }
 
-pub fn get_credit_approvals(env: &Env, credit_id: &BytesN<32>) -> Vec<Address> {
+pub fn get_credit_approvals(env: &Env, credit_id: &BytesN<32>) -> Vec<u64> {
     env.storage()
         .persistent()
         .get(&DataKey::CreditApprovals(credit_id.clone()))
         .unwrap_or_else(|| Vec::new(env))
 }
 
-pub fn set_credit_approvals(env: &Env, credit_id: &BytesN<32>, approvals: &Vec<Address>) {
+pub fn set_credit_approvals(env: &Env, credit_id: &BytesN<32>, approvals: &Vec<u64>) {
     let key = DataKey::CreditApprovals(credit_id.clone());
     env.storage().persistent().set(&key, approvals);
     env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
@@ -307,6 +330,81 @@ pub fn append_audit_log(env: &Env, entry: &AuditLogEntry) -> BytesN<32> {
     env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     env.storage().instance().set(&DataKey::AuditLogCount, &(count + 1));
     log_id
+}
+
+// ── Bounded CreditsByOwner / PendingCreditsByVerifier ──────────────────────────
+
+const OWNER_PAGE_SIZE: u32 = 20;
+const PENDING_PAGE_SIZE: u32 = 20;
+
+pub fn add_credit_to_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::CreditsByOwner(owner.clone());
+    let mut list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    if list.len() >= OWNER_PAGE_SIZE as usize {
+        let _ = list.pop_front();
+    }
+    list.push_back(credit_id.clone());
+    env.storage().persistent().set(&key, &list);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CreditsByOwner(owner.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::CreditsByOwner(owner.clone());
+    let list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    let mut new_list: Vec<BytesN<32>> = Vec::new(env);
+    for id in list.iter() {
+        if id != credit_id {
+            new_list.push_back(id.clone());
+        }
+    }
+    if new_list.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &new_list);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    }
+}
+
+pub fn add_pending_credit_to_verifier(env: &Env, verifier: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::PendingCreditsByVerifier(verifier.clone());
+    let mut list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    if list.len() >= PENDING_PAGE_SIZE as usize {
+        let _ = list.pop_front();
+    }
+    list.push_back(credit_id.clone());
+    env.storage().persistent().set(&key, &list);
+    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+pub fn get_pending_credits_by_verifier(env: &Env, verifier: &Address) -> Vec<BytesN<32>> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PendingCreditsByVerifier(verifier.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn remove_pending_credit_from_verifier(env: &Env, verifier: &Address, credit_id: &BytesN<32>) {
+    let key = DataKey::PendingCreditsByVerifier(verifier.clone());
+    let list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    let mut new_list: Vec<BytesN<32>> = Vec::new(env);
+    for id in list.iter() {
+        if id != credit_id {
+            new_list.push_back(id.clone());
+        }
+    }
+    if new_list.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &new_list);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    }
 }
 
 pub fn get_audit_log(env: &Env, log_id: &BytesN<32>) -> Option<AuditLogEntry> {

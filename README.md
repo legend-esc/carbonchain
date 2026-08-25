@@ -358,10 +358,10 @@ cargo build --target wasm32-unknown-unknown --release
 
 | Contract | Stable Error Codes | Description |
 |---|---|---|
-| `credit_registry` | 100–109 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
-| `retirement` | 110–114 | Burn tokens on retirement, write immutable retirement records |
-| `marketplace` | 115–118 | Manage offer listings, integrate with Stellar DEX |
-| `mrv_oracle` | 119–120 | Accept MRV data updates, flag anomalies for re-verification |
+| `credit_registry` | 100–125 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
+| `retirement` | 110–118 | Burn tokens on retirement, write immutable retirement records |
+| `marketplace` | 115–130 | Manage offer listings, integrate with Stellar DEX |
+| `mrv_oracle` | 119–129 | Accept MRV data updates, flag anomalies for re-verification |
 
 See `docs/features/ERROR_CODES_REFERENCE.md` for the full error code reference.
 

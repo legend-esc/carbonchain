@@ -119,4 +119,12 @@ pub enum DataKey {
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
     VerifierServices(Address),
+    /// Stable numeric ID assigned to a verifier on registration.
+    VerifierId(Address),
+    /// Counter for assigning the next verifier ID.
+    NextVerifierId,
+    /// Bounded owner index: credits owned by `Address`, stored in fixed-size pages.
+    CreditsByOwner(Address),
+    /// Bounded pending index: pending credits assigned to `Address`, stored in fixed-size pages.
+    PendingCreditsByVerifier(Address),
 }

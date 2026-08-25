@@ -47,7 +47,7 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 117 | `InvalidTonnes` | `tonnes` is zero or negative |
 | 118 | `InvalidInput` | Input vectors have mismatched lengths or batch exceeds `MAX_BATCH_SIZE` (20) |
 
-## Marketplace (115–125)
+## Marketplace (115–130)
 
 | Code | Name | Description |
 |------|------|-------------|
@@ -58,7 +58,11 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 119 | `CreditNotActive` | Credit linked to the offer is not active |
 | 120 | `NotInitialized` | Contract has not been initialized |
 | 121 | `ContractPaused` | Contract is paused |
+| 122 | `InvalidNonce` | Replay-protection nonce mismatch |
+| 123 | `OfferExpired` | Offer has passed its expiry timestamp |
+| 124 | `Overflow` | Arithmetic overflow in amount calculation |
 | 125 | `InvalidTonnes` | `tonnes` is zero or negative |
+| 130 | `AlreadyInitialized` | Contract has already been initialized |
 
 ## MRV Oracle (119–129)
 
@@ -81,3 +85,4 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 - Error codes are **stable** — they will not change across contract upgrades.
 - All `tonnes` values use scaled units: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (0.1 tonne).
 - `InvalidInput` (retirement code 118) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
+- Code 126 (`InvalidProject`) is reserved for MRV Oracle; Marketplace `AlreadyInitialized` was reassigned to 130 to avoid collision.
