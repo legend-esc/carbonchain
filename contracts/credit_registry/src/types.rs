@@ -116,7 +116,15 @@ pub enum DataKey {
     CreditByProjectVintage(String, u32),
     Project(String),
     RetirementContract,
+    /// Credit ID nonce shared by the old (pre-#681) code path.
+    /// Kept for storage-format compatibility; new code uses the namespaced variants below.
     CreditNonce,
+    /// #681 — Namespaced nonce for submit_credit to prevent ID collisions with split/merge.
+    SubmitCreditNonce,
+    /// #681 — Namespaced nonce for split_credit child ID generation.
+    SplitCreditNonce,
+    /// #681 — Namespaced nonce for merge_credits merged ID generation.
+    MergeCreditNonce,
     Paused,
     IssuerSet,
     MethodologySet,
@@ -137,10 +145,21 @@ pub enum DataKey {
     AuditLog(BytesN<32>),
     /// Counter for audit log entries.
     AuditLogCount,
+    /// Monotonic counter for session IDs — kept separate from AuditLogCount so
+    /// that session IDs and audit-log IDs can never collide. (Issue #671)
+    SessionCount,
     /// Dispute evidence keyed by credit ID.
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
     VerifierServices(Address),
+    /// Stable numeric ID assigned to a verifier on registration.
+    VerifierId(Address),
+    /// Counter for assigning the next verifier ID.
+    NextVerifierId,
+    /// Bounded owner index: credits owned by `Address`, stored in fixed-size pages.
+    CreditsByOwner(Address),
+    /// Bounded pending index: pending credits assigned to `Address`, stored in fixed-size pages.
+    PendingCreditsByVerifier(Address),
     /// Credit IDs indexed by owner address.
     CreditsByOwner(Address),
     /// Per-credit snapshot of verifiers assigned at submission time.
