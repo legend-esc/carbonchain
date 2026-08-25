@@ -47,18 +47,24 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 117 | `InvalidTonnes` | `tonnes` is zero or negative |
 | 118 | `InvalidInput` | Input vectors have mismatched lengths or batch exceeds `MAX_BATCH_SIZE` (20) |
 
-## Marketplace (115–125)
+## Marketplace (300–313)
 
 | Code | Name | Description |
 |------|------|-------------|
-| 115 | `OfferNotFound` | Offer ID does not exist |
-| 116 | `Unauthorized` | Caller is not the offer owner or admin |
-| 117 | `InvalidPrice` | Offer price is zero or negative |
-| 118 | `AlreadyClosed` | Offer has already been closed or filled |
-| 119 | `CreditNotActive` | Credit linked to the offer is not active |
-| 120 | `NotInitialized` | Contract has not been initialized |
-| 121 | `ContractPaused` | Contract is paused |
-| 125 | `InvalidTonnes` | `tonnes` is zero or negative |
+| 300 | `OfferNotFound` | Offer ID does not exist |
+| 301 | `Unauthorized` | Caller is not the offer owner or admin |
+| 302 | `InvalidPrice` | Offer price is zero, negative, or below the minimum |
+| 303 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 |
+| 304 | `AlreadyClosed` | Offer has already been closed or filled |
+| 305 | `CreditNotActive` | Credit linked to the offer is not active |
+| 306 | `NotInitialized` | Contract has not been initialized |
+| 307 | `ContractPaused` | Contract is paused |
+| 308 | `InvalidNonce` | Replay-protection nonce mismatch |
+| 309 | `OfferExpired` | Offer has passed its expiry timestamp |
+| 310 | `Overflow` | Arithmetic overflow detected |
+| 311 | `AlreadyInitialized` | Contract has already been initialized |
+| 312 | `InsufficientFunds` | Buyer does not hold enough of the payment asset |
+| 313 | `EscrowFailed` | Escrow transfer succeeded but offer record failed to persist |
 
 ## MRV Oracle (119–129)
 

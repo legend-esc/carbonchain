@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "Transparent, tamper-proof carbon credit registry on Stellar",
+  "author": "weare",
   "scripts": {
     "prepare": "husky"
   },
