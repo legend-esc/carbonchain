@@ -8,6 +8,7 @@ pub const TTL_THRESHOLD: u32 = MIN_TTL / 2;
 
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn get_admin(env: &Env) -> Option<Address> {
@@ -84,6 +85,7 @@ pub fn set_credit_by_project_vintage(env: &Env, project_id: &String, vintage_yea
 
 pub fn set_retirement_contract(env: &Env, addr: &Address) {
     env.storage().instance().set(&DataKey::RetirementContract, addr);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn get_retirement_contract(env: &Env) -> Option<Address> {
@@ -92,6 +94,7 @@ pub fn get_retirement_contract(env: &Env) -> Option<Address> {
 
 pub fn set_paused(env: &Env, paused: bool) {
     env.storage().instance().set(&DataKey::Paused, &paused);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn is_paused(env: &Env) -> bool {
@@ -102,12 +105,65 @@ pub fn get_nonce(env: &Env, addr: &Address) -> u64 {
     env.storage().persistent().get(&DataKey::Nonce(addr.clone())).unwrap_or(0u64)
 }
 
-pub fn consume_nonce(env: &Env, addr: &Address, expected: u64) -> bool {
+/// Window size for nonce tolerance.
+///
+/// # Nonce policy: windowed tolerance
+///
+/// **Why windowed?**
+/// Under strict sequential nonces a single in-flight or failed transaction
+/// blocks every subsequent operation from the same address until the gap is
+/// resolved.  In a Soroban environment where transactions may be retried,
+/// dropped, or submitted concurrently, this causes avoidable liveness problems.
+///
+/// **Tradeoff vs strict sequential:**
+/// | | Strict | Windowed |
+/// |---|---|---|
+/// | Replay safety | Full (only exact nonce accepted) | Strong (nonces outside window rejected; each nonce consumed at most once) |
+/// | Liveness | Poor (single gap blocks all ops) | Good (up to `NONCE_WINDOW` gaps tolerated) |
+/// | Complexity | Simple | Slightly higher (bitmap tracking used values) |
+///
+/// **How it works:**
+/// - The contract stores the lowest unconsumed nonce (`current`) per address.
+/// - A submitted `nonce` is accepted if `current <= nonce < current + NONCE_WINDOW`.
+/// - Each accepted nonce is marked used in a persistent bitmap (stored alongside `current`).
+/// - When `current` is consumed, it is advanced past all consecutively-consumed nonces,
+///   and their bitmap entries are cleared.
+/// - Nonces below `current` or at/above `current + NONCE_WINDOW` are rejected.
+pub const NONCE_WINDOW: u64 = 16;
+
+pub fn consume_nonce(env: &Env, addr: &Address, submitted: u64) -> bool {
     let current = get_nonce(env, addr);
-    if current != expected { return false; }
+    // Reject nonces that are behind the window or beyond it.
+    if submitted < current || submitted >= current + NONCE_WINDOW {
+        return false;
+    }
+    let offset = (submitted - current) as u32; // 0..NONCE_WINDOW-1
+    // Load the used-bitmap (stored as u64 bitmask, bit N = nonce current+N used).
+    let bitmap_key = DataKey::NonceBitmap(addr.clone());
+    let mut bitmap: u64 = env.storage().persistent().get(&bitmap_key).unwrap_or(0u64);
+    let bit = 1u64 << offset;
+    if bitmap & bit != 0 {
+        // Already consumed — replay attempt.
+        return false;
+    }
+    bitmap |= bit;
+    // Advance `current` past all leading consumed nonces and clear their bits.
+    let mut advance = 0u32;
+    while (advance as u64) < NONCE_WINDOW && (bitmap & (1u64 << advance)) != 0 {
+        advance += 1;
+    }
+    let new_current = current + advance as u64;
+    bitmap >>= advance;
     let key = DataKey::Nonce(addr.clone());
-    env.storage().persistent().set(&key, &(current + 1));
+    env.storage().persistent().set(&key, &new_current);
     env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    if bitmap != 0 {
+        env.storage().persistent().set(&bitmap_key, &bitmap);
+        env.storage().persistent().extend_ttl(&bitmap_key, TTL_THRESHOLD, MIN_TTL);
+    } else {
+        // Bitmap is empty — remove to save storage rent.
+        env.storage().persistent().remove(&bitmap_key);
+    }
     true
 }
 
@@ -237,6 +293,7 @@ pub fn get_required_approvals(env: &Env) -> u32 {
 
 pub fn set_required_approvals(env: &Env, count: u32) {
     env.storage().instance().set(&DataKey::RequiredApprovals, &count);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn get_credit_approvals(env: &Env, credit_id: &BytesN<32>) -> Vec<Address> {
@@ -313,4 +370,22 @@ pub fn get_audit_log(env: &Env, log_id: &BytesN<32>) -> Option<AuditLogEntry> {
     env.storage()
         .persistent()
         .get(&DataKey::AuditLog(log_id.clone()))
+}
+
+// ── Verifier service capability helpers ──────────────────────────────────────
+
+/// Returns `true` only when `verifier` has been explicitly granted `service`.
+///
+/// # Semantics (#673)
+/// - **Not configured** (no `VerifierServices` key): returns `true` — unconfigured
+///   verifiers retain backward-compatible full access.
+/// - **Configured with an empty list**: returns `false` — an admin who called
+///   `configure_verifier_services` with an empty `Vec` has deliberately revoked
+///   all capabilities; an empty list is NOT treated as "open access".
+/// - **Configured with a non-empty list**: returns `true` iff `service` is present.
+pub fn verifier_has_service(env: &Env, verifier: &Address, service: &crate::types::ServiceType) -> bool {
+    match env.storage().persistent().get::<_, Vec<crate::types::ServiceType>>(&DataKey::VerifierServices(verifier.clone())) {
+        None => true,            // unconfigured → full backward-compat access
+        Some(services) => services.contains(service),
+    }
 }

@@ -119,4 +119,7 @@ pub enum DataKey {
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
     VerifierServices(Address),
+    /// Per-address bitmask tracking which nonces within the current window have been used.
+    /// Stored alongside `Nonce(Address)` to support windowed nonce tolerance (#674).
+    NonceBitmap(Address),
 }
