@@ -529,6 +529,45 @@ pub fn remove_unbonding_request(env: &Env, verifier: &Address) {
         .remove(&DataKey::UnbondingRequest(verifier.clone()));
 }
 
+/// Persist the token contract address that `verifier` deposited as stake.
+/// Called once per verifier at their first (or sole) `deposit_stake` call.
+pub fn set_verifier_stake_token(env: &Env, verifier: &Address, token: &Address) {
+    let key = DataKey::VerifierStakeToken(verifier.clone());
+    env.storage().persistent().set(&key, token);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+}
+
+/// Returns the token address previously deposited by `verifier`, if any.
+pub fn get_verifier_stake_token(env: &Env, verifier: &Address) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::VerifierStakeToken(verifier.clone()))
+}
+
+/// Remove the stored stake token for `verifier` (called after a full withdrawal).
+pub fn remove_verifier_stake_token(env: &Env, verifier: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::VerifierStakeToken(verifier.clone()));
+}
+
+/// Persist the admin-configured approved stake token address.
+pub fn set_approved_stake_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ApprovedStakeToken, token);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
+}
+
+/// Returns the admin-configured approved stake token address, if one has been set.
+pub fn get_approved_stake_token(env: &Env) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ApprovedStakeToken)
+}
+
 // ── Per-credit verifier snapshots ──────────────────────────────────────────────
 
 pub fn get_credit_verifiers(env: &Env, credit_id: &BytesN<32>) -> Vec<Address> {

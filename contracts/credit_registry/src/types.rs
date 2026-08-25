@@ -159,4 +159,10 @@ pub enum DataKey {
     MinStake,
     /// Pending unbonding request created when a verifier is removed.
     UnbondingRequest(Address),
+    /// Token contract address that was deposited as stake by a specific verifier.
+    /// Persisted at deposit_stake time; withdraw_stake must supply the same token.
+    VerifierStakeToken(Address),
+    /// Admin-configured token contract address that is the only accepted stake token.
+    /// deposit_stake validates the caller-supplied token_id against this value.
+    ApprovedStakeToken,
 }

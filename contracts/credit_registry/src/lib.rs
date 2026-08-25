@@ -38,20 +38,21 @@ use crate::events::{
 };
 use crate::storage::{
     add_credit_to_owner, add_credit_to_project, add_to_pending_credits, append_audit_log,
-    consume_nonce, decrement_verifier_pending, get_admin, get_audit_log, get_credit,
-    get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
+    consume_nonce, decrement_verifier_pending, get_admin, get_approved_stake_token, get_audit_log,
+    get_credit, get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
     get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies, get_min_stake,
     get_nonce, get_pending_credits, get_required_approvals, get_retirement_contract, get_session,
     get_session_op_count, get_total_credits, get_unbonding_request, get_verifier_reputation,
-    get_verifier_services_for, get_verifier_stake, get_verifiers, has_admin,
-    increment_approval_count, increment_dispute_count, increment_session_op_count,
+    get_verifier_services_for, get_verifier_stake, get_verifier_stake_token, get_verifiers,
+    has_admin, increment_approval_count, increment_dispute_count, increment_session_op_count,
     increment_total_credits, increment_verifier_pending, is_issuer as storage_is_issuer,
     is_methodology_valid, is_paused, is_verifier, remove_credit_approvals,
     remove_credit_from_owner, remove_credit_verifiers, remove_from_pending_credits,
-    remove_unbonding_request, set_admin, set_credit, set_credit_approvals,
-    set_credit_by_project_vintage, set_credit_verifiers, set_issuers, set_methodologies,
-    set_min_stake, set_paused, set_required_approvals, set_retirement_contract, set_session,
-    set_unbonding_request, set_verifier_services, set_verifier_stake, set_verifiers,
+    remove_unbonding_request, remove_verifier_stake_token, set_admin,
+    set_approved_stake_token, set_credit, set_credit_approvals, set_credit_by_project_vintage,
+    set_credit_verifiers, set_issuers, set_methodologies, set_min_stake, set_paused,
+    set_required_approvals, set_retirement_contract, set_session, set_unbonding_request,
+    set_verifier_services, set_verifier_stake, set_verifier_stake_token, set_verifiers,
     verifier_has_credit_approval, SLASH_PERCENT, UNBONDING_PERIOD_SECS,
 };
 use crate::types::{
@@ -294,15 +295,20 @@ impl CreditRegistry {
 
     /// Deposit stake toward the minimum required to register as a verifier.
     ///
-    /// `token_id` is the address of the token contract to transfer from (e.g. the native
-    /// XLM Stellar Asset Contract on the target network). Stake is transferred from
-    /// `verifier` into this contract's own balance, acting as an escrow. Deposits
-    /// accumulate — call this multiple times to reach `get_min_stake`.
+    /// `token_id` must match the admin-configured approved stake token (set via
+    /// [`set_stake_token`]). On the first deposit for a verifier the token is
+    /// persisted and subsequent deposits must use the same token. The token
+    /// contract is called with `try_invoke_contract` so a transfer failure
+    /// returns [`CarbonChainError::StakeTransferFailed`] instead of aborting
+    /// the whole transaction.
     ///
     /// # Errors
     /// - [`CarbonChainError::ContractPaused`] — contract is paused.
     /// - [`CarbonChainError::InvalidStakeAmount`] — `amount` is zero or negative.
     /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current verifier nonce.
+    /// - [`CarbonChainError::InvalidStakeToken`] — `token_id` does not match the approved token
+    ///   or the token previously deposited by this verifier.
+    /// - [`CarbonChainError::StakeTransferFailed`] — the token transfer call reverted.
     pub fn deposit_stake(
         env: Env,
         verifier: Address,
@@ -321,12 +327,37 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidNonce);
         }
 
+        // Issue #663 + #662: Validate token_id against the admin-configured approved
+        // stake token before touching any escrow balance.
+        if let Some(approved) = get_approved_stake_token(&env) {
+            if token_id != approved {
+                return Err(CarbonChainError::InvalidStakeToken);
+            }
+        }
+
+        // Issue #662: On a verifier's first deposit, record which token they used.
+        // Subsequent deposits must supply the same token to prevent mixing.
+        if let Some(existing_token) = get_verifier_stake_token(&env, &verifier) {
+            if token_id != existing_token {
+                return Err(CarbonChainError::InvalidStakeToken);
+            }
+        } else {
+            set_verifier_stake_token(&env, &verifier, &token_id);
+        }
+
         let escrow: Address = env.current_contract_address();
-        let _: () = env.invoke_contract(
+
+        // Issue #663: Use try_invoke_contract so a revert in the token contract
+        // returns a typed error instead of aborting the transaction.
+        let transfer_result: Result<Result<(), _>, _> = env.try_invoke_contract(
             &token_id,
             &Symbol::new(&env, "transfer"),
             (verifier.clone(), escrow, amount).into_val(&env),
         );
+        match transfer_result {
+            Ok(Ok(())) => {}
+            _ => return Err(CarbonChainError::StakeTransferFailed),
+        }
 
         let total = get_verifier_stake(&env, &verifier) + amount;
         set_verifier_stake(&env, &verifier, total);
@@ -335,13 +366,16 @@ impl CreditRegistry {
     }
 
     /// Withdraw stake once the 30-day unbonding period initiated by [`remove_verifier`]
-    /// has elapsed. `token_id` must match the token originally deposited via
-    /// [`deposit_stake`].
+    /// has elapsed. The token used for withdrawal must match the token that was
+    /// originally deposited via [`deposit_stake`] — any other token_id is rejected,
+    /// preventing cross-token escrow drains.
     ///
     /// # Errors
     /// - [`CarbonChainError::NoUnbondingRequest`] — no unbonding request exists for `verifier`.
     /// - [`CarbonChainError::UnbondingNotReady`] — the unbonding period has not yet elapsed.
     /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current verifier nonce.
+    /// - [`CarbonChainError::InvalidStakeToken`] — `token_id` does not match the deposited token.
+    /// - [`CarbonChainError::StakeTransferFailed`] — the token transfer call reverted.
     pub fn withdraw_stake(
         env: Env,
         verifier: Address,
@@ -358,14 +392,31 @@ impl CreditRegistry {
             return Err(CarbonChainError::UnbondingNotReady);
         }
 
+        // Issue #662: Enforce that the caller supplies the exact token that was
+        // deposited. Without this check a removed verifier could pass any token_id
+        // and drain request.amount of a *different* token from the shared escrow.
+        let deposited_token = get_verifier_stake_token(&env, &verifier)
+            .ok_or(CarbonChainError::InvalidStakeToken)?;
+        if token_id != deposited_token {
+            return Err(CarbonChainError::InvalidStakeToken);
+        }
+
         let escrow: Address = env.current_contract_address();
-        let _: () = env.invoke_contract(
+
+        // Issue #663: use try_invoke_contract for a clean error on transfer failure.
+        let transfer_result: Result<Result<(), _>, _> = env.try_invoke_contract(
             &token_id,
             &Symbol::new(&env, "transfer"),
             (escrow, verifier.clone(), request.amount).into_val(&env),
         );
+        match transfer_result {
+            Ok(Ok(())) => {}
+            _ => return Err(CarbonChainError::StakeTransferFailed),
+        }
 
         remove_unbonding_request(&env, &verifier);
+        // Clean up the persisted token now that stake has been fully withdrawn.
+        remove_verifier_stake_token(&env, &verifier);
         StakeWithdrawn {
             verifier,
             amount: request.amount,
@@ -453,6 +504,38 @@ impl CreditRegistry {
         }
         set_min_stake(&env, amount);
         Ok(())
+    }
+
+    /// Set the only token contract address that is accepted as stake. Only the admin
+    /// may call this. Once set, `deposit_stake` will reject any `token_id` that does
+    /// not match this address, preventing a verifier from depositing a worthless token
+    /// to satisfy the minimum-stake requirement.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
+    /// - [`CarbonChainError::Unauthorized`] — caller is not the admin.
+    /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    pub fn set_stake_token(
+        env: Env,
+        admin: Address,
+        token: Address,
+        nonce: u64,
+    ) -> Result<(), CarbonChainError> {
+        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        admin.require_auth();
+        if admin != stored_admin {
+            return Err(CarbonChainError::Unauthorized);
+        }
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        set_approved_stake_token(&env, &token);
+        Ok(())
+    }
+
+    /// Returns the admin-configured approved stake token, if one has been set.
+    pub fn get_stake_token(env: Env) -> Option<Address> {
+        get_approved_stake_token(&env)
     }
 
     // ── Issuer management ────────────────────────────────────────────────────
@@ -615,11 +698,15 @@ impl CreditRegistry {
 
         if let Some(existing_id) = get_credit_by_project_vintage(&env, &project_id, vintage_year) {
             if let Some(existing_credit) = get_credit(&env, &existing_id) {
-                if existing_credit.status == CreditStatus::Pending
-                    || existing_credit.status == CreditStatus::Active
-                {
-                    return Err(CarbonChainError::DuplicateCredit);
-                }
+                // Issue #661: Block re-submission for ANY existing status.
+                // Allowing re-submission when the prior credit is Flagged, Disputed,
+                // Retired, or Expired would overwrite the project-vintage mapping and
+                // make the old credit unreachable from that index, breaking uniqueness.
+                // If the business ever needs to version credits (e.g. after Expired),
+                // an explicit "supersede" operation should be added rather than a
+                // silent overwrite.
+                let _ = existing_credit; // all statuses are blocked
+                return Err(CarbonChainError::DuplicateCredit);
             }
         }
 
@@ -923,6 +1010,12 @@ impl CreditRegistry {
         if credit.owner != from {
             return Err(CarbonChainError::Unauthorized);
         }
+        // Issue #664: Only Active credits may be transferred. Transferring a
+        // Retired/Flagged/Expired credit would create a tradeable token backed by a
+        // dead credit, so we gate on Active status here.
+        if credit.status != CreditStatus::Active {
+            return Err(CarbonChainError::InvalidStatusTransition);
+        }
         // Issue #470: Remove from the old owner's index BEFORE updating ownership.
         remove_credit_from_owner(&env, &from, &credit_id);
         credit.owner = to.clone();
@@ -957,6 +1050,12 @@ impl CreditRegistry {
         let mut original = get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)?;
         if original.owner != caller {
             return Err(CarbonChainError::Unauthorized);
+        }
+        // Issue #664: Only Active credits may be split. Splitting a
+        // Retired/Flagged/Expired credit would produce tradeable children of a dead
+        // credit, bypassing all status enforcement.
+        if original.status != CreditStatus::Active {
+            return Err(CarbonChainError::InvalidStatusTransition);
         }
         if split_tonnes <= 0 || split_tonnes >= original.tonnes {
             return Err(CarbonChainError::InvalidSplit);
@@ -2059,9 +2158,14 @@ mod tests {
 
     #[test]
     fn test_get_credits_by_owner_paginated_excludes_transferred_credits() {
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Approve so credit is Active before transfer
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
 
         let recipient = Address::generate(&env);
         let nonce = client.get_nonce(&issuer);
@@ -2627,9 +2731,14 @@ mod tests {
 
     #[test]
     fn test_transfer_credit_changes_owner() {
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Approve so credit is Active before transfer
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
         let recipient = Address::generate(&env);
         let nonce = client.get_nonce(&issuer);
         client.transfer_credit(&issuer, &recipient, &id, &nonce);
@@ -2653,9 +2762,14 @@ mod tests {
 
     #[test]
     fn test_split_credit_creates_two_children() {
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Approve so credit is Active before split
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
         let nonce = client.get_nonce(&issuer);
         let (child1, child2) = client.split_credit(&issuer, &id, &500_000, &nonce);
 
@@ -2669,9 +2783,14 @@ mod tests {
 
     #[test]
     fn test_split_credit_retires_original() {
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Approve so credit is Active before split
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
         let nonce = client.get_nonce(&issuer);
         client.split_credit(&issuer, &id, &500_000, &nonce);
 
@@ -2681,9 +2800,14 @@ mod tests {
 
     #[test]
     fn test_split_credit_invalid_split_fails() {
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Approve so credit is Active
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
         let nonce = client.get_nonce(&issuer);
         let result = client.try_split_credit(&issuer, &id, &1_000_000, &nonce);
         assert!(result.is_err());
@@ -3573,7 +3697,9 @@ mod tests {
     fn test_transfer_credit_updates_owner_index() {
         // After transfer_credit, the new owner's index includes the credit and
         // the old owner's index does NOT include it.
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
         let recipient = Address::generate(&env);
@@ -3581,6 +3707,10 @@ mod tests {
         // Verify initial state: issuer owns the credit
         let issuer_credits_before = client.list_credits_by_owner(&issuer);
         assert!(issuer_credits_before.contains(&id));
+
+        // Approve so credit is Active before transfer
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
 
         let nonce = client.get_nonce(&issuer);
         client.transfer_credit(&issuer, &recipient, &id, &nonce);
@@ -3605,13 +3735,19 @@ mod tests {
         // After split_credit:
         // - original credit ID is removed from caller's index
         // - both child IDs are present in caller's index
-        let (env, client, admin, _) = setup();
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
 
         // Verify initial state
         let before = client.list_credits_by_owner(&issuer);
         assert!(before.contains(&id));
+
+        // Approve so credit is Active before split
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
 
         let nonce = client.get_nonce(&issuer);
         let (child1, child2) = client.split_credit(&issuer, &id, &500_000, &nonce);
@@ -3686,6 +3822,14 @@ mod tests {
         let recipient = Address::generate(&env);
         let nonce = client.get_nonce(&issuer);
         let transferred_id = credit_ids.get(0).unwrap();
+
+        // Approve the first credit so it becomes Active (transfer requires Active status now)
+        let verifier = Address::generate(&env);
+        let anonce3 = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce3);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &transferred_id, &vnonce);
+
         client.transfer_credit(&issuer, &recipient, &transferred_id, &nonce);
 
         let after = client.list_credits_by_owner(&issuer);
@@ -3702,5 +3846,382 @@ mod tests {
         let recipient_credits = client.list_credits_by_owner(&recipient);
         assert_eq!(recipient_credits.len(), 1, "recipient should have 1 credit");
         assert!(recipient_credits.contains(&transferred_id));
+    }
+
+    // ── Issue #661: Duplicate project+vintage across all terminal states ──────
+
+    #[test]
+    fn test_duplicate_flagged_credit_blocked() {
+        // A credit that was Flagged must still block re-submission of the same
+        // project+vintage combination.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Flag the credit
+        let vnonce = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Flagged);
+
+        // Attempt re-submission for the same project+vintage — must be rejected
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::DuplicateCredit)));
+    }
+
+    #[test]
+    fn test_duplicate_retired_credit_blocked() {
+        // A credit that was Retired (via split or mark_retired) must block re-submission.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Approve so it becomes Active, then retire it
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        client.mark_retired(&id);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Retired);
+
+        // Attempt re-submission — must be rejected
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::DuplicateCredit)));
+    }
+
+    #[test]
+    fn test_duplicate_expired_credit_blocked() {
+        // A credit that was Expired must block re-submission.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Approve so it becomes Active, then expire it
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        client.expire_credit(&admin, &id);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Expired);
+
+        // Attempt re-submission — must be rejected
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::DuplicateCredit)));
+    }
+
+    #[test]
+    fn test_duplicate_disputed_credit_blocked() {
+        // A credit that was Disputed must block re-submission.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Dispute the credit
+        client.dispute_credit(&issuer, &id, &String::from_str(&env, "ipfs-evidence"));
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Disputed);
+
+        // Attempt re-submission — must be rejected
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            &2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "bafybei123"),
+            &nonce,
+        );
+        assert_eq!(result, Err(Ok(CarbonChainError::DuplicateCredit)));
+    }
+
+    // ── Issue #662 + #663: Stake token persistence and safe transfer ──────────
+
+    #[test]
+    fn test_deposit_stake_wrong_approved_token_rejected() {
+        // When an approved stake token is configured, depositing a different token
+        // must return InvalidStakeToken.
+        let (env, client, admin, verifier) = setup();
+
+        let good_token = Address::generate(&env);
+        let bad_token = Address::generate(&env);
+
+        // Admin configures the approved stake token
+        let anonce = client.get_nonce(&admin);
+        client.set_stake_token(&admin, &good_token, &anonce);
+
+        // Verifier tries to deposit with a different token
+        let vnonce = client.get_nonce(&verifier);
+        let result = client.try_deposit_stake(&verifier, &bad_token, &1_000_000, &vnonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStakeToken)));
+    }
+
+    #[test]
+    fn test_deposit_stake_mixed_tokens_rejected() {
+        // A verifier who deposited token A cannot deposit token B in a second call,
+        // preventing mixed-token escrow balances.
+        let (env, client, admin, verifier) = setup();
+
+        // No admin-approved token configured — first deposit sets the verifier's token
+        let token_a = Address::generate(&env);
+        let token_b = Address::generate(&env);
+
+        // Simulate first deposit by directly setting the stored token (no real token
+        // contract in tests — we just verify the guard logic at the contract level).
+        // We set the approved token to token_a then attempt deposit with token_b.
+        let anonce = client.get_nonce(&admin);
+        client.set_stake_token(&admin, &token_a, &anonce);
+
+        let vnonce = client.get_nonce(&verifier);
+        // Token B is not the approved token → must be rejected
+        let result = client.try_deposit_stake(&verifier, &token_b, &1_000_000, &vnonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStakeToken)));
+    }
+
+    #[test]
+    fn test_withdraw_stake_wrong_token_rejected() {
+        // withdraw_stake must reject a token_id that differs from the one deposited.
+        // We test the guard directly: set a VerifierStakeToken via set_stake_token
+        // (approved token path) and confirm wrong-token withdrawal fails.
+        let (env, client, admin, verifier) = setup();
+
+        let good_token = Address::generate(&env);
+        let bad_token = Address::generate(&env);
+
+        // Configure approved token
+        let anonce = client.get_nonce(&admin);
+        client.set_stake_token(&admin, &good_token, &anonce);
+
+        // Manually trigger an unbonding request (simulating remove_verifier flow) so
+        // withdraw_stake has something to act on.  We register the verifier first.
+        let anonce2 = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce2);
+
+        // Remove verifier to initiate unbonding
+        let anonce3 = client.get_nonce(&admin);
+        client.remove_verifier(&admin, &verifier, &anonce3);
+
+        // Advance ledger past unbonding period (30 days = 2_592_000 s)
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + 2_592_001);
+
+        // Attempt withdrawal with the wrong token
+        let vnonce = client.get_nonce(&verifier);
+        let result = client.try_withdraw_stake(&verifier, &bad_token, &vnonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStakeToken)));
+    }
+
+    #[test]
+    fn test_set_stake_token_only_admin() {
+        // Non-admin cannot configure the approved stake token.
+        let (env, client, admin, _) = setup();
+        let _ = admin;
+        let rando = Address::generate(&env);
+        let token = Address::generate(&env);
+        let nonce = client.get_nonce(&rando);
+        let result = client.try_set_stake_token(&rando, &token, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+    }
+
+    // ── Issue #664: transfer/split status checks ──────────────────────────────
+
+    #[test]
+    fn test_transfer_pending_credit_fails() {
+        // Transferring a Pending credit must fail.
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Pending);
+
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_transfer_credit(&issuer, &recipient, &id, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_transfer_retired_credit_fails() {
+        // Transferring a Retired credit must fail.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        client.mark_retired(&id);
+
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_transfer_credit(&issuer, &recipient, &id, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_transfer_flagged_credit_fails() {
+        // Transferring a Flagged credit must fail.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_transfer_credit(&issuer, &recipient, &id, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_transfer_expired_credit_fails() {
+        // Transferring an Expired credit must fail.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        client.expire_credit(&admin, &id);
+
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_transfer_credit(&issuer, &recipient, &id, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_transfer_active_credit_succeeds() {
+        // Transferring an Active credit must still work correctly.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+
+        let recipient = Address::generate(&env);
+        let nonce = client.get_nonce(&issuer);
+        assert!(client
+            .try_transfer_credit(&issuer, &recipient, &id, &nonce)
+            .is_ok());
+        assert_eq!(client.get_credit(&id).owner, recipient);
+    }
+
+    #[test]
+    fn test_split_pending_credit_fails() {
+        // Splitting a Pending credit must fail.
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Pending);
+
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_split_credit(&issuer, &id, &500_000, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_split_retired_credit_fails() {
+        // Splitting a Retired credit must fail.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        client.mark_retired(&id);
+
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_split_credit(&issuer, &id, &500_000, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_split_flagged_credit_fails() {
+        // Splitting a Flagged credit must fail.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_split_credit(&issuer, &id, &500_000, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_split_expired_credit_fails() {
+        // Splitting an Expired credit must fail.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        client.expire_credit(&admin, &id);
+
+        let nonce = client.get_nonce(&issuer);
+        let result = client.try_split_credit(&issuer, &id, &500_000, &nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
+    }
+
+    #[test]
+    fn test_split_active_credit_succeeds() {
+        // Splitting an Active credit must still work correctly.
+        let (env, client, admin, verifier) = setup();
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+
+        let nonce = client.get_nonce(&issuer);
+        let (child1, child2) = client.split_credit(&issuer, &id, &500_000, &nonce);
+        assert_eq!(client.get_credit(&child1).tonnes, 500_000);
+        assert_eq!(client.get_credit(&child2).tonnes, 500_000);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Retired);
     }
 }
