@@ -777,23 +777,18 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidNonce);
         }
         let mut credit = get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)?;
-        if credit.status == CreditStatus::Retired || credit.status == CreditStatus::Flagged {
+        // Issue #657: block flagging Pending credits — a credit that has not yet
+        // reached the required approval threshold cannot be flagged; it should be
+        // left to complete or abandon the approval process first.
+        if credit.status == CreditStatus::Pending
+            || credit.status == CreditStatus::Retired
+            || credit.status == CreditStatus::Flagged
+        {
             return Err(CarbonChainError::InvalidStatusTransition);
         }
-        let was_pending = credit.status == CreditStatus::Pending;
         credit.status = CreditStatus::Flagged;
         set_credit(&env, &credit_id, &credit);
         increment_dispute_count(&env, &verifier);
-        // Issue #481: decrement pending count using the per-credit snapshot, not the global
-        // verifier list, so removed/added verifiers don't cause under/over counts.
-        if was_pending {
-            let assigned_verifiers = get_credit_verifiers(&env, &credit_id);
-            for v in assigned_verifiers.iter() {
-                decrement_verifier_pending(&env, &v);
-            }
-            remove_credit_verifiers(&env, &credit_id);
-            remove_from_pending_credits(&env, &credit_id);
-        }
         CreditFlagged {
             id: credit_id,
             reason,
@@ -856,8 +851,49 @@ impl CreditRegistry {
 
         match resolution {
             DisputeResolution::Rejected => {
-                // False positive — restore credit to tradeable Active status.
-                credit.status = CreditStatus::Active;
+                // Issue #657: false positive — restore credit only to Active if it
+                // actually has enough approvals. Since flag_credit now blocks Pending
+                // credits, a Flagged credit must have previously been Active (had full
+                // approvals). Re-check anyway as a defence-in-depth guard: if for some
+                // reason the approval record is still present and below threshold, put
+                // the credit back to Pending so the normal multi-sig flow can complete.
+                let approvals = get_credit_approvals(&env, &credit_id);
+                let required = get_required_approvals(&env);
+                if approvals.len() >= required {
+                    // Full approvals reached — restore to Active.
+                    credit.status = CreditStatus::Active;
+                } else {
+                    // No approval record (normal for previously-Active credits) means
+                    // the credit was minted before being flagged — safe to restore Active.
+                    // Only fall to Pending if there are partial approvals that haven't
+                    // reached the threshold yet (should not occur after #657 fix, but
+                    // handled defensively).
+                    let has_approval_record = env
+                        .storage()
+                        .persistent()
+                        .has(&crate::types::DataKey::CreditApprovals(credit_id.clone()));
+                    if has_approval_record && approvals.len() < required {
+                        // Re-add to pending indexes so verifiers can complete approval.
+                        credit.status = CreditStatus::Pending;
+                        let assigned = get_credit_verifiers(&env, &credit_id);
+                        if assigned.is_empty() {
+                            // No snapshot — take current verifier set.
+                            let verifiers = get_verifiers(&env);
+                            set_credit_verifiers(&env, &credit_id, &verifiers);
+                            for v in verifiers.iter() {
+                                increment_verifier_pending(&env, &v);
+                            }
+                        } else {
+                            for v in assigned.iter() {
+                                increment_verifier_pending(&env, &v);
+                            }
+                        }
+                        add_to_pending_credits(&env, &credit_id);
+                    } else {
+                        // No partial approval record — credit was previously Active.
+                        credit.status = CreditStatus::Active;
+                    }
+                }
             }
             DisputeResolution::Confirmed => {
                 // Anomaly confirmed — credit stays Flagged (no status change).
@@ -1396,11 +1432,32 @@ impl CreditRegistry {
     ) -> Result<(), CarbonChainError> {
         disputer.require_auth();
         let mut credit = get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)?;
-        if credit.status == CreditStatus::Retired || credit.status == CreditStatus::Disputed {
+        // Issue #659: block dispute_credit from overwriting a Flagged credit into
+        // Disputed, which would silently lose the flag. Flagged credits must go
+        // through resolve_flag first.
+        // Issue #658: also continue blocking Retired and Disputed as before.
+        if credit.status == CreditStatus::Retired
+            || credit.status == CreditStatus::Disputed
+            || credit.status == CreditStatus::Flagged
+        {
             return Err(CarbonChainError::InvalidStatusTransition);
         }
+        let was_pending = credit.status == CreditStatus::Pending;
         credit.status = CreditStatus::Disputed;
         set_credit(&env, &credit_id, &credit);
+        // Issue #658: if the credit was Pending, clear the pending indexes so
+        // remove_verifier no longer false-blocks on VerifierHasPendingCredits and
+        // off-chain listings are accurate.
+        if was_pending {
+            let assigned_verifiers = get_credit_verifiers(&env, &credit_id);
+            for v in assigned_verifiers.iter() {
+                decrement_verifier_pending(&env, &v);
+            }
+            remove_credit_verifiers(&env, &credit_id);
+            remove_from_pending_credits(&env, &credit_id);
+            // Also clear any partial approvals that accumulated while Pending.
+            remove_credit_approvals(&env, &credit_id);
+        }
         env.storage()
             .persistent()
             .set(&DataKey::Dispute(credit_id.clone()), &evidence_ipfs_hash);
@@ -1429,7 +1486,33 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidDisputeStatus);
         }
         if outcome == 0 {
-            credit.status = CreditStatus::Active;
+            // Issue #658: "resolve to Active" outcome — but if this credit came from
+            // Pending (indexes were cleared on dispute entry and approvals wiped),
+            // blindly setting Active bypasses multi-sig. Check whether the credit has
+            // ever been fully approved by examining whether a non-empty approval record
+            // exists (would mean it was disputed while Pending before threshold).
+            // If the pending index was cleaned up (no CreditVerifiers snapshot and no
+            // approval record), the credit was Active when disputed — safe to restore.
+            let has_approval_record = env
+                .storage()
+                .persistent()
+                .has(&crate::types::DataKey::CreditApprovals(credit_id.clone()));
+            let approvals = get_credit_approvals(&env, &credit_id);
+            let required = get_required_approvals(&env);
+
+            if has_approval_record && approvals.len() < required {
+                // Was Pending when disputed — restore to Pending so multi-sig can finish.
+                credit.status = CreditStatus::Pending;
+                let verifiers = get_verifiers(&env);
+                set_credit_verifiers(&env, &credit_id, &verifiers);
+                for v in verifiers.iter() {
+                    increment_verifier_pending(&env, &v);
+                }
+                add_to_pending_credits(&env, &credit_id);
+            } else {
+                // Was Active when disputed (no leftover approval record) — safe to restore.
+                credit.status = CreditStatus::Active;
+            }
         } else if outcome == 1 {
             credit.status = CreditStatus::Flagged;
         } else {
@@ -1791,19 +1874,22 @@ mod tests {
         client.register_verifier(&admin, &verifier, &nonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // #657: credit must be Active before it can be flagged
         let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        let vnonce2 = client.get_nonce(&verifier);
         client.flag_credit(
             &verifier,
             &id,
             &String::from_str(&env, "first flag"),
-            &vnonce,
+            &vnonce2,
         );
-        let vnonce2 = client.get_nonce(&verifier);
+        let vnonce3 = client.get_nonce(&verifier);
         let result = client.try_flag_credit(
             &verifier,
             &id,
             &String::from_str(&env, "second flag"),
-            &vnonce2,
+            &vnonce3,
         );
         assert!(result.is_err());
     }
@@ -1819,9 +1905,14 @@ mod tests {
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
 
-        // Flag the credit first
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
-        client.flag_credit(&verifier, &id, &String::from_str(&env, "anomaly"), &vnonce);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Active);
+
+        // Flag the credit
+        let vnonce2 = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "anomaly"), &vnonce2);
         assert_eq!(client.get_credit(&id).status, CreditStatus::Flagged);
 
         // Resolve with Rejected (false positive) — admin resolves
@@ -1845,17 +1936,21 @@ mod tests {
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
 
-        // Flag the credit
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
-        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+
+        // Flag the credit
+        let vnonce2 = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce2);
 
         // Resolve with Confirmed — verifier resolves
-        let vnonce2 = client.get_nonce(&verifier);
+        let vnonce3 = client.get_nonce(&verifier);
         let result = client.try_resolve_flag(
             &verifier,
             &id,
             &crate::types::DisputeResolution::Confirmed,
-            &vnonce2,
+            &vnonce3,
         );
         assert!(result.is_ok());
         // Credit must remain Flagged
@@ -1890,8 +1985,12 @@ mod tests {
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
 
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
-        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+
+        let vnonce2 = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce2);
 
         let rando = Address::generate(&env);
         let rnonce = client.get_nonce(&rando);
@@ -1913,21 +2012,25 @@ mod tests {
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
 
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+
+        let vnonce2 = client.get_nonce(&verifier);
         client.flag_credit(
             &verifier,
             &id,
             &String::from_str(&env, "suspicious"),
-            &vnonce,
+            &vnonce2,
         );
 
         // Verifier resolves as Rejected
-        let vnonce2 = client.get_nonce(&verifier);
+        let vnonce3 = client.get_nonce(&verifier);
         let result = client.try_resolve_flag(
             &verifier,
             &id,
             &crate::types::DisputeResolution::Rejected,
-            &vnonce2,
+            &vnonce3,
         );
         assert!(result.is_ok());
         assert_eq!(client.get_credit(&id).status, CreditStatus::Active);
@@ -1995,12 +2098,15 @@ mod tests {
 
         // Retiring/flagging a credit must not decrement the total.
         client.register_verifier(&admin, &verifier, &client.get_nonce(&admin));
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &ids.get(0).unwrap(), &vnonce);
+        let vnonce2 = client.get_nonce(&verifier);
         client.flag_credit(
             &verifier,
             &ids.get(0).unwrap(),
             &String::from_str(&env, "test flag"),
-            &vnonce,
+            &vnonce2,
         );
         assert_eq!(client.get_credit_count(), 3);
     }
@@ -2505,10 +2611,13 @@ mod tests {
         client.register_verifier(&admin, &verifier, &nonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
-        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+        client.approve_and_mint(&verifier, &id, &vnonce);
         let vnonce2 = client.get_nonce(&verifier);
-        let result = client.try_approve_and_mint(&verifier, &id, &vnonce2);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce2);
+        let vnonce3 = client.get_nonce(&verifier);
+        let result = client.try_approve_and_mint(&verifier, &id, &vnonce3);
         assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
     }
 
@@ -2616,10 +2725,13 @@ mod tests {
         client.register_verifier(&admin, &verifier, &nonce);
         let issuer = Address::generate(&env);
         let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Mint to Active first (#657: cannot flag Pending credits)
         let vnonce = client.get_nonce(&verifier);
-        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        let vnonce2 = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "fraud"), &vnonce2);
         let rep = client.get_verifier_reputation(&verifier);
-        assert_eq!(rep.approval_count, 0);
+        assert_eq!(rep.approval_count, 1);
         assert_eq!(rep.dispute_count, 1);
     }
 
@@ -3702,5 +3814,212 @@ mod tests {
         let recipient_credits = client.list_credits_by_owner(&recipient);
         assert_eq!(recipient_credits.len(), 1, "recipient should have 1 credit");
         assert!(recipient_credits.contains(&transferred_id));
+    }
+
+    // ── Regression tests for Issue #657: flag/resolve multi-sig bypass ────────
+
+    /// Ensures a Pending credit cannot be flagged (closes the submit→flag→resolve bypass).
+    #[test]
+    fn test_flag_credit_blocks_pending() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Credit is still Pending — flag must be rejected
+        let vnonce = client.get_nonce(&verifier);
+        let result = client.try_flag_credit(
+            &verifier,
+            &id,
+            &String::from_str(&env, "bypass attempt"),
+            &vnonce,
+        );
+        assert_eq!(
+            result,
+            Err(Ok(CarbonChainError::InvalidStatusTransition)),
+            "flagging a Pending credit must return InvalidStatusTransition"
+        );
+    }
+
+    /// An unapproved credit cannot reach Active via submit→flag→resolve(Rejected).
+    #[test]
+    fn test_no_active_via_pending_flag_resolve_bypass() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Credit is Pending — flag must fail
+        let vnonce = client.get_nonce(&verifier);
+        let flag_result = client.try_flag_credit(
+            &verifier,
+            &id,
+            &String::from_str(&env, "fraud"),
+            &vnonce,
+        );
+        assert!(
+            flag_result.is_err(),
+            "should not be able to flag a Pending credit"
+        );
+        // Status must still be Pending, not Active
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Pending);
+    }
+
+    /// resolve_flag(Rejected) on a previously-Active→Flagged credit restores Active correctly.
+    #[test]
+    fn test_resolve_flag_rejected_active_credit_restores_active() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        // Properly mint to Active
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Active);
+        // Flag the Active credit
+        let vnonce2 = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "concern"), &vnonce2);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Flagged);
+        // Resolve as rejected — must restore to Active (was properly minted)
+        let admin_nonce = client.get_nonce(&admin);
+        client.resolve_flag(
+            &admin,
+            &id,
+            &crate::types::DisputeResolution::Rejected,
+            &admin_nonce,
+        );
+        assert_eq!(
+            client.get_credit(&id).status,
+            CreditStatus::Active,
+            "previously-Active credit should be restored to Active after false-positive flag"
+        );
+    }
+
+    // ── Regression tests for Issue #658: dispute stale pending indexes ────────
+
+    /// After dispute+resolve(Active), PendingCredits index is clean (no stale entry).
+    #[test]
+    fn test_dispute_pending_credit_clears_pending_index() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Pending);
+
+        // Dispute while Pending — indexes should be cleaned
+        let disputer = Address::generate(&env);
+        client.dispute_credit(
+            &disputer,
+            &id,
+            &String::from_str(&env, "evidence_hash"),
+        );
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Disputed);
+
+        // remove_verifier must not false-block now (no stale PendingCredits entry)
+        let nonce2 = client.get_nonce(&admin);
+        let result = client.try_remove_verifier(&admin, &verifier, &nonce2);
+        assert!(
+            result.is_ok(),
+            "remove_verifier should succeed after disputed credit cleared pending index"
+        );
+    }
+
+    /// After dispute+resolve(Active) on a Pending credit, status restores to Pending
+    /// (not Active with 0 approvals) so multi-sig can complete.
+    #[test]
+    fn test_resolve_dispute_pending_credit_returns_to_pending_not_active() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Dispute while Pending
+        let disputer = Address::generate(&env);
+        client.dispute_credit(
+            &disputer,
+            &id,
+            &String::from_str(&env, "evidence_hash"),
+        );
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Disputed);
+
+        // Resolve with outcome=0 ("restore") — credit had 0 approvals, so must go Pending
+        let admin_nonce = client.get_nonce(&admin);
+        client.resolve_dispute(&admin, &id, &0);
+        let status = client.get_credit(&id).status;
+        assert_eq!(
+            status,
+            CreditStatus::Pending,
+            "resolving dispute on a previously-Pending credit must restore Pending, not Active"
+        );
+    }
+
+    /// After dispute+resolve on an Active credit, status correctly restores to Active.
+    #[test]
+    fn test_resolve_dispute_active_credit_restores_active() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Mint to Active
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Active);
+
+        // Dispute the Active credit
+        let disputer = Address::generate(&env);
+        client.dispute_credit(
+            &disputer,
+            &id,
+            &String::from_str(&env, "evidence_hash"),
+        );
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Disputed);
+
+        // Resolve with outcome=0 — credit was Active when disputed, must restore to Active
+        let admin_nonce = client.get_nonce(&admin);
+        client.resolve_dispute(&admin, &id, &0);
+        assert_eq!(
+            client.get_credit(&id).status,
+            CreditStatus::Active,
+            "resolving dispute on a previously-Active credit should restore Active"
+        );
+    }
+
+    // ── Regression tests for Issue #659: dispute must not overwrite Flagged ──
+
+    /// dispute_credit must reject a Flagged credit (must go through resolve_flag first).
+    #[test]
+    fn test_dispute_credit_blocks_flagged() {
+        let (env, client, admin, verifier) = setup();
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+
+        // Mint to Active, then flag
+        let vnonce = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &id, &vnonce);
+        let vnonce2 = client.get_nonce(&verifier);
+        client.flag_credit(&verifier, &id, &String::from_str(&env, "anomaly"), &vnonce2);
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Flagged);
+
+        // Attempt to dispute the Flagged credit — must be rejected
+        let disputer = Address::generate(&env);
+        let result = client.try_dispute_credit(
+            &disputer,
+            &id,
+            &String::from_str(&env, "other_evidence"),
+        );
+        assert_eq!(
+            result,
+            Err(Ok(CarbonChainError::InvalidStatusTransition)),
+            "dispute_credit must not overwrite a Flagged credit"
+        );
+        // Status must remain Flagged, not silently become Disputed
+        assert_eq!(client.get_credit(&id).status, CreditStatus::Flagged);
     }
 }
