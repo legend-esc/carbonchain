@@ -14,13 +14,10 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 105 | `InvalidStatusTransition` | Requested status change is not allowed |
 | 106 | `VerifierAlreadyExists` | Verifier address is already registered |
 | 107 | `VerifierNotFound` | Verifier address is not registered |
-| 108 | `InsufficientBalance` | Account does not hold enough credits |
 | 109 | `Overflow` | Arithmetic overflow in credit calculation |
 | 110 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 |
-| 111 | `InvalidAdmin` | Proposed admin address is invalid |
 | 112 | `ContractPaused` | Contract is paused; state-mutating ops are blocked |
 | 113 | `IssuerNotAllowed` | Issuer is not on the approved list |
-| 114 | `InvalidMethodology` | Methodology string is not registered |
 | 115 | `InvalidNonce` | Replay-protection nonce does not match expected value |
 | 116 | `NoPendingAdmin` | No admin transfer is pending |
 | 117 | `InvalidSplit` | Fractional-credit split parameters are invalid |

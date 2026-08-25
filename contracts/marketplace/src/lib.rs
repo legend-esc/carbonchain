@@ -92,8 +92,6 @@ pub enum DataKey {
     SellerOffers(Address),
     Admin,
     Paused,
-    FeeBps,
-    FeeRecipient,
     EscrowedAmount(u64),
     Nonce(Address),
     MinPrice,
@@ -2172,5 +2170,358 @@ mod tests {
 
         // Offer should no longer appear in active list
         assert_eq!(client.list_active_offers(&0, &50).len(), 0);
+    }
+
+    // ── Issue #699: Additional coverage ─────────────────────────────────────
+
+    /// create_offer below min_price must return InvalidPrice.
+    #[test]
+    fn test_create_offer_below_min_price_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+
+        // Deploy registry & marketplace with min_price = 5_000_000
+        let registry = RegistryHelper::deploy(&env);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        registry.initialize(&admin, &retirement, 1);
+        let nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &verifier, nonce);
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "VCS"),
+            anonce2,
+        );
+        registry.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-001"),
+            &String::from_str(&env, "T"),
+            &String::from_str(&env, "D"),
+            &String::from_str(&env, "NG"),
+        );
+        let inonce = registry.get_nonce(&issuer);
+        let credit_id = registry.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            1_000_000,
+            &String::from_str(&env, "bafybei123"),
+            inonce,
+        );
+        let vnonce = registry.get_nonce(&verifier);
+        registry.approve_and_mint(&verifier, &credit_id, vnonce);
+
+        let marketplace_id = env.register(Marketplace, ());
+        let client = MarketplaceClient::new(&env, &marketplace_id);
+        client.initialize(&admin, &5_000_000); // min_price = 5_000_000
+
+        let seller = Address::generate(&env);
+        let tnonce = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &seller, &credit_id, tnonce);
+
+        let seller_nonce = client.get_nonce(&seller);
+        // Price of 1_000_000 is below the min of 5_000_000
+        assert_eq!(
+            client.try_create_offer(
+                &seller,
+                &credit_id,
+                &1_000_000,
+                &500_000,
+                &registry.id,
+                &None,
+                &seller_nonce,
+            ),
+            Err(Ok(MarketplaceError::InvalidPrice))
+        );
+    }
+
+    /// update_min_price then create_offer at exactly new min_price succeeds.
+    #[test]
+    fn test_update_min_price_then_create_at_new_min_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, admin, registry, credit_id) = setup_with_registry(&env);
+
+        // Raise min price to 20_000_000
+        client.update_min_price(&admin, &20_000_000);
+        assert_eq!(client.get_min_price(), 20_000_000);
+
+        // Offer at exactly 20_000_000 must succeed
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &20_000_000,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+        assert!(client.get_offer(&offer_id).active);
+    }
+
+    /// cleanup_expired_offers marks expired offers inactive and is admin-only.
+    #[test]
+    fn test_cleanup_expired_offers_marks_inactive() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, admin, registry, credit_id) = setup_with_registry(&env);
+
+        let now = env.ledger().timestamp();
+        let expires_at = now + 100;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &500_000,
+            &registry.id,
+            &Some(expires_at),
+            &seller_nonce,
+        );
+
+        // Offer is active before expiry
+        assert!(client.get_offer(&offer_id).active);
+
+        // Advance past expiry
+        env.ledger().set_timestamp(expires_at + 1);
+
+        // cleanup should mark it inactive
+        client.cleanup_expired_offers(&admin, &0, &10);
+
+        // Offer must now be inactive in storage
+        let offer = client.get_offer(&offer_id);
+        assert!(!offer.active);
+    }
+
+    /// cleanup_expired_offers rejects non-admin callers.
+    #[test]
+    fn test_cleanup_expired_offers_non_admin_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _seller, _admin, _registry, _credit_id) = setup_with_registry(&env);
+        let rando = Address::generate(&env);
+        assert!(client
+            .try_cleanup_expired_offers(&rando, &0, &10)
+            .is_err());
+    }
+
+    /// Native-token attack: passing a malicious address as token_id for a Native offer
+    /// must fail — the mock contract won't expose a valid `balance` that covers the price
+    /// unless we actually seed it.  A buyer with zero balance must get InsufficientFunds.
+    #[test]
+    fn test_buy_offer_native_token_zero_balance_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) = setup_with_token(&env);
+
+        let price = 10_000_000i128;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        // Buyer has zero balance (default from mock)
+        let attacker = Address::generate(&env);
+        // Do NOT call token.set_balance — balance stays at 0
+
+        let attacker_nonce = client.get_nonce(&attacker);
+        let result = client.try_buy_offer(
+            &attacker,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &attacker_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InsufficientFunds)));
+
+        // Offer must still be active and seller's credit must not have moved
+        assert!(client.get_offer(&offer_id).active);
+    }
+
+    /// create_offer_with_asset: listing with an explicit SAC token stores price_amount
+    /// and sets price_xlm to 0 (backward-compat marker for non-native offers).
+    #[test]
+    fn test_create_offer_with_asset_stores_price_amount() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) = setup_with_token(&env);
+
+        let price = 50_000_000i128;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer_with_asset(
+            &seller,
+            &credit_id,
+            &price,
+            &AssetType::Asset(token.address.clone()),
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        let offer = client.get_offer(&offer_id);
+        assert!(offer.active);
+        // For non-native offers price_xlm must be 0 (backward-compat)
+        assert_eq!(offer.price_xlm, 0);
+        // price_amount must hold the canonical price
+        assert_eq!(offer.price_amount, price);
+    }
+
+    /// buy_offer with SAC token: buyer pays with the SAC and receives the credit.
+    #[test]
+    fn test_buy_offer_with_sac_token_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) = setup_with_token(&env);
+
+        let price = 10_000_000i128;
+
+        // Create a SAC-priced offer
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer_with_asset(
+            &seller,
+            &credit_id,
+            &price,
+            &AssetType::Asset(token.address.clone()),
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        // Fund the buyer with the SAC token
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &price);
+
+        // Any address may be passed as token_id for SAC offers (it is ignored)
+        let dummy_token = Address::generate(&env);
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &dummy_token,
+            &buyer_nonce,
+        );
+        assert!(result.is_ok());
+
+        // Offer must be closed and credit transferred to buyer
+        assert!(!client.get_offer(&offer_id).active);
+        assert_eq!(registry.get_credit(&credit_id).owner, buyer);
+    }
+
+    /// Pagination with multiple active offers: page 0 and page 1 return correct slices.
+    #[test]
+    fn test_pagination_multiple_pages() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // We need multiple credits to create multiple offers simultaneously.
+        // Use the registry helper to create a second credit.
+        let registry = RegistryHelper::deploy(&env);
+        env.ledger().set_timestamp(1735689600);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        registry.initialize(&admin, &retirement, 1);
+        let nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &verifier, nonce);
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "VCS"),
+            anonce2,
+        );
+        registry.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-001"),
+            &String::from_str(&env, "T"),
+            &String::from_str(&env, "D"),
+            &String::from_str(&env, "NG"),
+        );
+        registry.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-002"),
+            &String::from_str(&env, "T2"),
+            &String::from_str(&env, "D2"),
+            &String::from_str(&env, "NG"),
+        );
+
+        // Issue two credits (one per project) and mint them
+        let inonce1 = registry.get_nonce(&issuer);
+        let cid1 = registry.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            1_000_000,
+            &String::from_str(&env, "ipfs1"),
+            inonce1,
+        );
+        let vnonce1 = registry.get_nonce(&verifier);
+        registry.approve_and_mint(&verifier, &cid1, vnonce1);
+
+        let inonce2 = registry.get_nonce(&issuer);
+        let cid2 = registry.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-002"),
+            2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            1_000_000,
+            &String::from_str(&env, "ipfs2"),
+            inonce2,
+        );
+        let vnonce2 = registry.get_nonce(&verifier);
+        registry.approve_and_mint(&verifier, &cid2, vnonce2);
+
+        // Two sellers — each gets one credit
+        let seller1 = Address::generate(&env);
+        let seller2 = Address::generate(&env);
+        let tnonce1 = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &seller1, &cid1, tnonce1);
+        let tnonce2 = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &seller2, &cid2, tnonce2);
+
+        let marketplace_id = env.register(Marketplace, ());
+        let client = MarketplaceClient::new(&env, &marketplace_id);
+        let mp_admin = Address::generate(&env);
+        client.initialize(&mp_admin, &0);
+
+        // Both sellers list their credits
+        let s1nonce = client.get_nonce(&seller1);
+        client.create_offer(&seller1, &cid1, &10_000_000, &500_000, &registry.id, &None, &s1nonce);
+        let s2nonce = client.get_nonce(&seller2);
+        client.create_offer(&seller2, &cid2, &10_000_000, &500_000, &registry.id, &None, &s2nonce);
+
+        // Page 0 with size 1 → one result
+        assert_eq!(client.list_active_offers(&0, &1).len(), 1);
+        // Page 1 with size 1 → one result (second offer)
+        assert_eq!(client.list_active_offers(&1, &1).len(), 1);
+        // Page 2 with size 1 → empty
+        assert_eq!(client.list_active_offers(&2, &1).len(), 0);
+        // Page 0 with size 2 → both
+        assert_eq!(client.list_active_offers(&0, &2).len(), 2);
     }
 }

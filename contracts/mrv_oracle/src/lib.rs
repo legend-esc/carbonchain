@@ -425,26 +425,41 @@ impl MrvOracle {
             // Cross-contract call to flag all credits in the project (best-effort)
             for i in 0..credits.len() {
                 let cid = credits.get(i).unwrap();
-                // Best-effort cross-contract call to flag credit in registry;
-                // swallow errors (oracle may not be a verifier on the registry)
+                // Fetch the oracle's current nonce from the registry so the
+                // flag_credit call uses a valid replay-protection nonce.
+                // If get_nonce fails (e.g. registry not reachable), skip.
+                let oracle_reg_nonce: Result<u64, _> = env.try_invoke_contract(
+                    &registry_id,
+                    &Symbol::new(&env, "get_nonce"),
+                    (oracle.clone(),).into_val(&env),
+                );
+                let registry_nonce = match oracle_reg_nonce {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
                 let flag_args: Vec<Val> = (
                     oracle.clone(),
                     cid.clone(),
                     String::from_str(&env, "MRV anomaly detected"),
-                    0u64,
+                    registry_nonce,
                 )
                     .into_val(&env);
-                let _ = env.try_invoke_contract::<Val, Val>(
+                let flag_result = env.try_invoke_contract::<Val, Val>(
                     &registry_id,
                     &Symbol::new(&env, "flag_credit"),
                     flag_args,
                 );
-                CreditFlagged {
-                    oracle: oracle.clone(),
-                    project_id: project_id.clone(),
-                    credit_id: cid,
+                // Only emit CreditFlagged when the registry call actually succeeded.
+                // Swallowing the error and emitting the event would give off-chain
+                // indexers a false signal that the credit was flagged.
+                if flag_result.is_ok() {
+                    CreditFlagged {
+                        oracle: oracle.clone(),
+                        project_id: project_id.clone(),
+                        credit_id: cid,
+                    }
+                    .publish(&env);
                 }
-                .publish(&env);
             }
         }
 
@@ -1391,5 +1406,146 @@ mod tests {
         assert!(client
             .try_set_project_anomaly_threshold(&admin, &proj, &10001u32, &nonce)
             .is_err());
+    }
+
+    // ── Issue #700: CreditFlagged truthfulness ───────────────────────────────
+
+    /// When the oracle is NOT a registered verifier on the registry the flag_credit
+    /// call will fail — CreditFlagged must NOT be emitted in that case.
+    #[test]
+    fn test_no_credit_flagged_event_when_flag_fails() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+
+        // First reading — no anomaly
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_000_000,
+            &env.ledger().timestamp(),
+            &registry_id,
+            &n1,
+        );
+
+        // Capture event count before the anomalous update
+        let events_before = env.events().all().events().len();
+
+        // Second reading: 50% deviation triggers anomaly
+        // The oracle address is NOT a verifier on the credit registry,
+        // so the cross-contract flag_credit call will fail.
+        let n2 = client.get_nonce(&oracle);
+        let anomaly = client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_500_000,
+            &env.ledger().timestamp(),
+            &registry_id,
+            &n2,
+        );
+        assert!(anomaly, "expected anomaly to be detected");
+
+        // Events emitted: MrvUpd + AnomalyDetected = 2
+        // CreditFlagged must NOT appear because flag_credit failed
+        let events_after = env.events().all().events().len();
+        assert_eq!(
+            events_after - events_before,
+            2,
+            "only MrvUpd and AnomalyDetected should be emitted; CreditFlagged must be absent when flag fails"
+        );
+    }
+
+    /// When the oracle IS a registered verifier on the registry the flag_credit call
+    /// succeeds and CreditFlagged IS emitted (MrvUpd + AnomalyDetected + CreditFlagged = 3).
+    #[test]
+    fn test_credit_flagged_event_emitted_when_flag_succeeds() {
+        let env = Env::default();
+        env.cost_estimate().budget().reset_unlimited();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+
+        let registry = carbonchain_credit_registry::test_helpers::RegistryHelper::deploy(&env);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        registry.initialize(&admin, &retirement, 1);
+
+        // Register the oracle as a verifier on the credit registry so flag_credit succeeds
+        let oracle = Address::generate(&env);
+        let reg_verifier_nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &oracle, reg_verifier_nonce);
+
+        let issuer = Address::generate(&env);
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "VCS"),
+            anonce2,
+        );
+        registry.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-FLAG"),
+            &String::from_str(&env, "Flag Project"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "NG"),
+        );
+        let inonce = registry.get_nonce(&issuer);
+        let credit_id = registry.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-FLAG"),
+            2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            1_000_000,
+            &String::from_str(&env, "bafybei789"),
+            inonce,
+        );
+        // Mint the credit (oracle is the verifier here)
+        let vnonce = registry.get_nonce(&oracle);
+        registry.approve_and_mint(&oracle, &credit_id, vnonce);
+
+        // Deploy and set up the MRV oracle
+        let oracle_id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &oracle_id);
+        client.initialize(&admin);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_oracle(&admin, &oracle, &reg_nonce);
+
+        let proj = String::from_str(&env, "PROJ-FLAG");
+
+        // First reading (no anomaly)
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_000_000,
+            &env.ledger().timestamp(),
+            &registry.id,
+            &n1,
+        );
+
+        let events_before = env.events().all().events().len();
+
+        // Anomalous second reading (50% jump)
+        let n2 = client.get_nonce(&oracle);
+        let anomaly = client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_500_000,
+            &env.ledger().timestamp(),
+            &registry.id,
+            &n2,
+        );
+        assert!(anomaly, "expected anomaly to be detected");
+
+        // Events: MrvUpd + AnomalyDetected + CreditFlagged (1 credit in project) = 3
+        let events_after = env.events().all().events().len();
+        assert_eq!(
+            events_after - events_before,
+            3,
+            "expected MrvUpd + AnomalyDetected + CreditFlagged when oracle is a verifier"
+        );
     }
 }
