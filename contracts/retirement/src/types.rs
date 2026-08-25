@@ -62,6 +62,8 @@ pub enum DataKey {
     Paused,
     Nonce(Address),
     PendingAdmin,
+    Registry,
+    Version,
 }
 
 /// A single failed retirement entry within a partial-success batch.

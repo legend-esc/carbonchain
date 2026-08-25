@@ -50,4 +50,10 @@ pub enum CarbonChainError {
     NoUnbondingRequest = 129,
     /// Returned when withdrawing stake before the 30-day unbonding period has elapsed.
     UnbondingNotReady = 130,
+    /// Returned when the supplied token_id does not match the admin-configured
+    /// approved stake token or the token previously deposited by this verifier.
+    InvalidStakeToken = 131,
+    /// Returned when the token transfer (transfer or transfer_from) fails during
+    /// deposit_stake or withdraw_stake (try_invoke_contract returned an error).
+    StakeTransferFailed = 132,
 }
