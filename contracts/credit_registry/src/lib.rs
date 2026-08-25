@@ -623,17 +623,21 @@ impl CreditRegistry {
             }
         }
 
-        // Include a per-contract nonce so two credits for the same project get distinct IDs.
+        // #681: use a namespaced nonce so submit IDs never collide with split/merge IDs
+        // for the same project_id.
         let credit_nonce: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::CreditNonce)
+            .get(&DataKey::SubmitCreditNonce)
             .unwrap_or(0u64);
         env.storage()
             .instance()
-            .set(&DataKey::CreditNonce, &(credit_nonce + 1));
+            .set(&DataKey::SubmitCreditNonce, &(credit_nonce + 1));
+        // Mix in the operation namespace tag so even the same nonce value in
+        // submit vs split vs merge produces a different hash.
         let mut preimage = project_id.clone().to_xdr(&env);
         preimage.append(&credit_nonce.to_xdr(&env));
+        preimage.append(&Symbol::new(&env, "submit").to_xdr(&env));
         let id: BytesN<32> = env.crypto().sha256(&preimage).into();
         let metadata = CreditMetadata {
             project_id: project_id.clone(),
@@ -970,29 +974,31 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidSplit);
         }
 
-        // Generate IDs for child credits
+        // #681: use SplitCreditNonce so split IDs never collide with submit/merge IDs.
         let nonce_val: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::CreditNonce)
+            .get(&DataKey::SplitCreditNonce)
             .unwrap_or(0u64);
         env.storage()
             .instance()
-            .set(&DataKey::CreditNonce, &(nonce_val + 1));
+            .set(&DataKey::SplitCreditNonce, &(nonce_val + 1));
         let mut preimage1 = credit_id.clone().to_xdr(&env);
         preimage1.append(&nonce_val.to_xdr(&env));
+        preimage1.append(&Symbol::new(&env, "split").to_xdr(&env));
         let child1_id: BytesN<32> = env.crypto().sha256(&preimage1).into();
 
         let nonce_val2: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::CreditNonce)
+            .get(&DataKey::SplitCreditNonce)
             .unwrap_or(0u64);
         env.storage()
             .instance()
-            .set(&DataKey::CreditNonce, &(nonce_val2 + 1));
+            .set(&DataKey::SplitCreditNonce, &(nonce_val2 + 1));
         let mut preimage2 = credit_id.clone().to_xdr(&env);
         preimage2.append(&nonce_val2.to_xdr(&env));
+        preimage2.append(&Symbol::new(&env, "split").to_xdr(&env));
         let child2_id: BytesN<32> = env.crypto().sha256(&preimage2).into();
 
         // Create child credits with same metadata
@@ -1520,16 +1526,18 @@ impl CreditRegistry {
                 .ok_or(CarbonChainError::Overflow)?;
         }
 
+        // #681: use MergeCreditNonce so merged IDs never collide with submit/split IDs.
         let nonce: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::CreditNonce)
+            .get(&DataKey::MergeCreditNonce)
             .unwrap_or(0u64);
         env.storage()
             .instance()
-            .set(&DataKey::CreditNonce, &(nonce + 1));
+            .set(&DataKey::MergeCreditNonce, &(nonce + 1));
         let mut preimage = project_id.clone().unwrap().to_xdr(&env);
         preimage.append(&nonce.to_xdr(&env));
+        preimage.append(&Symbol::new(&env, "merge").to_xdr(&env));
         let merged_id: BytesN<32> = env.crypto().sha256(&preimage).into();
 
         let merged_credit = CreditMetadata {
@@ -3633,6 +3641,107 @@ mod tests {
             after.contains(&child2),
             "child2 should be in owner index after split"
         );
+    }
+
+    // ── Issue #681: credit ID namespace — submit/split/merge never collide ───
+
+    #[test]
+    fn test_credit_id_no_collision_across_submit_split_merge() {
+        // Generate several IDs via each operation type and assert all are distinct.
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        init(&client, &admin, &retirement, 1);
+
+        // Register verifier
+        let anonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &anonce);
+
+        let issuer = Address::generate(&env);
+        let anonce2 = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &anonce2);
+        let anonce3 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &anonce3,
+        );
+        client.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-COL"),
+            &String::from_str(&env, "Collision Test Project"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "NG"),
+        );
+
+        let mut all_ids: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
+
+        // --- submit two credits (different vintage years) ---
+        let in1 = client.get_nonce(&issuer);
+        let sub1 = client.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-COL"),
+            &2020,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "ipfs1"),
+            &in1,
+        );
+        all_ids.push_back(sub1.clone());
+
+        let in2 = client.get_nonce(&issuer);
+        let sub2 = client.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-COL"),
+            &2021,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            &1_000_000,
+            &String::from_str(&env, "ipfs2"),
+            &in2,
+        );
+        all_ids.push_back(sub2.clone());
+
+        // --- split sub1 → two children ---
+        let vn1 = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &sub1, &vn1);
+        let sn1 = client.get_nonce(&issuer);
+        let (child1, child2) = client.split_credit(&issuer, &sub1, &500_000, &sn1);
+        all_ids.push_back(child1.clone());
+        all_ids.push_back(child2.clone());
+
+        // --- merge child1 + child2 → merged ---
+        let merged = client.merge_credits(&issuer, &soroban_sdk::vec![&env, child1, child2]);
+        all_ids.push_back(merged.clone());
+
+        // --- split sub2 → two more children ---
+        let vn2 = client.get_nonce(&verifier);
+        client.approve_and_mint(&verifier, &sub2, &vn2);
+        let sn2 = client.get_nonce(&issuer);
+        let (child3, child4) = client.split_credit(&issuer, &sub2, &500_000, &sn2);
+        all_ids.push_back(child3);
+        all_ids.push_back(child4);
+
+        // Assert all IDs are distinct (no collisions)
+        let total = all_ids.len();
+        for i in 0..total {
+            for j in (i + 1)..total {
+                assert_ne!(
+                    all_ids.get(i).unwrap(),
+                    all_ids.get(j).unwrap(),
+                    "credit ID collision detected between index {} and {}",
+                    i,
+                    j
+                );
+            }
+        }
     }
 
     #[test]

@@ -116,7 +116,15 @@ pub enum DataKey {
     CreditByProjectVintage(String, u32),
     Project(String),
     RetirementContract,
+    /// Credit ID nonce shared by the old (pre-#681) code path.
+    /// Kept for storage-format compatibility; new code uses the namespaced variants below.
     CreditNonce,
+    /// #681 — Namespaced nonce for submit_credit to prevent ID collisions with split/merge.
+    SubmitCreditNonce,
+    /// #681 — Namespaced nonce for split_credit child ID generation.
+    SplitCreditNonce,
+    /// #681 — Namespaced nonce for merge_credits merged ID generation.
+    MergeCreditNonce,
     Paused,
     IssuerSet,
     MethodologySet,
