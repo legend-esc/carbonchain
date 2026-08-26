@@ -1,42 +1,40 @@
-# Dependencies
+# ── Node / JavaScript ─────────────────────────────────────────────────────────
 node_modules/
-target/
 dist/
 .angular/
 .nest/
 
-# Environment
+# Package managers
+.npm/
+.yarn/
+yarn.lock
+pnpm-lock.yaml
+
+# ── Rust / Soroban ────────────────────────────────────────────────────────────
+target/
+Cargo.lock
+
+# Compiled Soroban WASM output
+*.wasm
+
+# Soroban CLI state and deployment artefacts
+.soroban/
+contract-ids.testnet.json
+scripts/contract-ids.testnet.json
+
+# Soroban test snapshots (auto-generated, not source — never commit these)
+test_snapshots/
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
 .env
 .env.*
 !.env.example
+
+# Angular environment files (generated from .example)
 frontend/src/environments/environment.ts
 frontend/src/environments/environment.prod.ts
 
-# OS
-.DS_Store
-Thumbs.db
-*.DS_Store
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-
-# Soroban
-.soroban/
-contract-ids.testnet.json
-
-# Temporary
-tmp/
-logs/
-*.log
-
-# Test artifacts
+# ── Test Artifacts ────────────────────────────────────────────────────────────
 coverage/
 __snapshots__/
 *.snap
@@ -45,24 +43,31 @@ test-results/
 .nyc_output/
 lcov.info
 *.lcov
-# Soroban test snapshots (auto-generated, not source)
-test_snapshots/
 
-# Build artifacts
+# ── Build Artifacts ───────────────────────────────────────────────────────────
+build/
 *.js.map
 *.d.ts.map
-build/
-# Rust/Soroban compiled output
-*.wasm
-Cargo.lock
 
-# Package manager
-.npm/
-.yarn/
-yarn.lock
-pnpm-lock.yaml
-
-# Debug
+# ── Logs & Temporary Files ────────────────────────────────────────────────────
+tmp/
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.DS_Store
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
