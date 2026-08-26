@@ -6,12 +6,18 @@ import {
   Body,
   Query,
   UseGuards,
+  UseInterceptors,
   DefaultValuePipe,
   ParseIntPipe,
   Request,
+  UsePipes,
+  ValidationPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
+import { ETagCacheInterceptor } from './etag-cache.interceptor';
 import { IssueCreditDto } from './dto/issue-credit.dto';
 import { TransferCreditDto } from './dto/transfer-credit.dto';
 import { SplitCreditDto } from './dto/split-credit.dto';
@@ -21,7 +27,9 @@ import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { MergeCreditsDto } from './dto/merge-credits.dto';
 import { CreditMetadata, CreditStatus } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { PageResult } from './credit.repository';
+import { PageResult, CursorPageResult } from './credit.repository';
+import { BulkCreditsDto } from './dto/bulk-credits.dto';
+import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
 
 @ApiTags('credits')
 @Controller('credits')
@@ -39,15 +47,18 @@ export class CreditsController {
 
   @ApiOperation({ summary: 'Bulk fetch credits by IDs' })
   @ApiResponse({ status: 200, description: 'Returns credit metadata array' })
+  @UseReplicaForRead()
   @Post('bulk')
-  async getBulkCredits(
-    @Body() dto: { ids: string[] },
-  ): Promise<CreditMetadata[]> {
+  @UsePipes(
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false }),
+  )
+  async getBulkCredits(@Body() dto: BulkCreditsDto): Promise<CreditMetadata[]> {
     return this.creditsService.getBulkCredits(dto.ids);
   }
 
   @ApiOperation({ summary: 'List credits with optional filters' })
   @ApiResponse({ status: 200, description: 'Paginated list of credits' })
+  @UseReplicaForRead()
   @Get()
   async listCredits(
     @Query('methodology') methodology?: string,
@@ -56,14 +67,41 @@ export class CreditsController {
     @Query('status') status?: string,
     @Query('min_tonnes') minTonnes?: string,
     @Query('max_tonnes') maxTonnes?: string,
+    @Query('cursor') cursor?: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10',
-  ): Promise<{
-    data: CreditMetadata[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
+    @Query('limit') limit: string = '20',
+  ): Promise<
+    | {
+        data: CreditMetadata[];
+        total: number;
+        page: number;
+        limit: number;
+      }
+    | {
+        data: CreditMetadata[];
+        next_cursor: string | null;
+        limit: number;
+        /** Signals to callers that offset pagination is deprecated. */
+        pagination_mode: 'cursor';
+      }
+  > {
+    const parsedLimit = parseInt(limit, 10);
+
+    // Cursor-based path (preferred — O(1) at any depth)
+    if (cursor !== undefined) {
+      return this.creditsService.listCreditsCursor({
+        methodology,
+        geography,
+        vintageYear: vintageYear ? parseInt(vintageYear, 10) : undefined,
+        status,
+        minTonnes,
+        maxTonnes,
+        cursor,
+        limit: parsedLimit,
+      });
+    }
+
+    // Offset-based path (deprecated — emits warning header via service layer)
     return this.creditsService.listCredits({
       methodology,
       geography,
@@ -72,13 +110,26 @@ export class CreditsController {
       minTonnes,
       maxTonnes,
       page: parseInt(page, 10),
-      limit: parseInt(limit, 10),
+      limit: parsedLimit,
     });
+  }
+
+  // Issue #541: declared before `:id` so NestJS routes /credits/count here
+  // rather than treating "count" as a credit ID.
+  @ApiOperation({ summary: 'Get total number of credits ever issued' })
+  @ApiResponse({ status: 200, description: 'Total credit count' })
+  @Get('count')
+  async getCreditCount(): Promise<{ count: number }> {
+    const count = await this.creditsService.getCreditCount();
+    return { count };
   }
 
   @ApiOperation({ summary: 'Get credit by ID' })
   @ApiResponse({ status: 200, description: 'Credit metadata' })
+  @ApiResponse({ status: 304, description: 'Not Modified (ETag match)' })
   @ApiResponse({ status: 404, description: 'Credit not found' })
+  @UseInterceptors(ETagCacheInterceptor)
+  @UseReplicaForRead()
   @Get(':id')
   async getCredit(@Param('id') id: string): Promise<CreditMetadata> {
     return this.creditsService.getCredit(id);
@@ -104,6 +155,7 @@ export class CreditsController {
   }
 
   @ApiOperation({ summary: 'List credits by project' })
+  @UseReplicaForRead()
   @Get('project/:projectId')
   async listByProject(
     @Param('projectId') projectId: string,
@@ -111,6 +163,20 @@ export class CreditsController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) _limit: number,
   ): Promise<string[]> {
     return this.creditsService.listCreditsByProject(projectId);
+  }
+
+  @ApiOperation({
+    summary: 'List credits by owner (paginated)',
+    description:
+      'Contract-side pagination via get_credits_by_owner_paginated — avoids fetching the full owner credit list to serve one page.',
+  })
+  @Get('owner/:owner')
+  async listByOwner(
+    @Param('owner') owner: string,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ): Promise<{ data: string[]; offset: number; limit: number }> {
+    return this.creditsService.listCreditsByOwner(owner, offset, limit);
   }
 
   @ApiOperation({ summary: 'Transfer a credit to another address' })

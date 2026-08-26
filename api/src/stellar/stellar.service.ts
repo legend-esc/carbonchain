@@ -1,5 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Optional,
+  Inject,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Account,
@@ -15,6 +20,12 @@ import {
 } from '@stellar/stellar-sdk';
 import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RequestContextStore } from '../common/request-context';
+import {
+  METRICS_EVENT_EMITTER,
+  CONTRACT_INVOCATION_COMPLETED,
+} from '../metrics/metrics-events';
+import type { ContractInvocationCompletedEvent } from '../metrics/metrics-events';
+import type { EventEmitter } from 'events';
 
 /**
  * Default fee-buffer multiplier applied on top of the simulated minResourceFee.
@@ -58,6 +69,9 @@ export class StellarService implements OnModuleInit {
   constructor(
     private configService: ConfigService,
     private seqNoManager: SequenceNumberManager,
+    @Optional()
+    @Inject(METRICS_EVENT_EMITTER)
+    private readonly metricsEmitter?: EventEmitter,
   ) {
     const rawMultiplier = configService.get<string>('FEE_BUFFER_MULTIPLIER');
     const parsed =
@@ -99,14 +113,15 @@ export class StellarService implements OnModuleInit {
   }
 
   private async getNextSequenceNumber(publicKey: string): Promise<number> {
-    const cached = this.seqNoManager.getNextSequenceNumber(publicKey);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const account = await this.horizonServer.loadAccount(publicKey);
-    const seq = Number(account.sequenceNumber);
-    this.seqNoManager.cacheSequenceNumber(publicKey, seq);
-    return this.seqNoManager.getNextSequenceNumber(publicKey)!;
+    // Issue #510: use the per-account promise queue so concurrent callers for
+    // the same account never receive the same sequence number.
+    return this.seqNoManager.getNextSequenceNumberAtomic(
+      publicKey,
+      async () => {
+        const account = await this.horizonServer.loadAccount(publicKey);
+        return Number(account.sequenceNumber);
+      },
+    );
   }
 
   /**
@@ -124,7 +139,10 @@ export class StellarService implements OnModuleInit {
       const baseFee =
         parseInt(feeStats.fee_charged?.p50 ?? String(FALLBACK_BASE_FEE), 10) ||
         FALLBACK_BASE_FEE;
-      this.baseFeeCache = { value: baseFee, expiresAt: now + BASE_FEE_CACHE_TTL_MS };
+      this.baseFeeCache = {
+        value: baseFee,
+        expiresAt: now + BASE_FEE_CACHE_TTL_MS,
+      };
       return baseFee;
     } catch (err) {
       this.logger.warn(
@@ -156,12 +174,60 @@ export class StellarService implements OnModuleInit {
     return String(Math.max(withBuffer, FALLBACK_BASE_FEE));
   }
 
+  /**
+   * Extract the SorobanTransactionData (resource fee footprint) from a built
+   * transaction, or undefined when the envelope carries no Soroban ext.
+   */
+  private extractSorobanData(
+    tx: Transaction,
+  ): xdr.SorobanTransactionData | undefined {
+    const ext = tx.toEnvelope().v1().tx().ext();
+    return ext.switch() === 1 ? ext.sorobanData() : undefined;
+  }
+
   async invokeContract(
     contractId: string,
     method: string,
     args: xdr.ScVal[] = [],
     signerKeypair: Keypair,
     retries = 1,
+  ): Promise<rpc.Api.GetTransactionResponse> {
+    const startTime = Date.now();
+
+    try {
+      return await this.invokeContractImpl(
+        contractId,
+        method,
+        args,
+        signerKeypair,
+        retries,
+        startTime,
+      );
+    } catch (error: unknown) {
+      // Emit failure event for any unhandled error (simulation failure,
+      // max fee bump retries, unexpected errors, etc.).
+      this.metricsEmitter?.emit(CONTRACT_INVOCATION_COMPLETED, {
+        contract: contractId,
+        method,
+        status: 'failure',
+        durationMs: Date.now() - startTime,
+      } satisfies ContractInvocationCompletedEvent);
+      throw error;
+    }
+  }
+
+  /**
+   * Core implementation of invokeContract, extracted so the public method
+   * can wrap it with timing and failure-event emission without interfering
+   * with the recursive bad-seq retry path.
+   */
+  private async invokeContractImpl(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[] = [],
+    signerKeypair: Keypair,
+    retries = 1,
+    startTime: number,
   ): Promise<rpc.Api.GetTransactionResponse> {
     const pk = signerKeypair.publicKey();
     const seq = await this.getNextSequenceNumber(pk);
@@ -193,7 +259,10 @@ export class StellarService implements OnModuleInit {
     if (rpc.Api.isSimulationSuccess(simulation)) {
       // assembleTransaction sets the resource fee from the simulation.
       // We then override the fee field on the built transaction to apply our buffer.
-      const assembledBuilder = rpc.assembleTransaction(tx, simulation);
+      // This SDK version has no TransactionBuilder.setBaseFee, so we rebuild the
+      // assembled transaction via cloneFrom, preserving the sorobanData (and thus
+      // the resource fee) from the assembled envelope.
+      const assembledTx = rpc.assembleTransaction(tx, simulation).build();
 
       // Compute the final fee with buffer AFTER assembly so it accounts for
       // the simulation's minResourceFee recommendation.
@@ -201,7 +270,10 @@ export class StellarService implements OnModuleInit {
 
       // Build the transaction; assembleTransaction already set resourceFee
       // internally — we apply our fee as the base fee override.
-      const preparedTx = assembledBuilder.setBaseFee(fee).build();
+      const preparedTx = TransactionBuilder.cloneFrom(assembledTx, {
+        fee,
+        sorobanData: this.extractSorobanData(assembledTx),
+      }).build();
       preparedTx.sign(signerKeypair);
 
       this.logger.debug(
@@ -211,47 +283,118 @@ export class StellarService implements OnModuleInit {
         `Full XDR for method=${method}: ${preparedTx.toEnvelope().toXDR('base64')}`,
       );
 
-      try {
-        const response = await this.submitTransactionWithRetry(() =>
-          this.sorobanRpcServer.sendTransaction(preparedTx),
-        );
+      // Issue #546 — insufficient-fee retry loop.
+      // If the submission is rejected for tx_insufficient_fee, rebuild with
+      // 2× the fee and resubmit.  We allow up to 3 fee-bump retries before
+      // giving up.  Each attempt logs the fee paid so operators can diagnose
+      // sustained fee pressure.
+      const MAX_FEE_BUMP_RETRIES = 3;
+      let currentFee = parseInt(fee, 10);
+      let currentTx = preparedTx;
 
-        if ((response.status as string) === 'PENDING') {
-          const result = await this.pollTransactionStatus(response.hash);
-          this.invalidateAccountInfoCache(pk);
-          return result;
-        }
-        throw new Error(`Transaction failed with status: ${response.status}`);
-      } catch (error: unknown) {
-        const isBadSeq =
-          (error as Error).message?.toLowerCase().includes('tx_bad_seq') ||
-          (
-            error as {
-              response?: {
-                data?: { extras?: { result_codes?: { transaction?: string } } };
-              };
-            }
-          )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
+      for (
+        let feeAttempt = 0;
+        feeAttempt <= MAX_FEE_BUMP_RETRIES;
+        feeAttempt++
+      ) {
+        try {
+          const response = await this.submitTransactionWithRetry(() =>
+            this.sorobanRpcServer.sendTransaction(currentTx),
+          );
 
-        if (isBadSeq && retries > 0) {
-          this.logger.warn(
-            `tx_bad_seq for ${pk} (sig:${method}), waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
-          );
-          this.seqNoManager.reset(pk);
-          // Issue #473: mandatory delay before re-fetching to allow Horizon to catch up.
-          await new Promise((resolve) =>
-            setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
-          );
-          return this.invokeContract(
-            contractId,
-            method,
-            args,
-            signerKeypair,
-            retries - 1,
-          );
+          if ((response.status as string) === 'PENDING') {
+            const result = await this.pollTransactionStatus(response.hash);
+            this.invalidateAccountInfoCache(pk);
+
+            // Issue #495 — emit success event (replaces direct MetricsService call).
+            this.metricsEmitter?.emit(CONTRACT_INVOCATION_COMPLETED, {
+              contract: contractId,
+              method,
+              status: 'success',
+              durationMs: Date.now() - startTime,
+              feeStroops: currentFee,
+            } satisfies ContractInvocationCompletedEvent);
+            this.logger.log(
+              `[issue#546] Contract call fee paid: method=${method} fee_stroops=${currentFee}`,
+            );
+
+            return result;
+          }
+          throw new Error(`Transaction failed with status: ${response.status}`);
+        } catch (error: unknown) {
+          const errMsg = (error as Error).message?.toLowerCase() ?? '';
+
+          // Detect insufficient-fee rejection
+          const isInsufficientFee =
+            errMsg.includes('tx_insufficient_fee') ||
+            errMsg.includes('insufficient fee') ||
+            (
+              error as {
+                response?: {
+                  data?: {
+                    extras?: { result_codes?: { transaction?: string } };
+                  };
+                };
+              }
+            )?.response?.data?.extras?.result_codes?.transaction ===
+              'tx_insufficient_fee';
+
+          if (isInsufficientFee && feeAttempt < MAX_FEE_BUMP_RETRIES) {
+            currentFee = currentFee * 2;
+            this.logger.warn(
+              `[issue#546] tx_insufficient_fee for method=${method} (attempt ${feeAttempt + 1}/${MAX_FEE_BUMP_RETRIES}), bumping fee to ${currentFee} stroops`,
+            );
+
+            // Rebuild the transaction with the bumped fee against the same
+            // account sequence number (already incremented — reuse).
+            currentTx = TransactionBuilder.cloneFrom(currentTx, {
+              fee: String(currentFee),
+              sorobanData: this.extractSorobanData(currentTx),
+            }).build();
+            currentTx.sign(signerKeypair);
+            continue;
+          }
+
+          // Not an insufficient-fee error, or retries exhausted — fall through
+          // to the existing bad-seq retry logic.
+          const isBadSeq =
+            errMsg.includes('tx_bad_seq') ||
+            (
+              error as {
+                response?: {
+                  data?: {
+                    extras?: { result_codes?: { transaction?: string } };
+                  };
+                };
+              }
+            )?.response?.data?.extras?.result_codes?.transaction ===
+              'tx_bad_seq';
+
+          if (isBadSeq && retries > 0) {
+            this.logger.warn(
+              `tx_bad_seq for ${pk} (sig:${method}), waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
+            );
+            this.seqNoManager.reset(pk);
+            await new Promise((resolve) =>
+              setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
+            );
+            return this.invokeContractImpl(
+              contractId,
+              method,
+              args,
+              signerKeypair,
+              retries - 1,
+              startTime,
+            );
+          }
+          throw error;
         }
-        throw error;
       }
+
+      // Should be unreachable — the loop either returns or throws.
+      throw new Error(
+        `Max fee bump retries (${MAX_FEE_BUMP_RETRIES}) exceeded for method=${method}`,
+      );
     } else {
       throw new Error(`Simulation failed: ${JSON.stringify(simulation)}`);
     }
@@ -268,9 +411,7 @@ export class StellarService implements OnModuleInit {
 
     // Issue #472: Fetch the Horizon network base fee with a 60s TTL cache.
     const baseFee = await this.getHorizonBaseFee();
-    const feeWithBuffer = String(
-      Math.ceil(baseFee * this.feeBufferMultiplier),
-    );
+    const feeWithBuffer = String(Math.ceil(baseFee * this.feeBufferMultiplier));
 
     const txBuilder = new TransactionBuilder(account, {
       fee: feeWithBuffer,

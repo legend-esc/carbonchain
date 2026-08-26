@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { RetirementRecord } from '@shared';
-import { ApiService } from '../core/services/api.service';
+import { ApiService, CertificateVerification } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 
 @Component({
@@ -33,10 +33,37 @@ import { AuthService } from '../core/services/auth.service';
           <dd>{{ record()!.retired_at | date: 'medium' }}</dd>
           <dt>Transaction</dt>
           <dd class="mono">{{ record()!.tx_hash }}</dd>
+          @if (record()!.certificate_ipfs_hash) {
+            <dt>Certificate IPFS</dt>
+            <dd class="mono">{{ record()!.certificate_ipfs_hash }}</dd>
+          }
         </dl>
-        <button [disabled]="downloading()" (click)="download()">
-          {{ downloading() ? 'Downloading…' : 'Download Certificate (PDF)' }}
-        </button>
+
+        <!-- Issue #544: on-chain certificate verification -->
+        @if (verification()) {
+          <div class="verify-result" [class.verified]="verification()!.verified">
+            @if (verification()!.verified) {
+              <span class="icon">✔</span> Certificate verified on-chain
+              @if (verification()!.certificate_ipfs_hash) {
+                — IPFS:&nbsp;<span class="mono">{{ verification()!.certificate_ipfs_hash }}</span>
+              }
+            } @else {
+              <span class="icon">✘</span> Verification failed — hash mismatch
+            }
+          </div>
+        }
+        @if (verifyError()) {
+          <p class="error">{{ verifyError() }}</p>
+        }
+
+        <div class="actions">
+          <button [disabled]="downloading()" (click)="download()">
+            {{ downloading() ? 'Downloading…' : 'Download Certificate (PDF)' }}
+          </button>
+          <button [disabled]="verifying()" (click)="verifyCertificate()" class="verify-btn">
+            {{ verifying() ? 'Verifying…' : 'Verify Certificate' }}
+          </button>
+        </div>
       }
     </main>
   `,
@@ -62,6 +89,11 @@ import { AuthService } from '../core/services/auth.service';
         font-size: 0.85rem;
         word-break: break-all;
       }
+      .actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
       button {
         padding: 0.5rem 1.25rem;
         background: #4caf50;
@@ -74,8 +106,26 @@ import { AuthService } from '../core/services/auth.service';
         opacity: 0.6;
         cursor: not-allowed;
       }
+      .verify-btn {
+        background: #1976d2;
+      }
       .error {
         color: #e53935;
+      }
+      .verify-result {
+        margin-bottom: 1rem;
+        padding: 0.6rem 1rem;
+        border-radius: 6px;
+        background: #ffebee;
+        color: #c62828;
+      }
+      .verify-result.verified {
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+      .icon {
+        font-weight: bold;
+        margin-right: 0.25rem;
       }
     `,
   ],
@@ -88,7 +138,10 @@ export class CertificatesComponent implements OnInit {
   readonly record = signal<RetirementRecord | null>(null);
   readonly loading = signal(true);
   readonly downloading = signal(false);
+  readonly verifying = signal(false);
   readonly error = signal<string | null>(null);
+  readonly verifyError = signal<string | null>(null);
+  readonly verification = signal<CertificateVerification | null>(null);
 
   readonly tonnesDisplay = () => {
     const r = this.record();
@@ -122,6 +175,29 @@ export class CertificatesComponent implements OnInit {
       this.error.set('Download failed.');
     } finally {
       this.downloading.set(false);
+    }
+  }
+
+  /**
+   * Issue #544 — Verify Certificate button.
+   *
+   * Calls GET /certificates/:id/verify which fetches the IPFS hash stored
+   * on-chain via the Soroban retirement contract and returns it alongside
+   * the verified flag.  The UI shows the on-chain CID so the user can
+   * independently confirm the PDF content matches what was committed.
+   */
+  async verifyCertificate(): Promise<void> {
+    const id = this.record()!.id;
+    this.verifying.set(true);
+    this.verifyError.set(null);
+    this.verification.set(null);
+    try {
+      const result = await firstValueFrom(this.api.verifyCertificate(id));
+      this.verification.set(result);
+    } catch {
+      this.verifyError.set('Verification failed — could not reach the API.');
+    } finally {
+      this.verifying.set(false);
     }
   }
 }

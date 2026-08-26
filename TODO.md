@@ -5,12 +5,11 @@
   - [x] Horizon XLM balance fetch
   - [x] balance state signals
   - [x] polling start/stop at 30s while connected
-- [ ] Update `frontend/src/app/core/components/connect-wallet.component.ts` with:
-  - [ ] Display abbreviated address + formatted XLM balance
-  - [ ] Start polling when authenticated/connected
-  - [ ] Stop polling on logout/disconnect
+- [x] Update `frontend/src/app/core/components/connect-wallet.component.ts` with:
+  - [x] Display abbreviated address + formatted XLM balance
+  - [x] Start polling when authenticated/connected
+  - [x] Stop polling on logout/disconnect
 
-- [ ] Sanity checks:
-  - [ ] Typecheck/build
-  - [ ] Verify no regressions in existing wallet UI
-
+- [x] Sanity checks:
+  - [x] Typecheck/build
+  - [x] Verify no regressions in existing wallet UI

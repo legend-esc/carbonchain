@@ -14,13 +14,10 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 105 | `InvalidStatusTransition` | Requested status change is not allowed |
 | 106 | `VerifierAlreadyExists` | Verifier address is already registered |
 | 107 | `VerifierNotFound` | Verifier address is not registered |
-| 108 | `InsufficientBalance` | Account does not hold enough credits |
 | 109 | `Overflow` | Arithmetic overflow in credit calculation |
 | 110 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 |
-| 111 | `InvalidAdmin` | Proposed admin address is invalid |
 | 112 | `ContractPaused` | Contract is paused; state-mutating ops are blocked |
 | 113 | `IssuerNotAllowed` | Issuer is not on the approved list |
-| 114 | `InvalidMethodology` | Methodology string is not registered |
 | 115 | `InvalidNonce` | Replay-protection nonce does not match expected value |
 | 116 | `NoPendingAdmin` | No admin transfer is pending |
 | 117 | `InvalidSplit` | Fractional-credit split parameters are invalid |
@@ -47,18 +44,24 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 117 | `InvalidTonnes` | `tonnes` is zero or negative |
 | 118 | `InvalidInput` | Input vectors have mismatched lengths or batch exceeds `MAX_BATCH_SIZE` (20) |
 
-## Marketplace (115–125)
+## Marketplace (300–313)
 
 | Code | Name | Description |
 |------|------|-------------|
-| 115 | `OfferNotFound` | Offer ID does not exist |
-| 116 | `Unauthorized` | Caller is not the offer owner or admin |
-| 117 | `InvalidPrice` | Offer price is zero or negative |
-| 118 | `AlreadyClosed` | Offer has already been closed or filled |
-| 119 | `CreditNotActive` | Credit linked to the offer is not active |
-| 120 | `NotInitialized` | Contract has not been initialized |
-| 121 | `ContractPaused` | Contract is paused |
-| 125 | `InvalidTonnes` | `tonnes` is zero or negative |
+| 300 | `OfferNotFound` | Offer ID does not exist |
+| 301 | `Unauthorized` | Caller is not the offer owner or admin |
+| 302 | `InvalidPrice` | Offer price is zero, negative, or below the minimum |
+| 303 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 |
+| 304 | `AlreadyClosed` | Offer has already been closed or filled |
+| 305 | `CreditNotActive` | Credit linked to the offer is not active |
+| 306 | `NotInitialized` | Contract has not been initialized |
+| 307 | `ContractPaused` | Contract is paused |
+| 308 | `InvalidNonce` | Replay-protection nonce mismatch |
+| 309 | `OfferExpired` | Offer has passed its expiry timestamp |
+| 310 | `Overflow` | Arithmetic overflow detected |
+| 311 | `AlreadyInitialized` | Contract has already been initialized |
+| 312 | `InsufficientFunds` | Buyer does not hold enough of the payment asset |
+| 313 | `EscrowFailed` | Escrow transfer succeeded but offer record failed to persist |
 
 ## MRV Oracle (119–129)
 
@@ -81,3 +84,4 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 - Error codes are **stable** — they will not change across contract upgrades.
 - All `tonnes` values use scaled units: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (0.1 tonne).
 - `InvalidInput` (retirement code 118) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
+- Code 126 (`InvalidProject`) is reserved for MRV Oracle; Marketplace `AlreadyInitialized` was reassigned to 130 to avoid collision.

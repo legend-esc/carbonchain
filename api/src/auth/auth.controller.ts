@@ -6,12 +6,19 @@ import {
   Query,
   UseGuards,
   Request,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthTokenDto } from './dto/auth-token.dto';
-import { Throttle, ThrottlerGuard } from '../common/throttler.guard';
+import {
+  Throttle,
+  ThrottlerGuard,
+  AccountThrottle,
+} from '../common/throttler.guard';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -29,12 +36,53 @@ export class AuthController {
     return this.authService.generateChallenge(account);
   }
 
-  @ApiOperation({ summary: 'Verify signed challenge and receive JWT' })
+  /**
+   * POST /auth/token — original SEP-10 verify endpoint (kept for backward compatibility).
+   */
+  @ApiOperation({ summary: 'Verify signed challenge and receive JWT (legacy)' })
+  @UseGuards(ThrottlerGuard)
+  @AccountThrottle({ accountLimit: 10, ipLimit: 50, ttl: 300_000 })
   @Post('token')
   async getToken(
     @Body() body: AuthTokenDto,
   ): Promise<{ access_token: string }> {
     return this.authService.verifyAndIssueToken(body.transaction);
+  }
+
+  /**
+   * POST /auth/verify — SEP-10 verify endpoint (issue #492 alias).
+   * Rate-limited per Stellar account (10 attempts per 5-minute window)
+   * AND per IP (50 attempts per 5-minute window).
+   */
+  @ApiOperation({ summary: 'Verify signed challenge and receive JWT' })
+  @UseGuards(ThrottlerGuard)
+  @AccountThrottle({ accountLimit: 10, ipLimit: 50, ttl: 300_000 })
+  @Post('verify')
+  async verify(@Body() body: AuthTokenDto): Promise<{ access_token: string }> {
+    return this.authService.verifyAndIssueToken(body.transaction);
+  }
+
+  /**
+   * POST /auth/logout — issue #491.
+   * Invalidates the JWT by storing its jti in the Redis blocklist.
+   */
+  @ApiOperation({ summary: 'Invalidate JWT (logout)' })
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  async logout(
+    @Request()
+    req: {
+      user: { account: string };
+      headers: { authorization?: string };
+    },
+  ): Promise<{ message: string }> {
+    const authHeader = req.headers.authorization ?? '';
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : authHeader;
+    await this.authService.logout(token);
+    return { message: 'Logged out successfully' };
   }
 
   @ApiOperation({ summary: 'Get authenticated account info' })

@@ -38,6 +38,8 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           <thead>
             <tr>
               <th scope="col">Address</th>
+              <th scope="col">Approvals</th>
+              <th scope="col">Disputes</th>
               <th scope="col">Actions</th>
             </tr>
           </thead>
@@ -45,6 +47,8 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
             @for (v of verifiers(); track v.address) {
               <tr class="verifier-row">
                 <td class="mono" [title]="v.address">{{ v.address }}</td>
+                <td>{{ v.reputation?.approvalCount ?? '—' }}</td>
+                <td>{{ v.reputation?.disputeCount ?? '—' }}</td>
                 <td class="actions-cell">
                   <button class="btn btn-sm btn-secondary" (click)="openConfigure(v.address)">
                     Configure

@@ -52,13 +52,38 @@ export interface RetirementRecord {
   reason: string;
   retired_at: number;
   tx_hash: string;
+  /** Issue #544 — IPFS hash of the retirement certificate PDF. Empty for legacy records. */
+  certificate_ipfs_hash?: string;
+  /** Issue #589 — vintage year of the credit (e.g. 2024). Absent for legacy records. */
+  vintage_year?: number;
 }
 
 export interface Offer {
   id: string;
   seller: string;
   credit_id: string;
+  /** Price in XLM stroops — kept for backward compatibility. Use price_amount for new offers. */
   price_xlm: string; // BigInt as string (stroops)
+  /**
+   * Price in the payment asset's base unit.
+   * For XLM offers this equals price_xlm. For SAC-token offers this is the token amount.
+   * New code should always read this field.
+   */
+  price_amount?: string;
+  /**
+   * The payment asset type. 'native' = XLM, 'asset' = SAC token.
+   * When absent, treat as 'native' (backward compatibility).
+   */
+  price_asset_type?: 'native' | 'asset';
+  /**
+   * SAC token contract address. Present only when price_asset_type = 'asset'.
+   */
+  price_asset_address?: string;
+  /**
+   * Human-readable label for the payment asset (e.g. 'XLM', 'USDC').
+   * Populated by the API from on-chain metadata.
+   */
+  price_asset_label?: string;
   tonnes_available: string;
   created_at: number;
   status: "open" | "filled" | "cancelled";

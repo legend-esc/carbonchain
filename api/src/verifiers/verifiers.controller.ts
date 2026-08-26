@@ -1,13 +1,14 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   Header,
+  HttpCode,
   Param,
   Post,
-  UseGuards,
   Request,
-  HttpCode,
+  UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
@@ -25,6 +26,21 @@ export class VerifiersController {
   @Get()
   listVerifiers(): Promise<VerifierInfo[]> {
     return this.verifiersService.listVerifiers();
+  }
+
+  /**
+   * GET /verifiers/min-stake
+   * Returns the global minimum stake (in stroops) required to register as a verifier.
+   * This is a public endpoint — no auth required.
+   */
+  @ApiOperation({ summary: 'Get minimum verifier stake requirement' })
+  @ApiResponse({
+    status: 200,
+    description: 'Minimum stake in stroops (1 XLM = 10,000,000 stroops)',
+  })
+  @Get('min-stake')
+  getMinStake(): Promise<{ minStake: string }> {
+    return this.verifiersService.getMinStake();
   }
 
   @ApiOperation({ summary: 'Get verifier by address' })
@@ -86,9 +102,13 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get verifier reputation' })
   @ApiResponse({
     status: 200,
-    description: 'Returns { address, approvalCount, disputeCount } for the verifier.',
+    description:
+      'Returns { address, approvalCount, disputeCount } for the verifier.',
   })
-  @ApiResponse({ status: 400, description: 'Invalid Stellar Ed25519 public key format.' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid Stellar Ed25519 public key format.',
+  })
   @ApiResponse({ status: 404, description: 'Verifier not found.' })
   @Header('Cache-Control', 'max-age=60')
   @Get(':address/reputation')
@@ -104,5 +124,105 @@ export class VerifiersController {
       );
     }
     return this.verifiersService.getReputation(address);
+  }
+
+  // ── Staking ────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /verifiers/:address/stake
+   * Returns the amount currently locked by this verifier (in stroops).
+   * Public endpoint — useful for dashboards and pre-registration checks.
+   */
+  @ApiOperation({ summary: 'Get the stake currently locked by a verifier' })
+  @ApiResponse({
+    status: 200,
+    description: 'Stake in stroops. 0 if the verifier has no locked stake.',
+  })
+  @Get(':address/stake')
+  async getStake(
+    @Param('address') address: string,
+  ): Promise<{ address: string; stake: string }> {
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      throw new BadRequestException(
+        `'${address}' is not a valid Stellar Ed25519 public key.`,
+      );
+    }
+    return this.verifiersService.getStake(address);
+  }
+
+  /**
+   * POST /verifiers/:address/stake/deposit
+   * Deposit stake on behalf of a verifier.
+   *
+   * Body: { tokenId: string; amount: string; nonce: string }
+   *   - tokenId  — Stellar Asset Contract address for the stake token (native XLM SAC).
+   *   - amount   — stroops to lock (positive integer string).
+   *   - nonce    — current replay-protection nonce from GET /admin/nonce/:address.
+   *
+   * In production the verifier should sign this transaction themselves via Freighter.
+   * The current implementation signs with the admin keypair for test-mode convenience.
+   */
+  @ApiOperation({ summary: 'Deposit stake for a verifier' })
+  @ApiResponse({ status: 200, description: 'Updated stake after deposit' })
+  @ApiResponse({ status: 400, description: 'Invalid address or amount' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(AuthGuard('jwt'))
+  @Post(':address/stake/deposit')
+  @HttpCode(200)
+  async depositStake(
+    @Param('address') address: string,
+    @Body() body: { tokenId: string; amount: string; nonce: string },
+  ): Promise<{ address: string; stake: string }> {
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      throw new BadRequestException(
+        `'${address}' is not a valid Stellar Ed25519 public key.`,
+      );
+    }
+    if (!body.tokenId || !body.amount || !body.nonce) {
+      throw new BadRequestException('tokenId, amount, and nonce are required');
+    }
+    return this.verifiersService.depositStake(
+      address,
+      body.tokenId,
+      body.amount,
+      body.nonce,
+    );
+  }
+
+  /**
+   * POST /verifiers/:address/stake/withdraw
+   * Withdraw unbonded stake once the 30-day unbonding period has elapsed.
+   *
+   * Body: { tokenId: string; nonce: string }
+   *   - tokenId — must match the token used for the original deposit.
+   *   - nonce   — current replay-protection nonce from GET /admin/nonce/:address.
+   */
+  @ApiOperation({ summary: 'Withdraw unbonded stake for a verifier' })
+  @ApiResponse({ status: 200, description: 'Withdrawal successful' })
+  @ApiResponse({
+    status: 400,
+    description: 'No unbonding request or unbonding period not elapsed',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(AuthGuard('jwt'))
+  @Post(':address/stake/withdraw')
+  @HttpCode(200)
+  async withdrawStake(
+    @Param('address') address: string,
+    @Body() body: { tokenId: string; nonce: string },
+  ): Promise<{ withdrawn: boolean; address: string }> {
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      throw new BadRequestException(
+        `'${address}' is not a valid Stellar Ed25519 public key.`,
+      );
+    }
+    if (!body.tokenId || !body.nonce) {
+      throw new BadRequestException('tokenId and nonce are required');
+    }
+    return this.verifiersService.withdrawStake(
+      address,
+      body.tokenId,
+      body.nonce,
+    );
   }
 }

@@ -5,8 +5,10 @@ import { VerifiersService } from './verifiers.service';
 import { VerifierReputation } from '../../../shared';
 
 // ── Minimal mock for VerifiersService ─────────────────────────────────────────
-const VALID_ADDRESS = 'GAAHI32DQ2BVPGIXQ3WLN4LGFQ6BWLB6BCFKSZB7GKFTRGZJMYUAXTM';
-const UNKNOWN_ADDRESS = 'GBFPCE2WVJIHZ4UUHLRHIWM3YF6A5W3YX65U3NHYXHAPVS7THRTCGEK';
+const VALID_ADDRESS =
+  'GBCI2DH7MEKQUTCXZ7YLEVOZHDMBWPCMB6V46ZQHOUN2BHBWRWYY2JRP';
+const UNKNOWN_ADDRESS =
+  'GAGMTFWZSEDGZ6GQWDDA3QOW54BQE3GEIVSIVZHY6KOHQ4WY26F7VOL7';
 const INVALID_ADDRESS = 'not-a-stellar-address';
 
 const mockVerifiersService = {

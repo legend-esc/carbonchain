@@ -47,11 +47,13 @@ contract.initialize(&admin);
 // Register a verifier
 contract.register_verifier(&verifier);
 
-// Configure verifier capabilities
+// Verifier self-configures their own service capabilities
+// (verifier signs with their own key — this is NOT an admin operation)
+let nonce = contract.get_nonce(&verifier);
 let mut capabilities = Vec::new(&env);
 capabilities.push_back(ServiceType::CreditApproval);
 capabilities.push_back(ServiceType::MRVReview);
-contract.configure_verifier_services(&verifier, &capabilities);
+contract.configure_verifier_services(&verifier, &capabilities, nonce);
 
 // Submit a credit for approval
 let credit_id = contract.submit_credit(
@@ -67,6 +69,8 @@ let credit_id = contract.submit_credit(
 );
 
 // Verifier approves and triggers mint
+// (requires ServiceType::CreditApproval in configured services,
+//  or no services configured — open-capability assumption)
 contract.approve_and_mint(&verifier, &credit_id);
 
 // Retire a credit
@@ -358,6 +362,10 @@ cargo build --target wasm32-unknown-unknown --release
 
 | Contract | Stable Error Codes | Description |
 |---|---|---|
+| `credit_registry` | 100–125 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
+| `retirement` | 110–118 | Burn tokens on retirement, write immutable retirement records |
+| `marketplace` | 115–130 | Manage offer listings, integrate with Stellar DEX |
+| `mrv_oracle` | 119–129 | Accept MRV data updates, flag anomalies for re-verification |
 | `credit_registry` | 100–126 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
 | `retirement` | 200–209 | Burn tokens on retirement, write immutable retirement records |
 | `marketplace` | 300–309 | Manage offer listings, integrate with Stellar DEX |

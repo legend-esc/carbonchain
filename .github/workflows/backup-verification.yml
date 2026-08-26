@@ -1,0 +1,35 @@
+name: Backup Restore Verification
+
+# Weekly automated restore-test of the latest PostgreSQL S3 backup.
+# Backups are written daily via pg_dump but were never actually restored,
+# so corruption/incompleteness would only be discovered during a real
+# incident. This job downloads the newest backup, restores it into a
+# throwaway container, runs smoke queries, and alerts Slack on failure.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Every Monday at 06:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  verify-backup-restore:
+    name: Verify latest backup restores cleanly
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.BACKUP_VERIFY_AWS_ROLE_ARN }}
+
+      - name: Run backup restore verification
+        env:
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          BACKUP_S3_PREFIX: ${{ vars.BACKUP_S3_PREFIX }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          chmod +x scripts/verify-backup-restore.sh
+          ./scripts/verify-backup-restore.sh

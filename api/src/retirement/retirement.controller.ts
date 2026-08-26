@@ -8,11 +8,13 @@ import {
   Query,
   ParseIntPipe,
   DefaultValuePipe,
-  Response,
   NotFoundException,
+  StreamableFile,
+  Header,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import type { Response as ExpressResponse } from 'express';
+import type { Response } from 'express';
 import {
   RetirementService,
   BatchRetireResult,
@@ -96,12 +98,12 @@ export class RetirementController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @UseGuards(JwtAuthGuard)
-  @Get('certificates/:id/download')
+  @Throttle({ limit: 10, ttl: 60_000 })
+  @Get(':id/certificate')
+  @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
-    @Response() res: ExpressResponse,
-  ): Promise<void> {
-    // Retrieve the retirement record to ensure it exists
+  ): Promise<StreamableFile> {
     const retirement =
       await this.retirementService.getRetirement(certificateId);
     if (!retirement) {
@@ -110,7 +112,6 @@ export class RetirementController {
       );
     }
 
-    // Generate the PDF
     const pdfBuffer = await this.certificateService.generatePdf({
       retirementId: certificateId,
       creditId: retirement.credit_id,
@@ -118,15 +119,15 @@ export class RetirementController {
       tonnes: retirement.tonnes_retired,
       reason: retirement.reason,
       timestamp: retirement.retired_at,
+      ...(retirement.vintage_year
+        ? { vintageYear: retirement.vintage_year }
+        : {}),
     });
 
-    // Set response headers and stream the PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="certificate-${certificateId}.pdf"`,
-    );
-    res.send(pdfBuffer);
+    return new StreamableFile(pdfBuffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="retirement-certificate-${certificateId}.pdf"`,
+    });
   }
 
   @ApiOperation({ summary: 'Verify retirement certificate authenticity' })
