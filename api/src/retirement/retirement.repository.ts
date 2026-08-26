@@ -4,6 +4,7 @@ import { PageResult } from '../credits/credit.repository';
 
 export interface IRetirementRepository {
   save(record: RetirementEntity): Promise<RetirementEntity>;
+  saveAll(records: RetirementEntity[]): Promise<RetirementEntity[]>;
   findById(id: string): Promise<RetirementEntity | undefined>;
   findByBuyer(
     buyer: string,
@@ -26,6 +27,13 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
   async save(record: RetirementEntity): Promise<RetirementEntity> {
     this.store.set(record.id, record);
     return record;
+  }
+
+  async saveAll(records: RetirementEntity[]): Promise<RetirementEntity[]> {
+    for (const record of records) {
+      this.store.set(record.id, record);
+    }
+    return records;
   }
 
   async findById(id: string): Promise<RetirementEntity | undefined> {

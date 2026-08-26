@@ -32,20 +32,36 @@
 
   <!-- Stats bar -->
   @if (wallet.isConnected()) {
-    <section class="stats" aria-label="Portfolio summary">
-      <div class="stat-card">
+    <section class="stats" role="region" aria-label="Portfolio summary">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Total credits: ' + store.credits().length"
+      >
         <span class="stat-card__label">{{ 'dashboard.totalCredits' | translate }}</span>
         <span class="stat-card__value">{{ store.credits().length }}</span>
       </div>
-      <div class="stat-card">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Active credits: ' + store.activeCredits().length"
+      >
         <span class="stat-card__label">{{ 'dashboard.active' | translate }}</span>
         <span class="stat-card__value">{{ store.activeCredits().length }}</span>
       </div>
-      <div class="stat-card">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Retired credits: ' + store.retiredCredits().length"
+      >
         <span class="stat-card__label">{{ 'dashboard.retired' | translate }}</span>
         <span class="stat-card__value">{{ store.retiredCredits().length }}</span>
       </div>
-      <div class="stat-card">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Total tonnes: ' + store.totalTonnes().toLocaleString()"
+      >
         <span class="stat-card__label">{{ 'dashboard.totalTonnes' | translate }}</span>
         <span class="stat-card__value">{{ store.totalTonnes().toLocaleString() }}</span>
       </div>
@@ -153,6 +169,7 @@
               <th scope="col">Reason</th>
               <th scope="col">Date</th>
               <th scope="col">Tx Hash</th>
+              <th scope="col">Certificate</th>
             </tr>
           </thead>
           <tbody>
@@ -164,6 +181,15 @@
                 <td>{{ r.reason }}</td>
                 <td>{{ formatDate(r.retired_at) }}</td>
                 <td class="monospace">{{ r.tx_hash | slice: 0 : 12 }}…</td>
+                <td>
+                  <a
+                    class="btn btn--ghost btn--sm"
+                    [routerLink]="['/certificates', r.id]"
+                    aria-label="View retirement certificate for {{ r.id | slice: 0 : 8 }}"
+                  >
+                    View
+                  </a>
+                </td>
               </tr>
             }
           </tbody>

@@ -1,9 +1,11 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-// pdfkit ships as a CommonJS module; use require to avoid ESM issues.
-
-const PDFDocument = require('pdfkit') as typeof import('pdfkit');
+import { Worker } from 'worker_threads';
+import { join } from 'path';
 
 export interface CertificateData {
   retirementId: string;
@@ -12,6 +14,18 @@ export interface CertificateData {
   tonnes: string;
   reason: string;
   timestamp: number;
+  /** Issue #589 — vintage year of the credit (e.g. 2024). */
+  vintageYear?: number;
+}
+
+/**
+ * Result of generateAndPin.
+ * ipfsHash is null when Pinata is unreachable (circuit-breaker open) but the
+ * PDF was generated successfully — the retirement still succeeds.
+ */
+export interface GenerateAndPinResult {
+  pdfBuffer: Buffer;
+  ipfsHash: string | null;
 }
 
 @Injectable()
@@ -35,21 +49,40 @@ export class CertificateService {
 
   /**
    * Generates a retirement certificate PDF and pins it to IPFS via Pinata.
-   * Returns the IPFS CID of the uploaded PDF.
+   *
+   * Issue #493 fixes:
+   *  - DataCloneError during Worker construction is caught and wrapped in a
+   *    structured InternalServerErrorException.
+   *  - Pinata failures are circuit-broken: if the upload fails the method
+   *    returns { pdfBuffer, ipfsHash: null } instead of throwing, so the
+   *    retirement flow can still succeed with a null certificate hash.
+   *
+   * @returns { pdfBuffer, ipfsHash } — ipfsHash is null when Pinata is unreachable.
    */
-  async generateAndPin(data: CertificateData): Promise<string> {
+  async generateAndPin(data: CertificateData): Promise<GenerateAndPinResult> {
     this.logger.log(
       `Generating certificate PDF for retirement ${data.retirementId}`,
     );
 
     const pdfBuffer = await this.buildPdf(data);
-    const ipfsHash = await this.pinToIpfs(pdfBuffer, data.retirementId);
 
-    this.logger.log(
-      `Certificate pinned to IPFS: ${ipfsHash} for retirement ${data.retirementId}`,
-    );
+    // Circuit breaker: attempt IPFS upload but do not fail the retirement if
+    // Pinata is unreachable.
+    let ipfsHash: string | null = null;
+    try {
+      ipfsHash = await this.pinToIpfs(pdfBuffer, data.retirementId);
+      this.logger.log(
+        `Certificate pinned to IPFS: ${ipfsHash} for retirement ${data.retirementId}`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Pinata upload failed for retirement ${data.retirementId} — returning null hash. ` +
+          `Reason: ${(err as Error).message}`,
+      );
+      // Return partial success: PDF was generated, IPFS upload failed.
+    }
 
-    return ipfsHash;
+    return { pdfBuffer, ipfsHash };
   }
 
   /**
@@ -65,66 +98,64 @@ export class CertificateService {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
+  /**
+   * Runs pdfkit in a worker thread so the event loop is never blocked.
+   *
+   * Issue #493 fix: wraps Worker construction in try/catch to handle
+   * DataCloneError that occurs when workerData contains non-cloneable values
+   * (e.g. circular references from unexpected upstream data).
+   */
   private buildPdf(data: CertificateData): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 60, size: 'A4' });
-      const chunks: Buffer[] = [];
-
-      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      const retiredAt = new Date(data.timestamp * 1000).toUTCString();
-      const tonnesDisplay = (Number(data.tonnes) / 1_000_000).toFixed(1);
-
-      // ── Header ──────────────────────────────────────────────────────────────
-      doc
-        .fontSize(24)
-        .font('Helvetica-Bold')
-        .text('Carbon Credit Retirement Certificate', { align: 'center' });
-
-      doc.moveDown(0.5);
-      doc
-        .fontSize(12)
-        .font('Helvetica')
-        .fillColor('#555555')
-        .text('Issued by CarbonChain on the Stellar Network', {
-          align: 'center',
+      let worker: Worker;
+      try {
+        worker = new Worker(join(__dirname, 'pdf.worker.js'), {
+          workerData: data,
         });
-
-      doc.moveDown(1.5);
-      doc.moveTo(60, doc.y).lineTo(535, doc.y).strokeColor('#cccccc').stroke();
-      doc.moveDown(1);
-
-      // ── Body ────────────────────────────────────────────────────────────────
-      doc.fillColor('#000000').fontSize(12).font('Helvetica-Bold');
-
-      const field = (label: string, value: string) => {
-        doc.font('Helvetica-Bold').text(`${label}:`, { continued: true });
-        doc.font('Helvetica').text(`  ${value}`);
-        doc.moveDown(0.4);
-      };
-
-      field('Retirement ID', data.retirementId);
-      field('Credit ID', data.creditId);
-      field('Buyer', data.buyer);
-      field('Tonnes Retired', `${tonnesDisplay} tonne(s)`);
-      field('Reason', data.reason);
-      field('Retired At', retiredAt);
-
-      // ── Footer ──────────────────────────────────────────────────────────────
-      doc.moveDown(2);
-      doc.moveTo(60, doc.y).lineTo(535, doc.y).strokeColor('#cccccc').stroke();
-      doc.moveDown(0.5);
-      doc
-        .fontSize(9)
-        .fillColor('#888888')
-        .text(
-          'This certificate is permanently recorded on the Stellar blockchain and cannot be altered.',
-          { align: 'center' },
+      } catch (err) {
+        // DataCloneError (or any synchronous spawn error) — wrap and reject.
+        const detail = err instanceof Error ? err.message : String(err);
+        reject(
+          new InternalServerErrorException({
+            error: 'Certificate generation failed',
+            detail,
+          }),
         );
+        return;
+      }
 
-      doc.end();
+      worker.once('message', (msg: { error?: string } | Buffer) => {
+        // Issue #493 fix: pdf.worker.js may post { error: '...' } instead of
+        // throwing, so the parent can reject the promise cleanly.
+        if (
+          msg &&
+          !Buffer.isBuffer(msg) &&
+          typeof (msg as any).error === 'string'
+        ) {
+          reject(
+            new InternalServerErrorException({
+              error: 'Certificate generation failed',
+              detail: (msg as { error: string }).error,
+            }),
+          );
+        } else {
+          resolve(msg as Buffer);
+        }
+      });
+
+      worker.once('error', (err) => {
+        reject(
+          new InternalServerErrorException({
+            error: 'Certificate generation failed',
+            detail: err.message,
+          }),
+        );
+      });
+
+      worker.once('exit', (code) => {
+        if (code !== 0)
+          reject(new Error(`PDF worker exited with code ${code}`));
+      });
     });
   }
 

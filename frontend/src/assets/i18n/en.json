@@ -59,5 +59,10 @@
   "retire.retireAnother": "Retire another",
   "retire.errorTitle": "❌ Retirement Failed",
   "retire.tryAgain": "Try again",
-  "retire.wallet": "Wallet"
+  "retire.wallet": "Wallet",
+
+  "pwa.install.title": "Install CarbonChain",
+  "pwa.install.message": "Install the app for offline access and a faster experience",
+  "pwa.install.button": "Install",
+  "pwa.install.dismiss": "Not now"
 }

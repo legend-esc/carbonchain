@@ -1,5 +1,12 @@
 use soroban_sdk::contracterror;
 
+/// Stable error codes for the CarbonChain credit registry contract.
+///
+/// All error codes (100–126) are defined here in the credit registry.
+/// The retirement contract (errors 200–209) and marketplace contract
+/// (errors 300–309) define their own separate error enums.
+///
+/// Codes are intentionally stable — do not renumber existing variants.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -12,13 +19,10 @@ pub enum CarbonChainError {
     InvalidStatusTransition = 105,
     VerifierAlreadyExists = 106,
     VerifierNotFound = 107,
-    InsufficientBalance = 108,
     Overflow = 109,
     InvalidTonnes = 110,
-    InvalidAdmin = 111,
     ContractPaused = 112,
     IssuerNotAllowed = 113,
-    InvalidMethodology = 114,
     InvalidNonce = 115,
     NoPendingAdmin = 116,
     InvalidSplit = 117,
@@ -33,4 +37,20 @@ pub enum CarbonChainError {
     InvalidApprovalThreshold = 124,
     /// Returned when a verifier tries to approve a credit they already approved.
     AlreadyApproved = 125,
+    /// Returned when no retirement contract has been registered.
+    NoRetirementContract = 126,
+    /// Returned when a verifier's locked stake is below the required minimum.
+    InsufficientStake = 127,
+    /// Returned when a stake deposit/slash amount is zero or negative.
+    InvalidStakeAmount = 128,
+    /// Returned when there is no pending unbonding request for a verifier.
+    NoUnbondingRequest = 129,
+    /// Returned when withdrawing stake before the 30-day unbonding period has elapsed.
+    UnbondingNotReady = 130,
+    /// Returned when the supplied token_id does not match the admin-configured
+    /// approved stake token or the token previously deposited by this verifier.
+    InvalidStakeToken = 131,
+    /// Returned when the token transfer (transfer or transfer_from) fails during
+    /// deposit_stake or withdraw_stake (try_invoke_contract returned an error).
+    StakeTransferFailed = 132,
 }
