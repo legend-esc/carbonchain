@@ -13,4 +13,6 @@ pub enum RetirementError {
     NoPendingAdmin = 116,
     InvalidTonnes = 117,
     InvalidInput = 118,
+    /// The referenced retirement record does not exist (#689).
+    RecordNotFound = 119,
 }

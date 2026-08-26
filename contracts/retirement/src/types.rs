@@ -54,4 +54,6 @@ pub enum DataKey {
     Paused,
     Nonce(Address),
     PendingAdmin,
+    /// IPFS / off-chain hash attached to a retirement certificate (#689).
+    CertificateHash(BytesN<32>),
 }

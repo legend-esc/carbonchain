@@ -475,6 +475,49 @@ impl Retirement {
         out
     }
 
+    /// Attach an IPFS / off-chain certificate hash to an existing retirement record.
+    ///
+    /// Only the admin may call this. The retirement record identified by
+    /// `retirement_id` must already exist; if it does not, this returns
+    /// [`RetirementError::RecordNotFound`] (not `CreditNotActive`) — #689.
+    ///
+    /// # Errors
+    /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
+    /// - [`RetirementError::Unauthorized`] — caller is not the admin.
+    /// - [`RetirementError::RecordNotFound`] — no retirement record exists for `retirement_id`.
+    pub fn set_certificate_hash(
+        env: Env,
+        admin: Address,
+        retirement_id: BytesN<32>,
+        hash: String,
+    ) -> Result<(), RetirementError> {
+        Self::require_admin(&env, &admin)?;
+        // #689: use RecordNotFound when the retirement record does not exist
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retirement_id.clone()))
+        {
+            return Err(RetirementError::RecordNotFound);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::CertificateHash(retirement_id.clone()), &hash);
+        env.storage().persistent().extend_ttl(
+            &DataKey::CertificateHash(retirement_id),
+            TTL_THRESHOLD,
+            MIN_TTL,
+        );
+        Ok(())
+    }
+
+    /// Retrieve the certificate hash for a retirement record, if one has been set.
+    pub fn get_certificate_hash(env: Env, retirement_id: BytesN<32>) -> Option<String> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::CertificateHash(retirement_id))
+    }
+
     // ── Internal ─────────────────────────────────────────────────────────────
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), RetirementError> {
@@ -1033,3 +1076,80 @@ mod tests {
             "retirement IDs must be distinct even with same timestamp and reason"
         );
     }
+
+    // ── Issue #689: set_certificate_hash uses correct error for missing record ─
+
+    /// set_certificate_hash on a non-existent retirement_id must return
+    /// RecordNotFound (not CreditNotActive or a panic).
+    #[test]
+    fn test_cert_set_missing_record_returns_record_not_found() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, _registry, _credit_id, retirement_admin, _) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonexistent_id = BytesN::from_array(&env, &[0xff; 32]);
+        let result = client.try_set_certificate_hash(
+            &retirement_admin,
+            &nonexistent_id,
+            &String::from_str(&env, "bafybeicertificate123"),
+        );
+        assert_eq!(result, Err(Ok(RetirementError::RecordNotFound)));
+    }
+
+    /// set_certificate_hash on an existing retirement_id must succeed and
+    /// get_certificate_hash must return the stored value.
+    #[test]
+    fn test_cert_set_and_get_certificate_hash() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, retirement_admin, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let hash = String::from_str(&env, "bafybeicertificate456");
+        client.set_certificate_hash(&retirement_admin, &ret_id, &hash);
+
+        let stored = client.get_certificate_hash(&ret_id);
+        assert_eq!(stored, Some(hash));
+    }
+
+    /// Calling set_certificate_hash for a non-admin must be rejected.
+    #[test]
+    fn test_cert_set_unauthorized_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (contract_id, registry, credit_id, _retirement_admin, credit_owner) = setup(&env);
+        let client = RetirementClient::new(&env, &contract_id);
+
+        let nonce = client.get_nonce(&credit_owner);
+        let ret_id = client.retire(
+            &credit_owner,
+            &credit_id,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &registry.id,
+            &nonce,
+        );
+
+        let rando = Address::generate(&env);
+        let result = client.try_set_certificate_hash(
+            &rando,
+            &ret_id,
+            &String::from_str(&env, "bafybei_fake"),
+        );
+        assert!(result.is_err());
+    }
+}

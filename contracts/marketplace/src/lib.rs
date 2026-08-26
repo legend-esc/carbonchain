@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
-    IntoVal, String, Symbol, Vec,
+    Error as SorobanError, IntoVal, String, Symbol, Vec,
 };
 
 // ── TTL constants ─────────────────────────────────────────────────────────────
@@ -68,6 +68,10 @@ pub enum DataKey {
     Nonce(Address),
     MinPrice,
     ActiveOffers,
+    /// Trusted credit-registry contract address stored at initialisation (#692).
+    TrustedRegistry,
+    /// Allowed payment-token contract address stored at initialisation (#691).
+    AllowedToken,
 }
 
 #[contracterror]
@@ -88,6 +92,12 @@ pub enum MarketplaceError {
     AlreadyInitialized = 126,
     /// Buyer does not hold enough XLM to cover the offer price.
     InsufficientFunds = 127,
+    /// Caller supplied a registry_id that does not match the trusted registry (#692).
+    InvalidRegistry = 128,
+    /// Caller supplied a token_id that does not match the allowed payment token (#691).
+    InvalidToken = 129,
+    /// The referenced credit does not exist in the registry (#690).
+    CreditNotFound = 130,
 }
 
 #[contractevent]
@@ -144,12 +154,17 @@ impl Marketplace {
 
     /// Initialise the marketplace. Must be called exactly once.
     ///
+    /// `registry_id` — the trusted credit-registry contract address (#692).
+    /// `token_id`    — the allowed payment-token contract address (#691).
+    ///
     /// # Errors
     /// - [`MarketplaceError::AlreadyInitialized`] — contract has already been initialised.
     pub fn initialize(
         env: Env,
         admin: Address,
         min_price_per_tonne: i128,
+        registry_id: Address,
+        token_id: Address,
     ) -> Result<(), MarketplaceError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(MarketplaceError::AlreadyInitialized);
@@ -159,6 +174,14 @@ impl Marketplace {
         env.storage()
             .instance()
             .set(&DataKey::MinPrice, &min_price_per_tonne);
+        // #692: persist trusted registry so callers cannot substitute a fake one
+        env.storage()
+            .instance()
+            .set(&DataKey::TrustedRegistry, &registry_id);
+        // #691: persist allowed payment token so buyers cannot substitute a fake one
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedToken, &token_id);
         Ok(())
     }
 
@@ -206,6 +229,8 @@ impl Marketplace {
     /// - [`MarketplaceError::InvalidNonce`] — `nonce` does not match the current seller nonce.
     /// - [`MarketplaceError::InvalidPrice`] — `price_xlm` is zero or negative.
     /// - [`MarketplaceError::InvalidTonnes`] — `tonnes` is zero, negative, or not a multiple of 100_000.
+    /// - [`MarketplaceError::InvalidRegistry`] — `registry_id` does not match the trusted registry (#692).
+    /// - [`MarketplaceError::CreditNotFound`] — credit does not exist in the registry (#690).
     /// - [`MarketplaceError::CreditNotActive`] — credit is not in `Active` status.
     pub fn create_offer(
         env: Env,
@@ -240,12 +265,18 @@ impl Marketplace {
             return Err(MarketplaceError::InvalidPrice);
         }
 
-        // Validate credit exists and is Active in the registry
-        let credit: CreditMetadata = env.invoke_contract(
-            &registry_id,
-            &Symbol::new(&env, "get_credit"),
-            (credit_id.clone(),).into_val(&env),
-        );
+        // #692: reject any registry_id that does not match the one stored at init
+        Self::validate_registry(&env, &registry_id)?;
+
+        // #690: use try_invoke_contract so a missing credit returns a clean error
+        let credit: CreditMetadata = env
+            .try_invoke_contract::<CreditMetadata, SorobanError>(
+                &registry_id,
+                &Symbol::new(&env, "get_credit"),
+                (credit_id.clone(),).into_val(&env),
+            )
+            .map_err(|_| MarketplaceError::CreditNotFound)?
+            .map_err(|_| MarketplaceError::CreditNotFound)?;
         if credit.status != CreditStatus::Active {
             return Err(MarketplaceError::CreditNotActive);
         }
@@ -342,6 +373,7 @@ impl Marketplace {
     /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
     /// - [`MarketplaceError::Unauthorized`] — `seller` is not the offer creator.
     /// - [`MarketplaceError::AlreadyClosed`] — offer has already been cancelled.
+    /// - [`MarketplaceError::InvalidRegistry`] — `registry_id` does not match the trusted registry (#692).
     pub fn cancel_offer(
         env: Env,
         seller: Address,
@@ -356,6 +388,10 @@ impl Marketplace {
         if !Self::consume_nonce(&env, &seller, nonce) {
             return Err(MarketplaceError::InvalidNonce);
         }
+
+        // #692: reject any registry_id that does not match the one stored at init
+        Self::validate_registry(&env, &registry_id)?;
+
         let mut offer: Offer = env
             .storage()
             .persistent()
@@ -372,11 +408,15 @@ impl Marketplace {
         let escrow_account: Address = env.current_contract_address();
 
         // #240: verify escrow still owns the credit before attempting transfer
-        let credit: CreditMetadata = env.invoke_contract(
-            &registry_id,
-            &Symbol::new(&env, "get_credit"),
-            (offer.credit_id.clone(),).into_val(&env),
-        );
+        // #690: use try_invoke_contract so a missing credit returns a clean error
+        let credit: CreditMetadata = env
+            .try_invoke_contract::<CreditMetadata, SorobanError>(
+                &registry_id,
+                &Symbol::new(&env, "get_credit"),
+                (offer.credit_id.clone(),).into_val(&env),
+            )
+            .map_err(|_| MarketplaceError::CreditNotFound)?
+            .map_err(|_| MarketplaceError::CreditNotFound)?;
         if credit.owner != escrow_account {
             return Err(MarketplaceError::Unauthorized);
         }
@@ -638,6 +678,8 @@ impl Marketplace {
     /// # Errors
     /// - [`MarketplaceError::ContractPaused`] — contract is paused.
     /// - [`MarketplaceError::InvalidNonce`] — `nonce` does not match the current buyer nonce.
+    /// - [`MarketplaceError::InvalidRegistry`] — `registry_id` does not match the trusted registry (#692).
+    /// - [`MarketplaceError::InvalidToken`] — `token_id` does not match the allowed payment token (#691).
     /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
     /// - [`MarketplaceError::AlreadyClosed`] — offer has already been cancelled/filled.
     /// - [`MarketplaceError::OfferExpired`] — offer has expired.
@@ -658,6 +700,11 @@ impl Marketplace {
         if !Self::consume_nonce(&env, &buyer, nonce) {
             return Err(MarketplaceError::InvalidNonce);
         }
+
+        // #692: reject any registry_id that does not match the one stored at init
+        Self::validate_registry(&env, &registry_id)?;
+        // #691: reject any token_id that does not match the allowed payment token
+        Self::validate_token(&env, &token_id)?;
 
         // Load and validate the offer — all checks before any state mutation.
         let mut offer: Offer = env
@@ -813,6 +860,32 @@ impl Marketplace {
         Ok(())
     }
 
+    /// #692: Verify that `supplied` matches the trusted registry stored at init.
+    fn validate_registry(env: &Env, supplied: &Address) -> Result<(), MarketplaceError> {
+        let trusted: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TrustedRegistry)
+            .ok_or(MarketplaceError::NotInitialized)?;
+        if *supplied != trusted {
+            return Err(MarketplaceError::InvalidRegistry);
+        }
+        Ok(())
+    }
+
+    /// #691: Verify that `supplied` matches the allowed payment token stored at init.
+    fn validate_token(env: &Env, supplied: &Address) -> Result<(), MarketplaceError> {
+        let allowed: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedToken)
+            .ok_or(MarketplaceError::NotInitialized)?;
+        if *supplied != allowed {
+            return Err(MarketplaceError::InvalidToken);
+        }
+        Ok(())
+    }
+
     fn is_paused(env: &Env) -> bool {
         env.storage()
             .instance()
@@ -922,7 +995,11 @@ mod tests {
         let marketplace_id = env.register(Marketplace, ());
         let client = MarketplaceClient::new(env, &marketplace_id);
         let mp_admin = Address::generate(env);
-        client.initialize(&mp_admin, &0);
+        // Use a placeholder token address for tests that do not exercise buy_offer.
+        // Tests that call buy_offer must use setup_with_token instead, which properly
+        // initialises the marketplace with the real token address (#691).
+        let placeholder_token = Address::generate(env);
+        client.initialize(&mp_admin, &0, &registry.id, &placeholder_token);
         let seller = Address::generate(env);
         // Transfer credit from issuer to seller so seller can create offers
         let transfer_nonce = registry.get_nonce(&issuer);
@@ -1451,8 +1528,10 @@ mod tests {
         let marketplace_id = env.register(Marketplace, ());
         let client = MarketplaceClient::new(&env, &marketplace_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin, &0);
-        let result = client.try_initialize(&admin, &0);
+        let registry_addr = Address::generate(&env);
+        let token_addr = Address::generate(&env);
+        client.initialize(&admin, &0, &registry_addr, &token_addr);
+        let result = client.try_initialize(&admin, &0, &registry_addr, &token_addr);
         assert_eq!(result, Err(Ok(MarketplaceError::AlreadyInitialized)));
     }
 
@@ -1519,7 +1598,6 @@ mod tests {
         let marketplace_id = env.register(Marketplace, ());
         let client = MarketplaceClient::new(&env, &marketplace_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin, &5_000_000); // min_price = 5_000_000
         let registry = RegistryHelper::deploy(&env);
         let verifier = Address::generate(&env);
         let issuer = Address::generate(&env);
@@ -1559,6 +1637,9 @@ mod tests {
         let seller = Address::generate(&env);
         let tnonce = registry.get_nonce(&issuer);
         registry.transfer_credit(&issuer, &seller, &credit_id, tnonce);
+        // #692/#691: initialize must now receive registry_id and token_id
+        let placeholder_token = Address::generate(&env);
+        client.initialize(&admin, &5_000_000, &registry.id, &placeholder_token); // min_price = 5_000_000
         let seller_nonce = client.get_nonce(&seller);
         let offer_id = client.create_offer(
             &seller,
@@ -1659,7 +1740,7 @@ mod tests {
     /// Mock token contract that records calls and supports `balance` + `transfer`.
     /// Used exclusively in buy_offer tests.
     mod token_mock {
-        use soroban_sdk::{contract, contractimpl, Address, Env, Map};
+        use soroban_sdk::{contract, contractimpl, Address, Env};
 
         #[contract]
         pub struct MockToken;
@@ -1706,10 +1787,66 @@ mod tests {
         BytesN<32>,
         MockTokenClient<'static>,
     ) {
-        let (client, seller, admin, registry, credit_id) = setup_with_registry(env);
-        let token_id = env.register(MockToken, ());
-        let token = MockTokenClient::new(env, &token_id);
-        (client, seller, admin, registry, credit_id, token)
+        // We must register the token BEFORE calling initialize so we can pass
+        // its address as the allowed payment token (#691).  Therefore we cannot
+        // reuse setup_with_registry here — we build everything from scratch.
+        env.ledger().set_timestamp(1735689600);
+        let registry = RegistryHelper::deploy(env);
+
+        let admin = Address::generate(env);
+        let verifier = Address::generate(env);
+        let issuer = Address::generate(env);
+        let retirement = Address::generate(env);
+        registry.initialize(&admin, &retirement, 1);
+
+        let nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &verifier, nonce);
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
+            &admin,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "Verified Carbon Standard"),
+            anonce2,
+        );
+        registry.register_project(
+            &admin,
+            &String::from_str(env, "PROJ-001"),
+            &String::from_str(env, "Test Project"),
+            &String::from_str(env, "Desc"),
+            &String::from_str(env, "NG"),
+        );
+
+        let inonce = registry.get_nonce(&issuer);
+        let credit_id = registry.submit_credit(
+            &issuer,
+            &String::from_str(env, "PROJ-001"),
+            2024,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "NG"),
+            1_000_000,
+            &String::from_str(env, "bafybei123"),
+            inonce,
+        );
+        let vnonce = registry.get_nonce(&verifier);
+        registry.approve_and_mint(&verifier, &credit_id, vnonce);
+
+        // Register the mock token first so its address is known at marketplace init.
+        let token_contract_id = env.register(MockToken, ());
+        let token = MockTokenClient::new(env, &token_contract_id);
+
+        let marketplace_id = env.register(Marketplace, ());
+        let client = MarketplaceClient::new(env, &marketplace_id);
+        let mp_admin = Address::generate(env);
+        // #691: pass the real token address so buy_offer validates it correctly.
+        client.initialize(&mp_admin, &0, &registry.id, &token.address);
+
+        let seller = Address::generate(env);
+        let transfer_nonce = registry.get_nonce(&issuer);
+        registry.transfer_credit(&issuer, &seller, &credit_id, transfer_nonce);
+
+        (client, seller, mp_admin, registry, credit_id, token)
     }
 
     #[test]
@@ -1874,5 +2011,157 @@ mod tests {
             &b2nonce,
         );
         assert_eq!(result, Err(Ok(MarketplaceError::AlreadyClosed)));
+    }
+
+    // ── Issue #692: registry_id validation ───────────────────────────────────
+
+    /// create_offer must reject a caller-supplied registry_id that differs from
+    /// the one stored at initialisation.
+    #[test]
+    fn test_registry_create_offer_rejects_fake_registry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, _real_registry, credit_id) = setup_with_registry(&env);
+
+        let fake_registry = Address::generate(&env);
+        let seller_nonce = client.get_nonce(&seller);
+        let result = client.try_create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &500_000,
+            &fake_registry, // attacker-controlled address
+            &None,
+            &seller_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InvalidRegistry)));
+    }
+
+    /// cancel_offer must reject a caller-supplied registry_id that differs from
+    /// the one stored at initialisation.
+    #[test]
+    fn test_registry_cancel_offer_rejects_fake_registry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
+
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        let fake_registry = Address::generate(&env);
+        let seller_nonce2 = client.get_nonce(&seller);
+        let result = client.try_cancel_offer(&seller, &offer_id, &fake_registry, &seller_nonce2);
+        assert_eq!(result, Err(Ok(MarketplaceError::InvalidRegistry)));
+    }
+
+    /// buy_offer must reject a caller-supplied registry_id that differs from
+    /// the one stored at initialisation.
+    #[test]
+    fn test_registry_buy_offer_rejects_fake_registry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, token) = setup_with_token(&env);
+
+        let price = 10_000_000i128;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &price);
+        let fake_registry = Address::generate(&env);
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &fake_registry, // attacker-controlled address
+            &token.address,
+            &buyer_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InvalidRegistry)));
+        // Offer must still be active — no state was changed
+        assert!(client.get_offer(&offer_id).active);
+    }
+
+    // ── Issue #691: payment token validation ─────────────────────────────────
+
+    /// buy_native — buyer cannot substitute a fake payment token.
+    /// Even with a huge fake balance the buy must fail before any transfer.
+    #[test]
+    fn test_buy_native_rejects_fake_payment_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, credit_id, _real_token) = setup_with_token(&env);
+
+        let price = 10_000_000i128;
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer(
+            &seller,
+            &credit_id,
+            &price,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        // Deploy a separate "fake" token that the buyer controls and has
+        // an enormous balance — it should be rejected outright.
+        let fake_token_id = env.register(MockToken, ());
+        let fake_token = MockTokenClient::new(&env, &fake_token_id);
+        let buyer = Address::generate(&env);
+        fake_token.set_balance(&buyer, &i128::MAX);
+
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &fake_token.address, // attacker-controlled token
+            &buyer_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::InvalidToken)));
+        // Offer must still be active — payment was rejected, nothing transferred
+        assert!(client.get_offer(&offer_id).active);
+    }
+
+    // ── Issue #690: get_credit missing credit returns clean error ─────────────
+
+    /// create_offer with a non-existent credit_id must return CreditNotFound
+    /// instead of aborting the transaction with a panic.
+    #[test]
+    fn test_get_credit_missing_returns_credit_not_found() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _admin, registry, _credit_id) = setup_with_registry(&env);
+
+        // Use a credit_id that was never issued
+        let nonexistent_credit = BytesN::from_array(&env, &[0xde; 32]);
+        let seller_nonce = client.get_nonce(&seller);
+        let result = client.try_create_offer(
+            &seller,
+            &nonexistent_credit,
+            &10_000_000,
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+        assert_eq!(result, Err(Ok(MarketplaceError::CreditNotFound)));
     }
 }
