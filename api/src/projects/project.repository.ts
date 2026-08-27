@@ -1,33 +1,32 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import type { ProjectProfile } from '../../../shared';
 import { ProjectEntity } from './project.entity';
+
+export interface IProjectRepository {
+  save(project: ProjectEntity): Promise<ProjectEntity>;
+  findById(id: string): Promise<ProjectEntity | undefined>;
+  findAll(): Promise<ProjectEntity[]>;
+}
 
 export const PROJECT_REPOSITORY = 'PROJECT_REPOSITORY';
 
-export interface IProjectRepository {
-  save(project: ProjectProfile): Promise<ProjectProfile>;
-  findById(id: string): Promise<ProjectProfile | undefined>;
-  findAll(): Promise<ProjectProfile[]>;
-}
-
+/**
+ * In-memory project repository.
+ * Replace with a TypeORM repository provider when PostgreSQL is available.
+ */
 @Injectable()
-export class TypeOrmProjectRepository implements IProjectRepository {
-  constructor(
-    @InjectRepository(ProjectEntity)
-    private readonly repository: Repository<ProjectEntity>,
-  ) {}
+export class InMemoryProjectRepository implements IProjectRepository {
+  private readonly store = new Map<string, ProjectEntity>();
 
-  save(project: ProjectProfile): Promise<ProjectProfile> {
-    return this.repository.save(project) as Promise<ProjectProfile>;
+  async save(project: ProjectEntity): Promise<ProjectEntity> {
+    this.store.set(project.id, project);
+    return project;
   }
 
-  findById(id: string): Promise<ProjectProfile | undefined> {
-    return this.repository.findOne({ where: { id } }) as Promise<ProjectProfile | undefined>;
+  async findById(id: string): Promise<ProjectEntity | undefined> {
+    return this.store.get(id);
   }
 
-  findAll(): Promise<ProjectProfile[]> {
-    return this.repository.find() as Promise<ProjectProfile[]>;
+  async findAll(): Promise<ProjectEntity[]> {
+    return Array.from(this.store.values());
   }
 }

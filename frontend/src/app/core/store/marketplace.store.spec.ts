@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { of, throwError, firstValueFrom } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { MarketplaceStore } from './marketplace.store';
 import { ApiService } from '../services/api.service';
 
@@ -26,24 +26,20 @@ describe('MarketplaceStore — error state', () => {
     store = TestBed.inject(MarketplaceStore);
   });
 
-  it('error$ emits a message when the API call fails', async () => {
+  it('error signal reflects a message when the API call fails', async () => {
     getOffersBySeller.mockReturnValue(throwError(() => new Error('service unavailable')));
 
-    const errorPromise = firstValueFrom(store.error$);
     await TestBed.runInInjectionContext(() => store.loadOffersBySeller('GABC'));
 
     expect(store.state()).toBe('error');
     expect(store.error()).toBe('service unavailable');
-    // error$ reflects the signal
-    expect(await errorPromise).toBeNull(); // initial emission before load
   });
 
-  it('error$ emits the error message synchronously after failed load', async () => {
+  it('error signal reflects the error message after failed load', async () => {
     getOffersBySeller.mockReturnValue(throwError(() => new Error('network timeout')));
     await TestBed.runInInjectionContext(() => store.loadOffersBySeller('GABC'));
 
-    const emitted = await firstValueFrom(store.error$);
-    expect(emitted).toBe('network timeout');
+    expect(store.error()).toBe('network timeout');
   });
 
   it('error is cleared on successful reload after a failure', async () => {

@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Entity, PrimaryColumn, Column } from 'typeorm';
 
 @Entity('projects')
 export class ProjectEntity {
@@ -8,18 +8,18 @@ export class ProjectEntity {
   @Column()
   name: string;
 
-  @Column()
+  @Column({ nullable: true })
   developer: string;
 
-  @Column()
+  @Column({ nullable: true })
   description: string;
 
-  @Column()
+  @Column({ nullable: true })
   location: string;
 
-  @Column()
+  @Column({ nullable: true })
   methodology: string;
 
   @Column({ default: '' })
-  documents_cid: string;
+  documentsCid: string;
 }

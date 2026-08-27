@@ -11,6 +11,7 @@ const mockCredit: CreditMetadata = {
   id: 'credit-001',
   project_id: 'proj-001',
   issuer: 'GISSUER',
+  owner: 'GISSUER',
   vintage_year: 2023,
   methodology: 'VCS',
   geography: 'BR',
@@ -148,13 +149,11 @@ describe('DashboardComponent', () => {
       await localFixture.whenStable();
       localFixture.detectChanges();
 
-      const loadingEls = (
-        localFixture.nativeElement.querySelectorAll('.status-msg') as NodeList
+      const loadingEls = localFixture.nativeElement.querySelectorAll('.status-msg') as NodeList;
+      const hasLoadingMsg = Array.from(loadingEls).some((el) =>
+        (el as HTMLElement).textContent?.includes('dashboard.loading'),
       );
-      const hasLoadingMsg = Array.from(loadingEls).some(
-        (el) => (el as HTMLElement).textContent?.includes('dashboard.loading'),
-      );
-      expect(hasLoadingMsg).toBeFalse();
+      expect(hasLoadingMsg).toBeFalsy();
     });
   });
 });

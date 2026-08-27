@@ -19,13 +19,13 @@ export class ProjectsController {
 
   @ApiOperation({ summary: 'Get project by ID' })
   @Get(':id')
-  getOne(@Param('id') id: string): Promise<ProjectProfile> {
-    return this.projectsService.getProject(id);
+  async getOne(@Param('id') id: string): Promise<ProjectProfile> {
+    return this.projectsService.getProjectAsync(id);
   }
 
   @ApiOperation({ summary: 'List all projects' })
   @Get()
-  list(): Promise<ProjectProfile[]> {
+  async list(): Promise<ProjectProfile[]> {
     return this.projectsService.listProjects();
   }
 }

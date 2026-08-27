@@ -1,23 +1,26 @@
+import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
 import { CreditStatus } from '../../../shared';
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 
-/**
- * Off-chain index of an on-chain carbon credit.
- * Ready for TypeORM — uncomment decorators and add @nestjs/typeorm when DB is wired.
- *
- */
 @Entity('credits')
+@Index('idx_credits_status_methodology_geography', [
+  'status',
+  'methodology',
+  'geography',
+])
+@Index('idx_credits_owner_address', ['issuer'])
+@Index('idx_credits_vintage_year', ['vintageYear'])
 export class CreditEntity {
   @PrimaryColumn()
   id: string;
 
-  @Column({ name: 'project_id' })
+  @Column()
   projectId: string;
 
-  @Column({ name: 'vintage_year' })
+  @Column()
   issuer: string;
 
-  @Column({ name: 'ipfs_hash' })
+  @Column()
   owner: string;
 
   @Column()
@@ -29,7 +32,7 @@ export class CreditEntity {
   @Column()
   geography: string;
 
-  @Column({ type: 'varchar' })
+  @Column()
   tonnes: string;
 
   @Column()
@@ -38,6 +41,6 @@ export class CreditEntity {
   @Column({ type: 'varchar' })
   status: CreditStatus;
 
-  @Column({ name: 'issued_at', type: 'bigint' })
+  @Column({ type: 'bigint' })
   issuedAt: number;
 }

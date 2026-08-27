@@ -10,20 +10,27 @@ export class EventsController {
   @ApiOperation({ summary: 'List contract events with filters' })
   @ApiResponse({ status: 200, description: 'List of events' })
   @Get()
-  getEvents(
+  async getEvents(
     @Query('contractId') contractId?: string,
     @Query('eventType') eventType?: string,
     @Query('take') take = 50,
     @Query('skip') skip = 0,
-  ): SorobanEvent[] {
-    return this.eventsService.getEvents(contractId, eventType, Number(take), Number(skip));
+  ): Promise<SorobanEvent[]> {
+    return this.eventsService.getEvents(
+      contractId,
+      eventType,
+      Number(take),
+      Number(skip),
+    );
   }
 
   @ApiOperation({ summary: 'Get event by ID' })
   @ApiResponse({ status: 200, description: 'Event details' })
   @ApiResponse({ status: 404, description: 'Event not found' })
   @Get(':eventId')
-  getEventById(@Param('eventId') eventId: string): SorobanEvent | undefined {
+  async getEventById(
+    @Param('eventId') eventId: string,
+  ): Promise<SorobanEvent | undefined> {
     return this.eventsService.getEventById(eventId);
   }
 }

@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Query,
+  Request,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { MarketplaceService } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { Offer } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
 
 @ApiTags('marketplace')
 @Controller('marketplace')
@@ -26,6 +28,7 @@ export class MarketplaceController {
   @ApiQuery({ name: 'methodology', required: false, type: String })
   @ApiQuery({ name: 'minPrice', required: false, type: Number })
   @ApiQuery({ name: 'maxPrice', required: false, type: Number })
+  @UseReplicaForRead()
   @Get('listings')
   getListings(
     @Query('page') page = '1',
@@ -48,11 +51,18 @@ export class MarketplaceController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post('offer')
-  createOffer(@Body() dto: CreateOfferDto): Promise<{ offerId: string }> {
-    return this.marketplaceService.createOffer(dto);
+  createOffer(
+    @Body() dto: CreateOfferDto,
+    @Request() req: any,
+  ): Promise<{ offerId: string }> {
+    return this.marketplaceService.createOffer({
+      ...dto,
+      sellerPublicKey: req.user.account,
+    });
   }
 
   @ApiOperation({ summary: 'Get offer by ID' })
+  @UseReplicaForRead()
   @Get('offer/:id')
   getOffer(@Param('id', ParseIntPipe) id: number): Promise<Offer> {
     return this.marketplaceService.getOffer(id);
@@ -65,23 +75,26 @@ export class MarketplaceController {
   }
 
   @ApiOperation({ summary: 'Cancel an offer' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtAuthGuard)
   @Delete('offer/:id/seller/:address')
   cancelOffer(
-    @Param('address') address: string,
     @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
   ): Promise<void> {
-    return this.marketplaceService.cancelOffer(address, id);
+    return this.marketplaceService.cancelOffer(req.user.account, id);
   }
 
   @ApiOperation({ summary: 'Buy an offer from the marketplace' })
   @ApiResponse({ status: 200, description: 'Offer purchased' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 410, description: 'Offer has expired' })
   @UseGuards(JwtAuthGuard)
   @Post('offer/:id/buy')
   buyOffer(
     @Param('id', ParseIntPipe) id: number,
-    @Body('buyerPublicKey') buyerPublicKey: string,
+    @Request() req: any,
   ): Promise<void> {
-    return this.marketplaceService.buyOffer(buyerPublicKey, id);
+    return this.marketplaceService.buyOffer(req.user.account, id);
   }
 }

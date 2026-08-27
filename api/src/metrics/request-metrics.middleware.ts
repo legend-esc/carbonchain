@@ -18,7 +18,10 @@ export class RequestMetricsMiddleware implements NestMiddleware {
       };
 
       this.metricsService.httpRequestsTotal?.inc(labels);
-      this.metricsService.httpRequestDurationSeconds?.observe(labels, durationSeconds);
+      this.metricsService.httpRequestDurationSeconds?.observe(
+        labels,
+        durationSeconds,
+      );
     });
 
     next();

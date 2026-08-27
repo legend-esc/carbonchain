@@ -24,7 +24,12 @@ function makeCredit(
 
 /** Minimal no-op CacheService for unit tests (no Redis). */
 function makeNullCache(): CacheService {
-  const c = { get: jest.fn().mockResolvedValue(null), set: jest.fn().mockResolvedValue(undefined), del: jest.fn().mockResolvedValue(undefined), delPattern: jest.fn().mockResolvedValue(undefined) };
+  const c = {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+    delPattern: jest.fn().mockResolvedValue(undefined),
+  };
   return c as unknown as CacheService;
 }
 
@@ -169,7 +174,11 @@ describe('InMemoryCreditRepository.findByFilter', () => {
   });
 
   it('filters by status', async () => {
-    const result = await repo.findByFilter({ status: CreditStatus.Retired }, 1, 10);
+    const result = await repo.findByFilter(
+      { status: CreditStatus.Retired },
+      1,
+      10,
+    );
     expect(result.total).toBe(1);
     expect(result.data[0].id).toBe('b');
   });

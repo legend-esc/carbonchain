@@ -117,7 +117,7 @@ describe('MarketplaceListComponent', () => {
       fixture.detectChanges();
 
       const btn = fixture.nativeElement.querySelector('.btn-primary') as HTMLButtonElement;
-      expect(btn.disabled).toBeTrue();
+      expect(btn.disabled).toBeTruthy();
     });
 
     it('refresh button is enabled after load completes', async () => {
@@ -127,7 +127,7 @@ describe('MarketplaceListComponent', () => {
       fixture.detectChanges();
 
       const btn = fixture.nativeElement.querySelector('.btn-primary') as HTMLButtonElement;
-      expect(btn.disabled).toBeFalse();
+      expect(btn.disabled).toBeFalsy();
     });
   });
 });

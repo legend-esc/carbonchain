@@ -21,14 +21,17 @@ import { CreditStatus } from '@shared';
             <input
               type="search"
               placeholder="Project name…"
-              [(ngModel)]="searchTerm()"
-              (ngModelChange)="onSearchChanged()"
+              [ngModel]="searchTerm()"
+              (ngModelChange)="searchTerm.set($event); onSearchChanged()"
             />
           </label>
 
           <label class="field">
             <span>Methodology</span>
-            <select [(ngModel)]="selectedMethodology()" (change)="onFiltersChanged()">
+            <select
+              [ngModel]="selectedMethodology()"
+              (ngModelChange)="selectedMethodology.set($event); onFiltersChanged()"
+            >
               <option [ngValue]="''">All</option>
               @for (m of methodologies(); track m) {
                 <option [ngValue]="m">{{ m }}</option>

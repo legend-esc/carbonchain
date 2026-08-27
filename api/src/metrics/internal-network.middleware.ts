@@ -34,7 +34,9 @@ export class InternalNetworkMiddleware implements NestMiddleware {
   use(req: Request, _res: Response, next: NextFunction): void {
     const ip = req.ip ?? req.socket.remoteAddress ?? '';
     if (!isInternal(ip)) {
-      throw new ForbiddenException('Metrics are only available from internal network');
+      throw new ForbiddenException(
+        'Metrics are only available from internal network',
+      );
     }
     next();
   }

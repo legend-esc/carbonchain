@@ -1,6 +1,8 @@
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { IssueCreditDto } from './dto/issue-credit.dto';
+import { TransferCreditDto } from './dto/transfer-credit.dto';
+import { SplitCreditDto } from './dto/split-credit.dto';
 
 const validPayload = {
   issuerPublicKey: 'GABC123',
@@ -10,6 +12,7 @@ const validPayload = {
   geography: 'NG',
   tonnes: '1000000',
   ipfsHash: 'bafybei123',
+  nonce: '1',
 };
 
 describe('IssueCreditDto', () => {
@@ -62,5 +65,73 @@ describe('IssueCreditDto', () => {
     });
     const errors = await validate(dto);
     expect(errors.some((e) => e.property === 'ipfsHash')).toBe(true);
+  });
+
+  it('rejects missing nonce', async () => {
+    const dto = plainToInstance(IssueCreditDto, {
+      ...validPayload,
+      nonce: undefined,
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'nonce')).toBe(true);
+  });
+});
+
+describe('TransferCreditDto', () => {
+  const validPayload = {
+    to: 'GABC123...XYZ',
+    nonce: 1,
+  };
+
+  it('passes with valid data', async () => {
+    const dto = plainToInstance(TransferCreditDto, validPayload);
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects empty recipient', async () => {
+    const dto = plainToInstance(TransferCreditDto, { ...validPayload, to: '' });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'to')).toBe(true);
+  });
+
+  it('rejects missing nonce', async () => {
+    const dto = plainToInstance(TransferCreditDto, {
+      ...validPayload,
+      nonce: undefined,
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'nonce')).toBe(true);
+  });
+});
+
+describe('SplitCreditDto', () => {
+  const validPayload = {
+    splitTonnes: '50000000',
+    nonce: 1,
+  };
+
+  it('passes with valid data', async () => {
+    const dto = plainToInstance(SplitCreditDto, validPayload);
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects empty splitTonnes', async () => {
+    const dto = plainToInstance(SplitCreditDto, {
+      ...validPayload,
+      splitTonnes: '',
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'splitTonnes')).toBe(true);
+  });
+
+  it('rejects missing nonce', async () => {
+    const dto = plainToInstance(SplitCreditDto, {
+      ...validPayload,
+      nonce: undefined,
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'nonce')).toBe(true);
   });
 });
