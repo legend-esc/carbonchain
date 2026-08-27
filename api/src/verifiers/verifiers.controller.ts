@@ -15,6 +15,7 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { StrKey } from '@stellar/stellar-sdk';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
 import { CreditMetadata, VerifierReputation } from '../../../shared';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @ApiTags('verifiers')
 @Controller('verifiers')
@@ -166,23 +167,25 @@ export class VerifiersController {
   @ApiResponse({ status: 200, description: 'Updated stake after deposit' })
   @ApiResponse({ status: 400, description: 'Invalid address or amount' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/stake/deposit')
   @HttpCode(200)
   async depositStake(
-    @Param('address') address: string,
+    @Param('address') _address: string,
     @Body() body: { tokenId: string; amount: string; nonce: string },
+    @Request() req: any,
   ): Promise<{ address: string; stake: string }> {
-    if (!StrKey.isValidEd25519PublicKey(address)) {
+    const account = req.user.account;
+    if (!StrKey.isValidEd25519PublicKey(account)) {
       throw new BadRequestException(
-        `'${address}' is not a valid Stellar Ed25519 public key.`,
+        `'${account}' is not a valid Stellar Ed25519 public key.`,
       );
     }
     if (!body.tokenId || !body.amount || !body.nonce) {
       throw new BadRequestException('tokenId, amount, and nonce are required');
     }
     return this.verifiersService.depositStake(
-      address,
+      account,
       body.tokenId,
       body.amount,
       body.nonce,
@@ -204,23 +207,25 @@ export class VerifiersController {
     description: 'No unbonding request or unbonding period not elapsed',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/stake/withdraw')
   @HttpCode(200)
   async withdrawStake(
-    @Param('address') address: string,
+    @Param('address') _address: string,
     @Body() body: { tokenId: string; nonce: string },
+    @Request() req: any,
   ): Promise<{ withdrawn: boolean; address: string }> {
-    if (!StrKey.isValidEd25519PublicKey(address)) {
+    const account = req.user.account;
+    if (!StrKey.isValidEd25519PublicKey(account)) {
       throw new BadRequestException(
-        `'${address}' is not a valid Stellar Ed25519 public key.`,
+        `'${account}' is not a valid Stellar Ed25519 public key.`,
       );
     }
     if (!body.tokenId || !body.nonce) {
       throw new BadRequestException('tokenId and nonce are required');
     }
     return this.verifiersService.withdrawStake(
-      address,
+      account,
       body.tokenId,
       body.nonce,
     );
