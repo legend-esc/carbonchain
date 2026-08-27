@@ -3692,6 +3692,15 @@ mod tests {
     fn test_migration_round_trip() {
         let env = Env::default();
         env.mock_all_auths();
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        client.initialize(&admin, &retirement, &1);
+        assert!(client.get_nonce(&admin) >= 0);
+    }
+
+    #[test]
     fn test_submit_credit_issuer_not_allowed() {
         let (env, client, admin, _) = setup();
         let anonce = client.get_nonce(&admin);
@@ -3714,7 +3723,7 @@ mod tests {
             &issuer,
             &String::from_str(&env, "PROJ-001"),
             &2024,
-            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "UNREGISTERED"),
             &String::from_str(&env, "NG"),
             &1_000_000,
             &String::from_str(&env, "bafybei123"),
@@ -3723,7 +3732,6 @@ mod tests {
         assert_eq!(result, Err(Ok(CarbonChainError::IssuerNotAllowed)));
     }
 
-    /// 100_001 is one unit above the minimum but not a multiple — must return InvalidTonnes.
     #[test]
     fn test_submit_credit_100001_tonnes_fails_invalid_tonnes() {
         let (env, client, admin, _) = setup();
@@ -3952,6 +3960,15 @@ mod tests {
 
     #[test]
     fn test_approval_bitmap_duplicate_approval_rejected() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let anonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &anonce);
+        let anonce2 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
             &anonce2,
         );
         client.register_project(
@@ -3972,7 +3989,6 @@ mod tests {
             &String::from_str(&env, "bafybei123"),
             &inonce,
         );
-        // Events are per-invocation; submit_credit emits at least CreditSubmitted
         assert!(!env.events().all().events().is_empty());
     }
 

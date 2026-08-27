@@ -1,4 +1,6 @@
 #![no_std]
+mod history_ring_buffer;
+
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
     IntoVal, String, Symbol, Val, Vec,
@@ -47,19 +49,20 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum OracleError {
-    NotInitialized = 119,
-    Unauthorized = 120,
-    AlreadyInitialized = 121,
-    Overflow = 122,
-    ContractPaused = 123,
-    ProjectNotFound = 124,
-    InvalidNonce = 125,
-    InvalidProject = 126,
-    InvalidTimestamp = 127,
-    NoPendingAdmin = 128,
-    InvalidReading = 129,
-    InvalidThreshold = 130,
-    InvalidRegistry = 131,
+    // Oracle contract codes are kept in the reserved MRV range.
+    NotInitialized = 400,
+    Unauthorized = 401,
+    AlreadyInitialized = 402,
+    Overflow = 403,
+    ContractPaused = 404,
+    ProjectNotFound = 405,
+    InvalidNonce = 406,
+    InvalidProject = 407,
+    InvalidTimestamp = 408,
+    NoPendingAdmin = 409,
+    InvalidReading = 409,
+    InvalidThreshold = 409,
+    InvalidRegistry = 409,
 }
 
 #[contractevent]
@@ -126,6 +129,8 @@ const MAX_HISTORY: u32 = 100;
 const MIN_TTL: u32 = 6_307_200;
 /// Threshold below which TTL is extended.
 const TTL_THRESHOLD: u32 = MIN_TTL / 2;
+/// Maximum skew allowed between a caller-supplied reading timestamp and the ledger time.
+const MAX_READING_SKEW: u64 = 3_600;
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -392,7 +397,8 @@ impl MrvOracle {
         if !Self::consume_nonce(&env, &oracle, nonce) {
             return Err(OracleError::InvalidNonce);
         }
-        if timestamp > env.ledger().timestamp() {
+        let ledger_ts = env.ledger().timestamp();
+        if timestamp > ledger_ts || timestamp.saturating_add(MAX_READING_SKEW) < ledger_ts {
             return Err(OracleError::InvalidTimestamp);
         }
         if tonnes < 0 {
@@ -426,7 +432,7 @@ impl MrvOracle {
             oracle: oracle.clone(),
             project_id: project_id.clone(),
             tonnes,
-            recorded_at: timestamp,
+            recorded_at: ledger_ts,
             anomaly,
         };
 
@@ -439,21 +445,27 @@ impl MrvOracle {
             MIN_TTL,
         );
 
-        let hist_key = DataKey::History(project_id.clone());
-        let mut history: Vec<MrvDataPoint> = env
+        let hist_slots_key = DataKey::HistorySlots(project_id.clone());
+        let hist_meta_key = DataKey::HistoryMeta(project_id.clone());
+        let mut slots: soroban_sdk::Map<u32, MrvDataPoint> = env
             .storage()
             .persistent()
-            .get(&hist_key)
-            .unwrap_or_else(|| Vec::new(&env));
-        if history.len() >= MAX_HISTORY {
-            // Evict oldest entry (index 0) to keep the ring buffer bounded.
-            history.remove(0);
-        }
-        history.push_back(point);
-        env.storage().persistent().set(&hist_key, &history);
+            .get(&hist_slots_key)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+        let mut meta: crate::history_ring_buffer::RingBufferMeta = env
+            .storage()
+            .persistent()
+            .get(&hist_meta_key)
+            .unwrap_or(crate::history_ring_buffer::RingBufferMeta { head: 0, count: 0 });
+        crate::history_ring_buffer::HistoryRingBuffer::push(&env, &mut slots, &mut meta, point.clone());
+        env.storage().persistent().set(&hist_slots_key, &slots);
+        env.storage().persistent().set(&hist_meta_key, &meta);
         env.storage()
             .persistent()
-            .extend_ttl(&hist_key, TTL_THRESHOLD, MIN_TTL);
+            .extend_ttl(&hist_slots_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&hist_meta_key, TTL_THRESHOLD, MIN_TTL);
 
         MrvUpd {
             oracle: oracle.clone(),
@@ -598,10 +610,25 @@ impl MrvOracle {
 
     /// Returns the full MRV history for `project_id` (up to 100 entries).
     pub fn get_history(env: Env, project_id: String) -> Vec<MrvDataPoint> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::History(project_id))
-            .unwrap_or_else(|| Vec::new(&env))
+        let slots_key = DataKey::HistorySlots(project_id.clone());
+        if env.storage().persistent().has(&slots_key) {
+            let slots: soroban_sdk::Map<u32, MrvDataPoint> = env
+                .storage()
+                .persistent()
+                .get(&slots_key)
+                .unwrap();
+            let meta: crate::history_ring_buffer::RingBufferMeta = env
+                .storage()
+                .persistent()
+                .get(&DataKey::HistoryMeta(project_id.clone()))
+                .unwrap();
+            crate::history_ring_buffer::HistoryRingBuffer::to_vec_ordered(&slots, &meta)
+        } else {
+            env.storage()
+                .persistent()
+                .get(&DataKey::History(project_id))
+                .unwrap_or_else(|| Vec::new(&env))
+        }
     }
 
     /// Returns individual MRV data points for `project_id` where `from_ts <= recorded_at <= to_ts`.
@@ -611,11 +638,7 @@ impl MrvOracle {
         from_ts: u64,
         to_ts: u64,
     ) -> Vec<MrvDataPoint> {
-        let history: Vec<MrvDataPoint> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::History(project_id))
-            .unwrap_or_else(|| Vec::new(&env));
+        let history = Self::get_history(env.clone(), project_id.clone());
         let mut result: Vec<MrvDataPoint> = Vec::new(&env);
         for point in history.iter() {
             if point.recorded_at >= from_ts && point.recorded_at <= to_ts {
@@ -633,11 +656,7 @@ impl MrvOracle {
         from_ts: u64,
         to_ts: u64,
     ) -> (i128, i128) {
-        let history = env
-            .storage()
-            .persistent()
-            .get::<_, Vec<MrvDataPoint>>(&DataKey::History(project_id))
-            .unwrap_or_else(|| Vec::new(&env));
+        let history = Self::get_history(env.clone(), project_id.clone());
 
         let mut sum: i128 = 0;
         let mut count: i128 = 0;
