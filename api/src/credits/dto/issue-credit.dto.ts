@@ -5,9 +5,8 @@ import {
   Min,
   Max,
   IsNumberString,
-  IsOptional,
 } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { IsValidMethodology } from '../validators/methodology.validator';
 import { IsTonnesMultiple } from '../validators/tonnes.validator';
 import { VALID_METHODOLOGIES } from '../methodologies';
@@ -72,17 +71,14 @@ export class IssueCreditDto {
    * The API claims this nonce in Redis with SET NX before forwarding the
    * transaction to the Stellar contract.  Must be unique per issuerPublicKey
    * within the Stellar ledger close window (~5 s).
-   *
-   * If omitted, a random nonce is generated server-side and no API-layer
-   * deduplication is applied for that request.
    */
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: '1234567890',
     description:
-      'Optional nonce for idempotency / replay protection. ' +
+      'Nonce for idempotency / replay protection. ' +
       'Unique per issuerPublicKey within the Stellar ledger close window.',
   })
-  @IsOptional()
   @IsNumberString()
-  nonce?: string;
+  @IsNotEmpty()
+  nonce: string;
 }

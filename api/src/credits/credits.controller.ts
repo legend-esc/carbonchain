@@ -361,6 +361,10 @@ export class CreditsController {
   async mergeCredits(
     @Body() dto: MergeCreditsDto,
   ): Promise<{ mergedCreditId: string; sourceCount: number }> {
-    return this.creditsService.mergeCredits(dto.callerPublicKey, dto.creditIds);
+    return this.creditsService.mergeCredits(
+      dto.callerPublicKey,
+      dto.creditIds,
+      dto.nonce,
+    );
   }
 }

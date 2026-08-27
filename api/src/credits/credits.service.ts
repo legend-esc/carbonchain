@@ -255,6 +255,7 @@ export class CreditsService {
     };
 
     let repoResult: PageResult<CreditEntity>;
+    let repoFailed = false;
     try {
       repoResult = await this.creditRepo.findByFilter(
         repoFilter,
@@ -265,6 +266,7 @@ export class CreditsService {
       this.logger.warn(
         `Failed to fetch credits from repo: ${(err as Error).message}`,
       );
+      repoFailed = true;
       repoResult = {
         data: [],
         total: 0,
@@ -292,7 +294,17 @@ export class CreditsService {
       page: filter.page,
       limit: filter.limit,
     };
-    await this.cache.setTagged(cacheKey, result, [CREDIT_LIST_TAG], CREDIT_TTL);
+    // Don't cache a failure as if it were a genuine empty page — a transient
+    // repo outage would otherwise serve stale "no results" to every caller
+    // for the remainder of the TTL.
+    if (!repoFailed) {
+      await this.cache.setTagged(
+        cacheKey,
+        result,
+        [CREDIT_LIST_TAG],
+        CREDIT_TTL,
+      );
+    }
     return result;
   }
 
@@ -639,6 +651,11 @@ export class CreditsService {
       throw new BadRequestException('Caller does not own this credit');
     }
 
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(caller, BigInt(nonce));
+    }
+
     const args = [
       nativeToScVal(caller, { type: 'address' }),
       nativeToScVal(to, { type: 'address' }),
@@ -677,6 +694,11 @@ export class CreditsService {
     const credit = await this.getCredit(creditId);
     if (credit.owner !== caller) {
       throw new BadRequestException('Caller does not own this credit');
+    }
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(caller, BigInt(nonce));
     }
 
     const args = [
@@ -945,6 +967,7 @@ export class CreditsService {
   async mergeCredits(
     callerPublicKey: string,
     creditIds: string[],
+    nonce: number,
   ): Promise<{ mergedCreditId: string; sourceCount: number }> {
     this.logger.log(
       `Merging ${creditIds.length} credits for caller ${callerPublicKey}`,
@@ -954,6 +977,11 @@ export class CreditsService {
       throw new BadRequestException(
         'merge_credits requires between 2 and 20 credit IDs',
       );
+    }
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(callerPublicKey, BigInt(nonce));
     }
 
     // Build contract args: (caller: Address, credit_ids: Vec<BytesN<32>>)

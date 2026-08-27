@@ -12,6 +12,7 @@ const validPayload = {
   geography: 'NG',
   tonnes: '1000000',
   ipfsHash: 'bafybei123',
+  nonce: '1',
 };
 
 describe('IssueCreditDto', () => {
@@ -64,6 +65,15 @@ describe('IssueCreditDto', () => {
     });
     const errors = await validate(dto);
     expect(errors.some((e) => e.property === 'ipfsHash')).toBe(true);
+  });
+
+  it('rejects missing nonce', async () => {
+    const dto = plainToInstance(IssueCreditDto, {
+      ...validPayload,
+      nonce: undefined,
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'nonce')).toBe(true);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  BadRequestException,
   Inject,
   OnApplicationBootstrap,
 } from '@nestjs/common';
@@ -477,10 +478,8 @@ export class VerifiersService implements OnApplicationBootstrap {
     amount: string,
     nonce: string,
   ): Promise<{ address: string; stake: string }> {
-    const amountBig = BigInt(amount);
-    if (amountBig <= 0n) {
-      throw new Error('amount must be positive');
-    }
+    const amountBig = this.parsePositiveBigInt(amount, 'amount');
+    const nonceBig = this.parseNonNegativeBigInt(nonce, 'nonce');
     this.logger.log(
       `Depositing stake for verifier ${address}: amount=${amount} token=${tokenId}`,
     );
@@ -488,7 +487,7 @@ export class VerifiersService implements OnApplicationBootstrap {
       nativeToScVal(address, { type: 'address' }),
       nativeToScVal(tokenId, { type: 'address' }),
       nativeToScVal(amountBig, { type: 'i128' }),
-      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+      nativeToScVal(nonceBig, { type: 'u64' }),
     ];
     const signer = this.keypairService.getAdminKeypair();
     await this.stellarService.invokeContract(
@@ -509,11 +508,12 @@ export class VerifiersService implements OnApplicationBootstrap {
     tokenId: string,
     nonce: string,
   ): Promise<{ withdrawn: boolean; address: string }> {
+    const nonceBig = this.parseNonNegativeBigInt(nonce, 'nonce');
     this.logger.log(`Withdrawing stake for verifier ${address}`);
     const args = [
       nativeToScVal(address, { type: 'address' }),
       nativeToScVal(tokenId, { type: 'address' }),
-      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+      nativeToScVal(nonceBig, { type: 'u64' }),
     ];
     const signer = this.keypairService.getAdminKeypair();
     await this.stellarService.invokeContract(
@@ -526,6 +526,27 @@ export class VerifiersService implements OnApplicationBootstrap {
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
+
+  /** Regex for an unsigned integer literal — the only shape BigInt() should be trusted with here. */
+  private static readonly UINT_STRING = /^\d+$/;
+
+  private parsePositiveBigInt(value: string, field: string): bigint {
+    if (!VerifiersService.UINT_STRING.test(value)) {
+      throw new BadRequestException(`${field} must be a positive integer`);
+    }
+    const parsed = BigInt(value);
+    if (parsed <= 0n) {
+      throw new BadRequestException(`${field} must be positive`);
+    }
+    return parsed;
+  }
+
+  private parseNonNegativeBigInt(value: string, field: string): bigint {
+    if (!VerifiersService.UINT_STRING.test(value)) {
+      throw new BadRequestException(`${field} must be a non-negative integer`);
+    }
+    return BigInt(value);
+  }
 
   /**
    * Fetch the raw list of verifier addresses from the on-chain registry.

@@ -350,6 +350,11 @@ export class RetirementService {
       `Batch retiring ${dto.creditIds.length} credits for ${dto.buyerPublicKey}`,
     );
 
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(dto.buyerPublicKey, BigInt(dto.nonce));
+    }
+
     const creditIdsVal = nativeToScVal(
       dto.creditIds.map((id) => Buffer.from(id, 'hex')),
     );
