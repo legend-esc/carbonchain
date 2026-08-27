@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotImplementedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
@@ -96,12 +96,20 @@ export class AdminService {
   async registerVerifier(
     address: string,
   ): Promise<{ registered: boolean; address: string }> {
-    return { registered: true, address };
+    void address;
+    // No `register_verifier` contract/DB call exists yet — see verifiers.service.ts.
+    // Returning a fake success here would silently mislead admin tooling.
+    throw new NotImplementedException(
+      'registerVerifier is not implemented: no backing contract/DB call exists yet',
+    );
   }
 
   async suspendVerifier(id: string): Promise<{ suspended: boolean }> {
     await this.verifiersService.getVerifier(id);
-    return { suspended: true };
+    // No `suspend_verifier` contract/DB call exists yet.
+    throw new NotImplementedException(
+      'suspendVerifier is not implemented: no backing contract/DB call exists yet',
+    );
   }
 
   async configureVerifier(
@@ -110,14 +118,21 @@ export class AdminService {
   ): Promise<{ configured: boolean; verifierId: string }> {
     void _capabilities;
     await this.verifiersService.getVerifier(id);
-    return { configured: true, verifierId: id };
+    // No `configure_verifier` contract/DB call exists yet.
+    throw new NotImplementedException(
+      'configureVerifier is not implemented: no backing contract/DB call exists yet',
+    );
   }
 
   async flagCredit(
     id: string,
   ): Promise<{ flagged: boolean; creditId: string; status: CreditStatus }> {
     await this.creditsService.getCredit(id);
-    return { flagged: true, creditId: id, status: CreditStatus.Flagged };
+    // Flagging outside of the dispute-resolution flow has no backing contract call yet
+    // (see CreditsService.resolveDispute, which requires Disputed status).
+    throw new NotImplementedException(
+      'flagCredit is not implemented: no backing contract/DB call exists yet',
+    );
   }
 
   /**
@@ -181,7 +196,12 @@ export class AdminService {
     name: string,
     description: string,
   ): { registered: boolean; name: string; description: string } {
-    return { registered: true, name, description };
+    void name;
+    void description;
+    // No contract/DB persistence for methodologies exists yet.
+    throw new NotImplementedException(
+      'registerMethodology is not implemented: no backing contract/DB call exists yet',
+    );
   }
 
   /**
