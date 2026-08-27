@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -219,7 +220,15 @@ export class AuthService {
     const remainingTtl = Math.max(exp - now, 1);
 
     const blocklistKey = `${BLOCKLIST_PREFIX}${payload.jti}`;
-    await this.cache.set(blocklistKey, true, remainingTtl);
+    const persisted = await this.cache.set(blocklistKey, true, remainingTtl);
+    if (!persisted) {
+      this.logger.error(
+        `JWT revocation NOT persisted (cache unavailable): jti=${payload.jti}`,
+      );
+      throw new ServiceUnavailableException(
+        'Unable to revoke token: revocation store unavailable. Token remains valid until it expires naturally.',
+      );
+    }
     this.logger.log(`JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`);
   }
 

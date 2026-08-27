@@ -200,17 +200,27 @@ export class CacheService implements OnModuleDestroy {
 
   /**
    * Store a value with an optional TTL (seconds). Defaults to CACHE_TTL_SECONDS env var.
+   *
+   * Returns `false` when the value could not be persisted (cache unavailable or
+   * the write failed) so callers relying on the write for correctness (e.g.
+   * token revocation) can fail closed instead of assuming success.
    */
-  async set(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
-    if (!this.isCacheAvailable()) return;
+  async set(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
+    if (!this.isCacheAvailable()) return false;
     try {
       const ttl = ttlSeconds ?? this.defaultTtlSeconds;
       await this.client!.set(key, JSON.stringify(value), 'EX', ttl);
+      return true;
     } catch (err) {
       this.logger.warn(
         `Cache SET failed for key "${key}": ${(err as Error).message}`,
       );
       this.recordFailure();
+      return false;
     }
   }
 
