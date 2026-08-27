@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   BadRequestException,
+  InternalServerErrorException,
   Inject,
   OnApplicationBootstrap,
 } from '@nestjs/common';
@@ -302,6 +303,19 @@ export class VerifiersService implements OnApplicationBootstrap {
     if (caller !== address) {
       throw new ForbiddenException(
         'Caller does not match the verifier address',
+      );
+    }
+
+    // Guard against accidental admin-key signing in production.
+    // Set VERIFIER_SIGNING_MODE=production to enforce this check.
+    // In production the verifier must sign via their own wallet (Freighter).
+    // See the JSDoc above for the planned two-phase signing flow.
+    const signingMode = this.configService.get<string>('VERIFIER_SIGNING_MODE', 'test');
+    if (signingMode === 'production') {
+      throw new InternalServerErrorException(
+        'approveCredit cannot use the admin keypair in production. ' +
+          'Implement the two-phase Freighter signing flow before enabling ' +
+          'VERIFIER_SIGNING_MODE=production.',
       );
     }
 

@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
   Inject,
   Optional,
 } from '@nestjs/common';
@@ -304,11 +305,19 @@ export class RetirementService {
           // be retried separately via a background job.
         }
       } catch (certErr) {
-        this.logger.warn(
+        // A failed cert-gen must not be silently swallowed: the retirement
+        // record exists on-chain but the caller would receive an empty hash
+        // with a 201, leaving the certificate permanently unrecoverable.
+        // Throw so the caller knows to retry or investigate.
+        this.logger.error(
           `Certificate generation failed for retirement ${retirementId}: ` +
             `${(certErr as Error).message}`,
         );
-        // certificateIpfsHash remains null — retirement still succeeds.
+        throw new InternalServerErrorException(
+          `Retirement succeeded on-chain (id: ${retirementId}) but certificate ` +
+            `generation failed: ${(certErr as Error).message}. ` +
+            `Retry POST /credits/${dto.creditId}/retire or contact support.`,
+        );
       }
     }
 
@@ -473,6 +482,27 @@ export class RetirementService {
 
     // Emit events only after all records are persisted successfully.
     const succeeded: string[] = [];
+
+    // Mirror the single-retire status update: mark each successfully retired
+    // credit as Retired in the off-chain index. Failures here are logged but
+    // do not roll back the already-committed retirement records.
+    await Promise.all(
+      entities.map(async (entity) => {
+        try {
+          const credit = await this.creditRepo.findById(entity.creditId);
+          if (credit) {
+            credit.status = CreditStatus.Retired;
+            await this.creditRepo.save(credit);
+          }
+        } catch (statusErr: unknown) {
+          this.logger.warn(
+            `Failed to update status for credit ${entity.creditId} after batch retirement: ` +
+              `${(statusErr as Error).message}`,
+          );
+        }
+      }),
+    );
+
     for (let i = 0; i < entities.length; i++) {
       const event: CreditRetiredEvent = {
         retirementId: entities[i].id,

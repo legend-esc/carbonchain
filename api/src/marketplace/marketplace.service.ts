@@ -14,6 +14,13 @@ import { CreateOfferDto } from './dto/create-offer.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
 
 /**
+ * Maximum number of offers fetched from the contract in a single read.
+ * Prevents unbounded memory usage as the order book grows.
+ * Increase and add cursor-based pagination once the contract supports it.
+ */
+export const MAX_LISTINGS = 500;
+
+/**
  * Maps Soroban marketplace contract error codes to HTTP exceptions.
  * Error code reference: docs/features/ERROR_CODES_REFERENCE.md
  */
@@ -120,24 +127,28 @@ export class MarketplaceService {
     };
   }
 
-  /** Returns all active (open) offers from the contract. */
+  /** Returns active (open) offers from the contract, capped at MAX_LISTINGS. */
   async getListings(): Promise<Offer[]> {
-    const args = [nativeToScVal(true, { type: 'bool' })];
-    try {
-      const retval = await this.stellarService.readContract(
-        this.contractId,
-        'get_active_offers',
-        args,
-      );
-      if (!retval) return [];
-      const raw = scValToNative(retval) as Array<{
-        id: bigint;
-        [key: string]: unknown;
-      }>;
-      return raw.map((item) => this.mapOffer(Number(item.id), item));
-    } catch {
-      return [];
-    }
+    // Pass offset=0 and limit=MAX_LISTINGS so that, once the contract supports
+    // cursor-based reads, we can forward these args directly and remove the
+    // in-process slice. For now they act as a hard cap against unbounded reads.
+    const args = [
+      nativeToScVal(true, { type: 'bool' }),
+      nativeToScVal(0, { type: 'u64' }),
+      nativeToScVal(MAX_LISTINGS, { type: 'u64' }),
+    ];
+    const retval = await this.stellarService.readContract(
+      this.contractId,
+      'get_active_offers',
+      args,
+    );
+    if (!retval) return [];
+    const raw = scValToNative(retval) as Array<{
+      id: bigint;
+      [key: string]: unknown;
+    }>;
+    // Hard cap in case the contract ignores the limit arg (older deployment).
+    return raw.slice(0, MAX_LISTINGS).map((item) => this.mapOffer(Number(item.id), item));
   }
 
   async getOffersBySeller(seller: string): Promise<string[]> {
