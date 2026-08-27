@@ -51,8 +51,14 @@ export class MarketplaceController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post('offer')
-  createOffer(@Body() dto: CreateOfferDto): Promise<{ offerId: string }> {
-    return this.marketplaceService.createOffer(dto);
+  createOffer(
+    @Body() dto: CreateOfferDto,
+    @Request() req: any,
+  ): Promise<{ offerId: string }> {
+    return this.marketplaceService.createOffer({
+      ...dto,
+      sellerPublicKey: req.user.account,
+    });
   }
 
   @ApiOperation({ summary: 'Get offer by ID' })
@@ -87,8 +93,8 @@ export class MarketplaceController {
   @Post('offer/:id/buy')
   buyOffer(
     @Param('id', ParseIntPipe) id: number,
-    @Body('buyerPublicKey') buyerPublicKey: string,
+    @Request() req: any,
   ): Promise<void> {
-    return this.marketplaceService.buyOffer(buyerPublicKey, id);
+    return this.marketplaceService.buyOffer(req.user.account, id);
   }
 }
