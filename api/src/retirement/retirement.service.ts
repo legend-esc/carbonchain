@@ -5,13 +5,9 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { RetirementRecord } from '../shared';
+import { RetireDto } from './dto/retire.dto';
 
-export class RetireDto {
-  buyerPublicKey: string;
-  creditId: string;
-  tonnes: string;
-  reason: string;
-}
+export { RetireDto } from './dto/retire.dto';
 
 @Injectable()
 export class RetirementService {

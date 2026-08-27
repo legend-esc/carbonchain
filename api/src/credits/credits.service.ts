@@ -5,16 +5,9 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
 import { CreditMetadata, CreditStatus } from '../shared';
+import { IssueCreditDto } from './dto/issue-credit.dto';
 
-export class IssueCreditDto {
-  issuerPublicKey: string;
-  projectId: string;
-  vintageYear: number;
-  methodology: string;
-  geography: string;
-  tonnes: string;
-  ipfsHash: string;
-}
+export { IssueCreditDto } from './dto/issue-credit.dto';
 
 @Injectable()
 export class CreditsService {

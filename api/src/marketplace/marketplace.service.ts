@@ -5,13 +5,9 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { Offer } from '../shared';
+import { CreateOfferDto } from './dto/create-offer.dto';
 
-export class CreateOfferDto {
-  sellerPublicKey: string;
-  creditId: string;
-  priceXlm: string;
-  tonnes: string;
-}
+export { CreateOfferDto } from './dto/create-offer.dto';
 
 @Injectable()
 export class MarketplaceService {

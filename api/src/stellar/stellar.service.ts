@@ -59,6 +59,29 @@ export class StellarService implements OnModuleInit {
     args: xdr.ScVal[] = [],
     signerKeypair: Keypair,
   ): Promise<rpc.Api.GetTransactionResponse> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await this.invokeContractAttempt(
+          contractId,
+          method,
+          args,
+          signerKeypair,
+        );
+      } catch (error: unknown) {
+        if (attempt === 0 && this.isBadSequenceError(error)) continue;
+        throw error;
+      }
+    }
+
+    throw new Error('Contract invocation failed');
+  }
+
+  private async invokeContractAttempt(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[],
+    signerKeypair: Keypair,
+  ): Promise<rpc.Api.GetTransactionResponse> {
     const account = await this.horizonServer.loadAccount(
       signerKeypair.publicKey(),
     );
@@ -90,13 +113,23 @@ export class StellarService implements OnModuleInit {
 
       const response = await this.sorobanRpcServer.sendTransaction(preparedTx);
 
-      if ((response.status as any) === 'PENDING') {
+      if (response.status === 'PENDING') {
         return this.pollTransactionStatus(response.hash);
+      }
+      if (this.isBadSequenceError(response)) {
+        throw new Error('tx_bad_seq');
       }
       throw new Error(`Transaction failed with status: ${response.status}`);
     } else {
       throw new Error(`Simulation failed: ${JSON.stringify(simulation)}`);
     }
+  }
+
+  private isBadSequenceError(error: unknown): boolean {
+    if (typeof error === 'string') return error.includes('tx_bad_seq');
+    if (error instanceof Error) return error.message.includes('tx_bad_seq');
+    const serialized = JSON.stringify(error);
+    return typeof serialized === 'string' && serialized.includes('tx_bad_seq');
   }
 
   async buildAndSubmit(
