@@ -32,6 +32,10 @@ export interface CreditFilter {
   methodology?: string;
   geography?: string;
   vintageYear?: number;
+  /** Inclusive lower bound on tonnes, decimal string (i128 range). */
+  minTonnes?: string;
+  /** Inclusive upper bound on tonnes, decimal string (i128 range). */
+  maxTonnes?: string;
 }
 
 export interface ICreditRepository {
@@ -174,6 +178,14 @@ export class InMemoryCreditRepository implements ICreditRepository {
     if (filter.vintageYear !== undefined) {
       all = all.filter((c) => c.vintageYear === filter.vintageYear);
     }
+    if (filter.minTonnes) {
+      const minVal = BigInt(filter.minTonnes);
+      all = all.filter((c) => BigInt(c.tonnes) >= minVal);
+    }
+    if (filter.maxTonnes) {
+      const maxVal = BigInt(filter.maxTonnes);
+      all = all.filter((c) => BigInt(c.tonnes) <= maxVal);
+    }
 
     const result = this.paginate(all, page, limit);
     await this.cache?.set(key, result, FILTER_TTL);
@@ -231,6 +243,14 @@ export class InMemoryCreditRepository implements ICreditRepository {
     }
     if (filter.vintageYear !== undefined) {
       all = all.filter((c) => c.vintageYear === filter.vintageYear);
+    }
+    if (filter.minTonnes) {
+      const minVal = BigInt(filter.minTonnes);
+      all = all.filter((c) => BigInt(c.tonnes) >= minVal);
+    }
+    if (filter.maxTonnes) {
+      const maxVal = BigInt(filter.maxTonnes);
+      all = all.filter((c) => BigInt(c.tonnes) <= maxVal);
     }
 
     // Stable sort: (issuedAt ASC, id ASC)

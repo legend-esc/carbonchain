@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, MaxLength, IsInt, Min } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  MaxLength,
+  IsInt,
+  Min,
+  Matches,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RetireDto {
@@ -16,6 +23,26 @@ export class RetireDto {
   @IsInt()
   @Min(0)
   nonce: number = 0;
+}
+
+/**
+ * Request body for POST /retirement.
+ *
+ * Mirrors RetireDto's validation and adds the credit ID (which the
+ * /credits/:id/retire route takes from the URL). The buyer is never accepted
+ * from the body — the controller binds it to the authenticated principal.
+ */
+export class RetirementRequestDto extends RetireDto {
+  @ApiProperty({
+    example: 'a'.repeat(64),
+    description: 'Hex-encoded credit ID (64 characters)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[0-9a-f]{64}$/i, {
+    message: 'creditId must be a 64-character hex string',
+  })
+  creditId: string;
 }
 
 /** Full retirement payload used by the service and the POST /retirement endpoint. */

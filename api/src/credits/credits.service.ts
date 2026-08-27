@@ -186,16 +186,18 @@ export class CreditsService {
       throw new BadRequestException('Maximum 100 credits per bulk request');
     }
 
-    // Issue #494: Filter out IDs that are not valid 64-char lowercase hex strings
-    // (BytesN<32> format). Invalid IDs are silently skipped — partial result semantics.
+    // Every ID must be a 64-char hex string (BytesN<32> format). A malformed ID
+    // is a client error, so reject the whole request rather than silently
+    // dropping it and returning a partial array that masks the mistake.
     const HEX_64 = /^[0-9a-f]{64}$/i;
-    const validIds = creditIds.filter((id) => HEX_64.test(id));
-
-    if (validIds.length === 0) {
-      return [];
+    const malformedIds = creditIds.filter((id) => !HEX_64.test(id));
+    if (malformedIds.length > 0) {
+      throw new BadRequestException(
+        `Malformed credit IDs (expected 64-char hex): ${malformedIds.join(', ')}`,
+      );
     }
 
-    this.logger.log(`Fetching ${validIds.length} credits in bulk (parallel)`);
+    this.logger.log(`Fetching ${creditIds.length} credits in bulk (parallel)`);
 
     // Issue #494: Parallelise fetches with Promise.allSettled so all IDs are
     // resolved concurrently. Failed individual fetches are logged and omitted
@@ -203,7 +205,7 @@ export class CreditsService {
     // getCredit() already writes each fetched credit to the individual cache key
     // so subsequent single-credit GET /credits/:id requests hit the cache.
     const settled = await Promise.allSettled(
-      validIds.map((creditId) => this.getCredit(creditId)),
+      creditIds.map((creditId) => this.getCredit(creditId)),
     );
 
     const results: CreditMetadata[] = [];
@@ -213,7 +215,7 @@ export class CreditsService {
         results.push(outcome.value);
       } else {
         this.logger.warn(
-          `Bulk fetch: skipping credit ${validIds[i]} — ${(outcome.reason as Error).message}`,
+          `Bulk fetch: skipping credit ${creditIds[i]} — ${(outcome.reason as Error).message}`,
         );
       }
     }
@@ -247,11 +249,15 @@ export class CreditsService {
 
     // Push structured filters to the repository so it can apply them at the
     // storage layer rather than fetching every record into memory first.
+    // Tonnes range is included here so `total` reflects the fully-filtered set
+    // and pages are never short/empty while more matches exist.
     const repoFilter: import('./credit.repository').CreditFilter = {
       status: filter.status as CreditStatus | undefined,
       methodology: filter.methodology,
       geography: filter.geography,
       vintageYear: filter.vintageYear,
+      minTonnes: filter.minTonnes,
+      maxTonnes: filter.maxTonnes,
     };
 
     let repoResult: PageResult<CreditEntity>;
@@ -275,18 +281,7 @@ export class CreditsService {
       };
     }
 
-    // Apply tonnes range filters post-fetch (not yet part of CreditFilter interface).
-    let data = repoResult.data.map((e) => this.entityToMetadata(e));
-
-    if (filter.minTonnes) {
-      const minVal = BigInt(filter.minTonnes);
-      data = data.filter((c) => BigInt(c.tonnes) >= minVal);
-    }
-
-    if (filter.maxTonnes) {
-      const maxVal = BigInt(filter.maxTonnes);
-      data = data.filter((c) => BigInt(c.tonnes) <= maxVal);
-    }
+    const data = repoResult.data.map((e) => this.entityToMetadata(e));
 
     const result = {
       data,
@@ -340,6 +335,8 @@ export class CreditsService {
       methodology: filter.methodology,
       geography: filter.geography,
       vintageYear: filter.vintageYear,
+      minTonnes: filter.minTonnes,
+      maxTonnes: filter.maxTonnes,
     };
 
     let repoResult: import('./credit.repository').CursorPageResult<CreditEntity>;
@@ -356,16 +353,7 @@ export class CreditsService {
       repoResult = { data: [], next_cursor: null, limit: filter.limit };
     }
 
-    let data = repoResult.data.map((e) => this.entityToMetadata(e));
-
-    if (filter.minTonnes) {
-      const minVal = BigInt(filter.minTonnes);
-      data = data.filter((c) => BigInt(c.tonnes) >= minVal);
-    }
-    if (filter.maxTonnes) {
-      const maxVal = BigInt(filter.maxTonnes);
-      data = data.filter((c) => BigInt(c.tonnes) <= maxVal);
-    }
+    const data = repoResult.data.map((e) => this.entityToMetadata(e));
 
     return {
       data,

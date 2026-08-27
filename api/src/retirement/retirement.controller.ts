@@ -6,6 +6,7 @@ import {
   Body,
   UseGuards,
   Query,
+  Request,
   ParseIntPipe,
   DefaultValuePipe,
   NotFoundException,
@@ -20,7 +21,7 @@ import {
   BatchRetireResult,
   CertificateVerification,
 } from './retirement.service';
-import { FullRetireDto } from './dto/retire.dto';
+import { RetirementRequestDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
 import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -42,9 +43,17 @@ export class RetirementController {
   @UseGuards(JwtAuthGuard)
   @Post()
   retire(
-    @Body() dto: FullRetireDto,
+    @Body() dto: RetirementRequestDto,
+    @Request() req: { user: { account: string } },
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
-    return this.retirementService.retire(dto);
+    // Buyer is bound to the authenticated principal, never taken from the body.
+    // Delegates to retireCredit so this path runs the same off-chain status
+    // checks as POST /credits/:id/retire.
+    return this.retirementService.retireCredit(
+      dto.creditId,
+      { reason: dto.reason, nonce: dto.nonce },
+      req.user.account,
+    );
   }
 
   @ApiOperation({ summary: 'Batch retire multiple credits at once' })

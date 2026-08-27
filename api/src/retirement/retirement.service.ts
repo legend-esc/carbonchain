@@ -432,16 +432,33 @@ export class RetirementService {
 
     const now = Math.floor(Date.now() / 1000);
 
-    // Build entities only for successfully retired credits
+    // The contract retires credits in input order and returns one retirement ID
+    // per success, skipping failed credits — so succeededIds is shorter than
+    // dto.creditIds whenever a credit fails. Indexing dto.creditIds by the
+    // position in succeededIds therefore misattributes records once anything
+    // fails. Rebuild the successful source list by removing the
+    // contract-reported failures in input order, then pair each retirement ID
+    // with its true source credit (and that credit's tonnes) by position.
+    const failedIdSet = new Set(contractFailed.map((f) => f.id));
+    const succeededSources = dto.creditIds
+      .map((id, idx) => ({ id, tonnes: dto.tonnes[idx] ?? '0' }))
+      .filter((src) => !failedIdSet.has(src.id));
+
+    if (succeededSources.length !== succeededIds.length) {
+      this.logger.warn(
+        `Batch retire: contract reported ${succeededIds.length} successes but ` +
+          `${succeededSources.length} source credits remain after removing ` +
+          `reported failures — retirement records may be misattributed.`,
+      );
+    }
+
     const entities: RetirementEntity[] = succeededIds.map((retirementId, i) => {
-      // Map retirement ID back to original credit ID by index in succeeded list
-      // The contract retires credits in input order, skipping failed ones
-      const creditId = dto.creditIds[i] ?? '';
+      const source = succeededSources[i];
       const entity = new RetirementEntity();
       entity.id = retirementId;
-      entity.creditId = creditId;
+      entity.creditId = source?.id ?? '';
       entity.buyer = dto.buyerPublicKey;
-      entity.tonnesRetired = dto.tonnes[i] ?? '0';
+      entity.tonnesRetired = source?.tonnes ?? '0';
       entity.reason = dto.reason;
       entity.retiredAt = now;
       entity.txHash = txHash;
