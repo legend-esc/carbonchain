@@ -26,6 +26,7 @@ import {
   MrvAggregateResponse,
 } from './oracle.service';
 import { AdminGuard } from '../admin/admin.guard';
+import { WebhookIpAllowlistGuard } from '../webhooks/webhook-ip-allowlist.guard';
 
 @ApiTags('oracle')
 @Controller('oracle')
@@ -38,6 +39,7 @@ export class OracleController {
     description: 'MRV data ingested, returns anomaly flag',
   })
   @ApiResponse({ status: 401, description: 'Invalid oracle signature' })
+  @UseGuards(WebhookIpAllowlistGuard)
   @Post('mrv')
   ingestMrv(@Body() dto: MrvWebhookDto): Promise<{ anomaly: boolean }> {
     return this.oracleService.ingestMrvData(dto);
