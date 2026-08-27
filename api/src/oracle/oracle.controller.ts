@@ -12,7 +12,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   ApiTags,
   ApiOperation,
@@ -93,7 +93,7 @@ export class OracleController {
   @ApiResponse({ status: 200, description: 'Threshold updated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Admin only' })
-  @UseGuards(AuthGuard('jwt'), AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Patch(':projectId/threshold')
   @HttpCode(HttpStatus.OK)
   async setProjectThreshold(

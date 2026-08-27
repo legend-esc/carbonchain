@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Param, Body, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard';
 import { AdminService, AdminStats } from './admin.service';
@@ -7,7 +7,7 @@ import type { VerifierCapabilities } from './admin.service';
 import { CreditStatus } from '../../../shared';
 
 @ApiTags('admin')
-@UseGuards(AuthGuard('jwt'), AdminGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}

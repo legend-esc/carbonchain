@@ -10,7 +10,7 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { StrKey } from '@stellar/stellar-sdk';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
@@ -54,7 +54,7 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get pending credits for a verifier' })
   @ApiResponse({ status: 200, description: 'Pending credits' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get(':id/pending')
   async getPendingCredits(
     @Param('id') verifierId: string,
@@ -65,7 +65,7 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get approval history for a verifier' })
   @ApiResponse({ status: 200, description: 'Approval history' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get(':id/history')
   async getApprovalHistory(
     @Param('id') verifierId: string,
@@ -84,7 +84,7 @@ export class VerifiersController {
     description: 'Verifier has already approved this credit',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/approve/:creditId')
   @HttpCode(200)
   async approveCredit(
@@ -166,7 +166,7 @@ export class VerifiersController {
   @ApiResponse({ status: 200, description: 'Updated stake after deposit' })
   @ApiResponse({ status: 400, description: 'Invalid address or amount' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/stake/deposit')
   @HttpCode(200)
   async depositStake(
@@ -204,7 +204,7 @@ export class VerifiersController {
     description: 'No unbonding request or unbonding period not elapsed',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/stake/withdraw')
   @HttpCode(200)
   async withdrawStake(
