@@ -8,13 +8,16 @@ import {
   InMemoryCreditRepository,
   CREDIT_REPOSITORY,
 } from './credit.repository';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { CreditEntity } from './credit.entity';
+import { TypeOrmCreditRepository } from './credit.repository';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule],
+  imports: [ConfigModule, StellarModule, AuthModule, TypeOrmModule.forFeature([CreditEntity])],
   controllers: [CreditsController],
   providers: [
     CreditsService,
-    { provide: CREDIT_REPOSITORY, useClass: InMemoryCreditRepository },
+    { provide: CREDIT_REPOSITORY, useClass: TypeOrmCreditRepository },
   ],
   exports: [CreditsService, CREDIT_REPOSITORY],
 })

@@ -1,7 +1,9 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Repository } from 'typeorm';
 import { CreditEntity } from './credit.entity';
 import { CreditStatus } from '../../../shared';
 import { CacheService } from '../common/cache.service';
+import { InjectRepository } from '@nestjs/typeorm';
 
 export interface PageResult<T> {
   data: T[];
@@ -138,6 +140,70 @@ export class InMemoryCreditRepository implements ICreditRepository {
     const offset = (page - 1) * limit;
     return {
       data: items.slice(offset, offset + limit),
+      total: items.length,
+      page,
+      limit,
+    };
+  }
+}
+
+@Injectable()
+export class TypeOrmCreditRepository implements ICreditRepository {
+  constructor(
+    @Inject('CREDIT_ENTITY_REPOSITORY')
+    private readonly repository: Repository<CreditEntity>,
+  ) {}
+
+  save(credit: CreditEntity): Promise<CreditEntity> {
+    return this.repository.save(credit);
+  }
+
+  findById(id: string): Promise<CreditEntity | undefined> {
+    return this.repository.findOne({ where: { id } });
+  }
+
+  async findByProject(projectId: string, page: number, limit: number) {
+    return this.paginate({ projectId }, page, limit);
+  }
+
+  async findAll(page: number, limit: number) {
+    return this.paginate({}, page, limit);
+  }
+
+  async findByFilter(filter: CreditFilter, page: number, limit: number) {
+    const records = await this.repository.find();
+    const filtered = records.filter((credit) =>
+      (!filter.status || credit.status === filter.status) &&
+      (!filter.methodology ||
+        credit.methodology.toLowerCase() === filter.methodology.toLowerCase()) &&
+      (!filter.geography ||
+        credit.geography.toLowerCase() === filter.geography.toLowerCase()) &&
+      (filter.vintageYear === undefined ||
+        credit.vintageYear === filter.vintageYear),
+    );
+    return this.page(filtered, page, limit);
+  }
+
+  findByStatus(status: CreditStatus, page: number, limit: number) {
+    return this.paginate({ status }, page, limit);
+  }
+
+  private async paginate(
+    where: Record<string, unknown>,
+    page: number,
+    limit: number,
+  ): Promise<PageResult<CreditEntity>> {
+    const [data, total] = await this.repository.findAndCount({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { data, total, page, limit };
+  }
+
+  private page(items: CreditEntity[], page: number, limit: number) {
+    return {
+      data: items.slice((page - 1) * limit, page * limit),
       total: items.length,
       page,
       limit,

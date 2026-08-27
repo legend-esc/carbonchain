@@ -18,6 +18,7 @@ import { SplitCreditDto } from './dto/split-credit.dto';
 import { CreditMetadata } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from './credit.repository';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('credits')
 @Controller('credits')
@@ -28,6 +29,7 @@ export class CreditsController {
   @ApiResponse({ status: 201, description: 'Credit issued successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post('issue')
   issueCredit(@Body() dto: IssueCreditDto): Promise<{ creditId: string }> {
     return this.creditsService.issueCredit(dto);
@@ -113,6 +115,7 @@ export class CreditsController {
   @ApiResponse({ status: 400, description: 'Caller does not own this credit' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post(':id/transfer')
   async transferCredit(
     @Param('id') creditId: string,
@@ -127,6 +130,7 @@ export class CreditsController {
   @ApiResponse({ status: 400, description: 'Caller does not own this credit' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post(':id/split')
   async splitCredit(
     @Param('id') creditId: string,

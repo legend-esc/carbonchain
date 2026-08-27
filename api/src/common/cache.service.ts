@@ -80,6 +80,41 @@ export class CacheService implements OnModuleDestroy {
     }
   }
 
+  async setIfAbsent(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
+    if (!this.client) throw new Error('Redis is unavailable');
+    const ttl = ttlSeconds ?? this.defaultTtlSeconds;
+    const result = await this.client.set(key, JSON.stringify(value), {
+      EX: ttl,
+      NX: true,
+    });
+    return result === 'OK';
+  }
+
+  async setRequired(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<void> {
+    if (!this.client) throw new Error('Redis is unavailable');
+    const ttl = ttlSeconds ?? this.defaultTtlSeconds;
+    await this.client.set(key, JSON.stringify(value), { EX: ttl });
+  }
+
+  async increment(key: string, ttlSeconds: number): Promise<number> {
+    if (!this.client) throw new Error('Redis is unavailable');
+    const count = await this.client.incr(key);
+    if (count === 1) await this.client.expire(key, ttlSeconds);
+    return count;
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.del(key);
+  }
+
   /**
    * Delete one or more keys. Used for cache invalidation.
    */

@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import { Repository } from 'typeorm';
 import { RetirementEntity } from './retirement.entity';
 import { PageResult } from '../credits/credit.repository';
+import { InjectRepository } from '@nestjs/typeorm';
 
 export interface IRetirementRepository {
   save(record: RetirementEntity): Promise<RetirementEntity>;
@@ -62,5 +65,42 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
       page,
       limit,
     };
+  }
+}
+
+@Injectable()
+export class TypeOrmRetirementRepository implements IRetirementRepository {
+  constructor(
+    @Inject('RETIREMENT_ENTITY_REPOSITORY')
+    private readonly repository: Repository<RetirementEntity>,
+  ) {}
+
+  save(record: RetirementEntity): Promise<RetirementEntity> {
+    return this.repository.save(record);
+  }
+
+  findById(id: string): Promise<RetirementEntity | undefined> {
+    return this.repository.findOne({ where: { id } }).then((record) => record ?? undefined);
+  }
+
+  async findByBuyer(buyer: string, page: number, limit: number) {
+    return this.paginate({ buyer }, page, limit);
+  }
+
+  async findAll(page: number, limit: number) {
+    return this.paginate({}, page, limit);
+  }
+
+  private async paginate(
+    where: Record<string, unknown>,
+    page: number,
+    limit: number,
+  ): Promise<PageResult<RetirementEntity>> {
+    const [data, total] = await this.repository.findAndCount({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { data, total, page, limit };
   }
 }

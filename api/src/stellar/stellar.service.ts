@@ -21,6 +21,7 @@ export class StellarService implements OnModuleInit {
   private horizonServer: Horizon.Server;
   private sorobanRpcServer: rpc.Server;
   private networkPassphrase: string;
+  private networkTimeoutMs = 10_000;
 
   /** In-process cache for account info. Key: Stellar address. */
   private readonly accountInfoCache = new Map<
@@ -34,6 +35,18 @@ export class StellarService implements OnModuleInit {
     private seqNoManager: SequenceNumberManager,
   ) {}
 
+  private withTimeout<T>(operation: Promise<T>, name: string): Promise<T> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`${name} timed out`));
+      }, this.networkTimeoutMs);
+    });
+    return Promise.race([operation, timeout]).finally(() => clearTimeout(timer));
+  }
+
   onModuleInit() {
     const horizonUrl =
       this.configService.get<string>('HORIZON_URL') ||
@@ -44,6 +57,10 @@ export class StellarService implements OnModuleInit {
     const network = this.configService.get<string>(
       'STELLAR_NETWORK',
       'TESTNET',
+    );
+    this.networkTimeoutMs = this.configService.get<number>(
+      'STELLAR_RPC_TIMEOUT_MS',
+      10_000,
     );
 
     this.horizonServer = new Horizon.Server(horizonUrl);
@@ -70,7 +87,10 @@ export class StellarService implements OnModuleInit {
     if (cached !== undefined) {
       return cached;
     }
-    const account = await this.horizonServer.loadAccount(publicKey);
+    const account = await this.withTimeout(
+      this.horizonServer.loadAccount(publicKey),
+      'loadAccount',
+    );
     const seq = Number(account.sequenceNumber);
     this.seqNoManager.cacheSequenceNumber(publicKey, seq);
     return this.seqNoManager.getNextSequenceNumber(publicKey)!;
@@ -121,7 +141,10 @@ export class StellarService implements OnModuleInit {
 
       try {
         const response =
-          await this.sorobanRpcServer.sendTransaction(preparedTx);
+          await this.withTimeout(
+            this.sorobanRpcServer.sendTransaction(preparedTx),
+            'sendTransaction',
+          );
 
         if ((response.status as string) === 'PENDING') {
           const result = await this.pollTransactionStatus(response.hash);
@@ -185,7 +208,12 @@ export class StellarService implements OnModuleInit {
     this.logger.verbose(`Full XDR: ${tx.toEnvelope().toXDR('base64')}`);
 
     try {
-      const result = await this.horizonServer.submitTransaction(tx);
+      const result = await this.submitTransactionWithRetry(() =>
+        this.withTimeout(
+          this.horizonServer.submitTransaction(tx),
+          'submitTransaction',
+        ),
+      );
       this.invalidateAccountInfoCache(pk);
       return result;
     } catch (error: unknown) {
@@ -200,9 +228,6 @@ export class StellarService implements OnModuleInit {
       }
       throw error;
     }
-    return this.submitTransactionWithRetry(() =>
-      this.horizonServer.submitTransaction(tx),
-    );
   }
 
   async getContractData(
@@ -218,7 +243,10 @@ export class StellarService implements OnModuleInit {
       }),
     );
 
-    const response = await this.sorobanRpcServer.getLedgerEntries(ledgerKey);
+    const response = await this.withTimeout(
+      this.sorobanRpcServer.getLedgerEntries(ledgerKey),
+      'getLedgerEntries',
+    );
     if (response.entries && response.entries.length > 0) {
       const entry = response.entries[0];
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -235,7 +263,10 @@ export class StellarService implements OnModuleInit {
   async simulateTransaction(
     tx: Transaction,
   ): Promise<rpc.Api.SimulateTransactionResponse> {
-    return this.sorobanRpcServer.simulateTransaction(tx);
+    return this.withTimeout(
+      this.sorobanRpcServer.simulateTransaction(tx),
+      'simulateTransaction',
+    );
   }
 
   private async pollTransactionStatus(
@@ -244,7 +275,10 @@ export class StellarService implements OnModuleInit {
     delayMs = 2000,
   ): Promise<rpc.Api.GetTransactionResponse> {
     for (let i = 0; i < maxRetries; i++) {
-      const response = await this.sorobanRpcServer.getTransaction(hash);
+      const response = await this.withTimeout(
+        this.sorobanRpcServer.getTransaction(hash),
+        'getTransaction',
+      );
       if (
         response.status !== rpc.Api.GetTransactionStatus.NOT_FOUND &&
         (response.status as any) !== 'PENDING'
@@ -282,8 +316,16 @@ export class StellarService implements OnModuleInit {
           throw error;
         }
 
-        // Only retry on transient errors (429, 503)
-        if (statusCode !== 429 && statusCode !== 503) {
+        const message = lastError.message.toLowerCase();
+        const transient =
+          statusCode === 429 ||
+          statusCode === 500 ||
+          statusCode === 502 ||
+          statusCode === 503 ||
+          statusCode === 504 ||
+          message.includes('timed out') ||
+          message.includes('econnreset');
+        if (!transient) {
           throw error;
         }
 
@@ -359,7 +401,10 @@ export class StellarService implements OnModuleInit {
     if (cached && cached.expiresAt > now) {
       return cached.value;
     }
-    const account = await this.horizonServer.loadAccount(publicKey);
+    const account = await this.withTimeout(
+      this.horizonServer.loadAccount(publicKey),
+      'loadAccount',
+    );
     this.accountInfoCache.set(publicKey, {
       value: account as unknown as Horizon.ServerApi.AccountRecord,
       expiresAt: now + StellarService.ACCOUNT_INFO_TTL_MS,
@@ -389,7 +434,7 @@ export class StellarService implements OnModuleInit {
     startLedger = 0,
   ): Promise<rpc.Api.EventResponse[]> {
     try {
-      const response = await this.sorobanRpcServer.getEvents({
+      const response = await this.withTimeout(this.sorobanRpcServer.getEvents({
         filters: [
           {
             type: 'contract',
@@ -398,7 +443,7 @@ export class StellarService implements OnModuleInit {
         ],
         startLedger,
         limit: 100,
-      });
+      }), 'getContractEvents');
       return response.events || [];
     } catch (error) {
       this.logger.error(

@@ -19,6 +19,9 @@ import { EventsModule } from './events/events.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 
 @Module({
   imports: [
@@ -31,6 +34,12 @@ import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
       },
     }),
     ScheduleModule.forRoot(),
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      url: process.env.DATABASE_URL,
+      autoLoadEntities: true,
+      synchronize: false,
+    }),
     CacheModule,
     HealthModule,
     StellarModule,
@@ -45,7 +54,10 @@ import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
     MetricsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

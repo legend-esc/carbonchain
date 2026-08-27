@@ -1,28 +1,29 @@
+import { Column, Entity, PrimaryColumn } from 'typeorm';
 /**
  * Off-chain index of an on-chain retirement record.
  * Ready for TypeORM — uncomment decorators and add @nestjs/typeorm when DB is wired.
  *
- * @Entity('retirements')
  */
+@Entity('retirements')
 export class RetirementEntity {
-  // @PrimaryColumn()
+  @PrimaryColumn()
   id: string;
 
-  // @Column()
+  @Column({ name: 'credit_id' })
   creditId: string;
 
-  // @Column()
+  @Column()
   buyer: string;
 
-  // @Column()
+  @Column({ name: 'tonnes_retired', type: 'varchar' })
   tonnesRetired: string;
 
-  // @Column()
+  @Column()
   reason: string;
 
-  // @Column({ type: 'bigint' })
+  @Column({ name: 'retired_at', type: 'bigint' })
   retiredAt: number;
 
-  // @Column({ default: '' })
+  @Column({ name: 'tx_hash', default: '' })
   txHash: string;
 }

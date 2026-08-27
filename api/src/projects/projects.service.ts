@@ -1,14 +1,20 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { ProjectProfile } from '../../../shared';
+import { PROJECT_REPOSITORY } from './project.repository';
+import type { IProjectRepository } from './project.repository';
 
 @Injectable()
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
-  private projects: Map<string, ProjectProfile> = new Map();
+  private readonly projects = new Map<string, ProjectProfile>();
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    @Optional() @Inject(PROJECT_REPOSITORY)
+    private readonly projectRepository?: IProjectRepository,
+  ) {}
 
   /** Upload a JSON document to Pinata and return the IPFS CID. */
   async uploadToIpfs(document: Record<string, unknown>): Promise<string> {
@@ -62,19 +68,24 @@ export class ProjectsService {
       documents_cid,
     };
 
-    this.projects.set(id, newProject);
+    if (this.projectRepository) await this.projectRepository.save(newProject);
+    else this.projects.set(id, newProject);
     this.logger.log(`Project created with ID: ${id}`);
     return newProject;
   }
 
-  getProject(id: string): ProjectProfile {
-    const project = this.projects.get(id);
+  async getProject(id: string): Promise<ProjectProfile> {
+    const project = this.projectRepository
+      ? await this.projectRepository.findById(id)
+      : this.projects.get(id);
     if (!project)
       throw new NotFoundException(`Project with ID ${id} not found`);
     return project;
   }
 
-  listProjects(): ProjectProfile[] {
-    return Array.from(this.projects.values());
+  async listProjects(): Promise<ProjectProfile[]> {
+    return this.projectRepository
+      ? this.projectRepository.findAll()
+      : Array.from(this.projects.values());
   }
 }

@@ -4,9 +4,11 @@ import {
   ExecutionContext,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
+import { CacheService } from './cache.service';
 
 export const THROTTLE_KEY = 'throttle';
 
@@ -35,17 +37,19 @@ interface HitRecord {
 }
 
 /**
- * Per-IP rate limiting guard.
- * Uses an in-memory map — suitable for single-instance deployments.
- * Replace with Redis-backed storage for multi-instance setups.
+ * Per-IP rate limiting guard backed by Redis when available.
  */
 @Injectable()
 export class ThrottlerGuard implements CanActivate {
+  private readonly logger = new Logger(ThrottlerGuard.name);
   private readonly store = new Map<string, HitRecord>();
 
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly cache?: CacheService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const options: ThrottleOptions | undefined =
       this.reflector.get<ThrottleOptions>(THROTTLE_KEY, context.getHandler()) ??
       this.reflector.get<ThrottleOptions>(THROTTLE_KEY, context.getClass());
@@ -61,6 +65,26 @@ export class ThrottlerGuard implements CanActivate {
       'unknown';
 
     const key = `${ip}:${req.path}`;
+    if (this.cache?.isConnected) {
+      try {
+        const key = `throttle:${ip}:${req.path}`;
+        const count = await this.cache.increment(
+          key,
+          Math.ceil(options.ttl / 1000),
+        );
+        if (count > options.limit) {
+          throw new HttpException(
+            'Too Many Requests',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
+        return true;
+      } catch (error) {
+        if (error instanceof HttpException) throw error;
+        this.logger.warn('Redis throttling unavailable; using memory fallback');
+      }
+    }
+
     const now = Date.now();
     const record = this.store.get(key);
 

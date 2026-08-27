@@ -41,7 +41,7 @@ describe('ThrottlerGuard', () => {
     guard = new ThrottlerGuard(reflector);
   });
 
-  it('allows requests when no throttle options are set', () => {
+  it('allows requests when no throttle options are set', async () => {
     jest.spyOn(reflector, 'get').mockReturnValue(undefined);
     const ctx = {
       switchToHttp: () => ({
@@ -55,10 +55,10 @@ describe('ThrottlerGuard', () => {
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
+    expect(await guard.canActivate(ctx)).toBe(true);
   });
 
-  it('allows requests within the limit', () => {
+  it('allows requests within the limit', async () => {
     const options: ThrottleOptions = { limit: 3, ttl: 60_000 };
     jest.spyOn(reflector, 'get').mockReturnValue(options);
 
@@ -74,12 +74,12 @@ describe('ThrottlerGuard', () => {
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(guard.canActivate(ctx)).toBe(true);
+    expect(await guard.canActivate(ctx)).toBe(true);
+    expect(await guard.canActivate(ctx)).toBe(true);
+    expect(await guard.canActivate(ctx)).toBe(true);
   });
 
-  it('blocks requests exceeding the limit', () => {
+  it('blocks requests exceeding the limit', async () => {
     const options: ThrottleOptions = { limit: 2, ttl: 60_000 };
     jest.spyOn(reflector, 'get').mockReturnValue(options);
 
@@ -95,15 +95,15 @@ describe('ThrottlerGuard', () => {
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    guard.canActivate(ctx);
-    guard.canActivate(ctx);
+    await guard.canActivate(ctx);
+    await guard.canActivate(ctx);
 
-    expect(() => guard.canActivate(ctx)).toThrow(
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
       new HttpException('Too Many Requests', HttpStatus.TOO_MANY_REQUESTS),
     );
   });
 
-  it('resets count after TTL expires', () => {
+  it('resets count after TTL expires', async () => {
     jest.useFakeTimers();
     const options: ThrottleOptions = { limit: 1, ttl: 1_000 };
     jest.spyOn(reflector, 'get').mockReturnValue(options);
@@ -120,16 +120,16 @@ describe('ThrottlerGuard', () => {
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(() => guard.canActivate(ctx)).toThrow(HttpException);
+    expect(await guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
 
     jest.advanceTimersByTime(1_001);
-    expect(guard.canActivate(ctx)).toBe(true);
+    expect(await guard.canActivate(ctx)).toBe(true);
 
     jest.useRealTimers();
   });
 
-  it('uses x-forwarded-for header when present', () => {
+  it('uses x-forwarded-for header when present', async () => {
     const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
     jest.spyOn(reflector, 'get').mockReturnValue(options);
 
@@ -145,7 +145,7 @@ describe('ThrottlerGuard', () => {
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(() => guard.canActivate(ctx)).toThrow(HttpException);
+    expect(await guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
   });
 });

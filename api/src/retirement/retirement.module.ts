@@ -12,14 +12,17 @@ import {
   InMemoryRetirementRepository,
   RETIREMENT_REPOSITORY,
 } from './retirement.repository';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { RetirementEntity } from './retirement.entity';
+import { TypeOrmRetirementRepository } from './retirement.repository';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule, CreditsModule],
+  imports: [ConfigModule, StellarModule, AuthModule, CreditsModule, TypeOrmModule.forFeature([RetirementEntity])],
   controllers: [RetirementController, CreditRetirementController],
   providers: [
     RetirementService,
     CertificateService,
-    { provide: RETIREMENT_REPOSITORY, useClass: InMemoryRetirementRepository },
+    { provide: RETIREMENT_REPOSITORY, useClass: TypeOrmRetirementRepository },
     {
       provide: EVENT_EMITTER,
       useValue: new EventEmitter(),
