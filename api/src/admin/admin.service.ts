@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
+import { RetirementService } from '../retirement/retirement.service';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CreditStatus } from '../../../shared';
@@ -30,6 +31,7 @@ export class AdminService {
     private readonly configService: ConfigService,
     private readonly stellarService: StellarService,
     private readonly keypairService: StellarKeypairService,
+    private readonly retirementService: RetirementService,
   ) {
     this.creditRegistryContractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
@@ -43,9 +45,13 @@ export class AdminService {
     } catch {
       // Non-fatal — default to false if contract call fails.
     }
+    const [totalCredits, retirements] = await Promise.all([
+      this.creditsService.getCreditCount(),
+      this.retirementService.listRetirements(1, 1),
+    ]);
     return {
-      totalCredits: 0, // on-chain aggregate; requires contract-level count endpoint
-      totalRetirements: 0, // on-chain aggregate; requires contract-level count endpoint
+      totalCredits,
+      totalRetirements: retirements.total,
       activeVerifiers: verifiers.length,
       paused,
     };
