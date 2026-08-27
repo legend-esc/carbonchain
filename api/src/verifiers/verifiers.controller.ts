@@ -10,7 +10,6 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { StrKey } from '@stellar/stellar-sdk';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
@@ -55,23 +54,23 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get pending credits for a verifier' })
   @ApiResponse({ status: 200, description: 'Pending credits' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get(':id/pending')
   async getPendingCredits(
-    @Param('id') verifierId: string,
+    @Request() req: any,
   ): Promise<CreditMetadata[]> {
-    return this.verifiersService.getPendingCredits(verifierId);
+    return this.verifiersService.getPendingCredits(req.user.account);
   }
 
   @ApiOperation({ summary: 'Get approval history for a verifier' })
   @ApiResponse({ status: 200, description: 'Approval history' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get(':id/history')
   async getApprovalHistory(
-    @Param('id') verifierId: string,
+    @Request() req: any,
   ): Promise<CreditMetadata[]> {
-    return this.verifiersService.getApprovalHistory(verifierId);
+    return this.verifiersService.getApprovalHistory(req.user.account);
   }
 
   @ApiOperation({ summary: 'Approve a pending credit as a verifier' })
@@ -85,7 +84,7 @@ export class VerifiersController {
     description: 'Verifier has already approved this credit',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/approve/:creditId')
   @HttpCode(200)
   async approveCredit(
