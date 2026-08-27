@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Query,
+  Request,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
@@ -68,12 +69,14 @@ export class MarketplaceController {
   }
 
   @ApiOperation({ summary: 'Cancel an offer' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtAuthGuard)
   @Delete('offer/:id/seller/:address')
   cancelOffer(
-    @Param('address') address: string,
     @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
   ): Promise<void> {
-    return this.marketplaceService.cancelOffer(address, id);
+    return this.marketplaceService.cancelOffer(req.user.account, id);
   }
 
   @ApiOperation({ summary: 'Buy an offer from the marketplace' })
