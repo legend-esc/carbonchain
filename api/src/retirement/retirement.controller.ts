@@ -27,6 +27,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -68,7 +69,8 @@ export class RetirementController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.listRetirements(page, limit);
+    const clampedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.retirementService.listRetirements(page, clampedLimit);
   }
 
   @ApiOperation({ summary: 'Get retirement record by ID' })
@@ -86,11 +88,12 @@ export class RetirementController {
   })
   @Get('account/:address')
   getByAccount(
-    @Param('address') address: string,
+    @Param('address', StellarAddressPipe) address: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.getRetirementsByAccount(address, page, limit);
+    const clampedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.retirementService.getRetirementsByAccount(address, page, clampedLimit);
   }
 
   @ApiOperation({ summary: 'Download retirement certificate as PDF' })

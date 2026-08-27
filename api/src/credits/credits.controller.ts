@@ -85,7 +85,7 @@ export class CreditsController {
         pagination_mode: 'cursor';
       }
   > {
-    const parsedLimit = parseInt(limit, 10);
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 1, 1), 100);
 
     // Cursor-based path (preferred — O(1) at any depth)
     if (cursor !== undefined) {
@@ -101,6 +101,8 @@ export class CreditsController {
       });
     }
 
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+
     // Offset-based path (deprecated — emits warning header via service layer)
     return this.creditsService.listCredits({
       methodology,
@@ -109,7 +111,7 @@ export class CreditsController {
       status,
       minTonnes,
       maxTonnes,
-      page: parseInt(page, 10),
+      page: parsedPage,
       limit: parsedLimit,
     });
   }
@@ -361,6 +363,10 @@ export class CreditsController {
   async mergeCredits(
     @Body() dto: MergeCreditsDto,
   ): Promise<{ mergedCreditId: string; sourceCount: number }> {
-    return this.creditsService.mergeCredits(dto.callerPublicKey, dto.creditIds);
+    return this.creditsService.mergeCredits(
+      dto.callerPublicKey,
+      dto.creditIds,
+      dto.nonce,
+    );
   }
 }
