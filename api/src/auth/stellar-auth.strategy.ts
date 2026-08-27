@@ -19,10 +19,16 @@ export interface JwtPayload {
 @Injectable()
 export class StellarAuthStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(config: ConfigService) {
+    const jwtSecret = config.get<string>('JWT_SECRET');
+    if (!jwtSecret && process.env.NODE_ENV !== 'test') {
+      throw new Error(
+        'JWT_SECRET must be set — refusing to start with an insecure default',
+      );
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('JWT_SECRET', 'changeme'),
+      secretOrKey: jwtSecret ?? 'test-only-secret-do-not-use',
     });
   }
 

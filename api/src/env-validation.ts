@@ -6,6 +6,7 @@ export const envValidationSchema = Joi.object({
   // #559 — comma-separated read replica connection strings; optional.
   DATABASE_REPLICA_URLS: Joi.string().optional().allow(''),
   JWT_SECRET: Joi.string().required().min(32),
+  ORACLE_WEBHOOK_SECRET: Joi.string().required().min(16),
   STELLAR_NETWORK: Joi.string().valid('testnet', 'mainnet').default('testnet'),
   STELLAR_HORIZON_URL: Joi.string().uri().required(),
   STELLAR_SOROBAN_RPC: Joi.string().uri().required(),
