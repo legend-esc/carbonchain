@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { CertificateService, CertificateData } from './certificate.service';
+import { computeFileCid } from '../common/ipfs-cid.util';
 
 const SAMPLE_DATA: CertificateData = {
   retirementId: 'abc123',
@@ -10,6 +11,8 @@ const SAMPLE_DATA: CertificateData = {
   reason: 'Scope 3 offset',
   timestamp: 1735689600,
 };
+
+const VALID_CID = computeFileCid(Buffer.from('certificate pdf bytes'));
 
 describe('CertificateService', () => {
   let service: CertificateService;
@@ -93,7 +96,7 @@ describe('CertificateService', () => {
   });
 
   it('generateAndPin returns non-null ipfsHash when Pinata is reachable', async () => {
-    const expectedHash = 'QmTestIpfsHash123';
+    const expectedHash = VALID_CID;
     const originalFetch = global.fetch;
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,

@@ -23,6 +23,7 @@ import type { ICreditRepository } from '../credits/credit.repository';
 import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
 import { RetireDto, FullRetireDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
+import { computeFileCid, cidsMatch } from '../common/ipfs-cid.util';
 import {
   METRICS_EVENT_EMITTER,
   RETIREMENT_COMPLETED,
@@ -618,9 +619,8 @@ export class RetirementService {
       this.logger.log(`Verifying certificate: ${certificateId}`);
       const retirement = await this.getRetirement(certificateId);
 
-      // Issue #544: fetch the on-chain certificate_ipfs_hash so callers can
-      // independently verify the certificate PDF by comparing its content hash
-      // to the IPFS CID stored in the contract.
+      // Issue #544: fetch the on-chain certificate_ipfs_hash so we can compare
+      // it against the content we actually issued.
       let onChainIpfsHash: string | undefined;
       try {
         const retval = await this.stellarService.readContract(
@@ -642,6 +642,46 @@ export class RetirementService {
         );
       }
 
+      const offChainIpfsHash = retirement.certificate_ipfs_hash ?? '';
+      const expectedHash = onChainIpfsHash || offChainIpfsHash;
+
+      // #764: a certificate is only verified when there is a committed hash AND
+      // the on-chain and off-chain pointers agree (tamper check on the pointer)
+      // AND the regenerated PDF content hashes to that same CID (tamper check
+      // on the document itself). `verified` is no longer hardcoded.
+      let verified = false;
+      if (expectedHash) {
+        const pointerMatches =
+          !onChainIpfsHash || !offChainIpfsHash
+            ? true
+            : onChainIpfsHash === offChainIpfsHash;
+
+        let contentMatches = false;
+        if (pointerMatches && this.certificateService) {
+          try {
+            const pdf = await this.certificateService.generatePdf({
+              retirementId: retirement.id,
+              creditId: retirement.credit_id,
+              buyer: retirement.buyer,
+              tonnes: retirement.tonnes_retired,
+              reason: retirement.reason,
+              timestamp: retirement.retired_at,
+              ...(retirement.vintage_year
+                ? { vintageYear: retirement.vintage_year }
+                : {}),
+            });
+            contentMatches = cidsMatch(computeFileCid(pdf), expectedHash);
+          } catch (genErr) {
+            this.logger.warn(
+              `Certificate PDF regeneration failed for ${certificateId}: ` +
+                `${(genErr as Error).message}`,
+            );
+          }
+        }
+
+        verified = pointerMatches && contentMatches;
+      }
+
       return {
         id: retirement.id,
         credit_id: retirement.credit_id,
@@ -650,9 +690,8 @@ export class RetirementService {
         reason: retirement.reason,
         retired_at: retirement.retired_at,
         tx_hash: retirement.tx_hash || '',
-        verified: true,
-        certificate_ipfs_hash:
-          onChainIpfsHash ?? retirement.certificate_ipfs_hash ?? '',
+        verified,
+        certificate_ipfs_hash: expectedHash,
       };
     } catch (error: unknown) {
       this.logger.error(
