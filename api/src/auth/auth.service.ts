@@ -169,8 +169,12 @@ export class AuthService {
       throw new UnauthorizedException('Client signature missing or invalid');
     }
 
-    // Issue #254 — Verify nonce freshness and prevent replay attacks
-    const nonce = (manageDataOp as any).value;
+    // Issue #254 — Verify nonce freshness and prevent replay attacks.
+    // The cached key is the base64-encoded nonce (see generateChallenge), so the
+    // Buffer value parsed back from the manageData op must be base64-encoded too.
+    const nonceValue = (manageDataOp as any).value as Buffer | string | undefined;
+    const nonce =
+      nonceValue instanceof Buffer ? nonceValue.toString('base64') : String(nonceValue);
     const nonceKey = `sep10:nonce:${nonce}`;
     const nonceExists = await this.cache.get<boolean>(nonceKey);
     if (!nonceExists) {
