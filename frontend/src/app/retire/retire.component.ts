@@ -196,6 +196,12 @@ export type WizardStep = 1 | 2 | 3;
               <p class="field-error" role="alert">{{ signingError() }}</p>
             }
 
+            @if (tonnesControl.invalid) {
+              <p class="field-error" role="alert">
+                Total tonnes must be a positive multiple of 100,000.
+              </p>
+            }
+
             <div class="confirm-box">
               <dl>
                 <dt>Credits to Retire</dt>
@@ -234,7 +240,7 @@ export type WizardStep = 1 | 2 | 3;
               <button
                 class="btn btn-danger"
                 type="button"
-                [disabled]="submitting()"
+                [disabled]="submitting() || tonnesControl.invalid"
                 (click)="submit()"
                 [attr.aria-busy]="submitting()"
                 aria-label="Sign and retire credits"
@@ -500,6 +506,12 @@ export class RetireComponent implements OnInit {
     validators: [Validators.required, Validators.maxLength(200)],
   });
 
+  /** Total tonnes across selected credits — must be a multiple of 100,000. */
+  readonly tonnesControl = new FormControl<number>(0, {
+    nonNullable: true,
+    validators: [multipleOf100kValidator()],
+  });
+
   /** Only Active credits owned by the connected wallet. */
   readonly activeCredits = computed(() =>
     this.store
@@ -573,6 +585,13 @@ export class RetireComponent implements OnInit {
 
     if (credits.length === 0 || !pk) return;
 
+    this.tonnesControl.setValue(Number(this.totalSelectedTonnes()));
+    if (this.tonnesControl.invalid) {
+      this.signingError.set('Total tonnes must be a positive multiple of 100,000.');
+      this.currentStep.set(3);
+      return;
+    }
+
     this.submitting.set(true);
     this.signingError.set(null);
 
@@ -581,17 +600,6 @@ export class RetireComponent implements OnInit {
 
       if (credits.length === 1) {
         const credit = credits[0];
-        let signedXdr: string;
-        try {
-          const { networkPassphrase } = await this.wallet.getNetworkDetails();
-          signedXdr = await this.wallet.signTransaction(credit.id, networkPassphrase);
-        } catch (freighterErr) {
-          const msg =
-            freighterErr instanceof Error ? freighterErr.message : 'Wallet signing was rejected.';
-          this.signingError.set(msg);
-          this.currentStep.set(3);
-          return;
-        }
 
         const { retirementId } = await firstValueFrom(
           this.api.retireCredit(
