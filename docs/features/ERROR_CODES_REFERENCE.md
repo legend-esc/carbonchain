@@ -1,0 +1,87 @@
+# Error Codes Reference
+
+All CarbonChain smart contracts use stable numeric error codes. These codes are stable across contract upgrades and safe to use in API clients and monitoring rules.
+
+## Credit Registry (100–125)
+
+| Code | Name | Description |
+|------|------|-------------|
+| 100 | `NotInitialized` | Contract has not been initialized |
+| 101 | `AlreadyInitialized` | Contract has already been initialized |
+| 102 | `Unauthorized` | Caller is not authorized for this operation |
+| 103 | `InvalidMetadata` | Credit metadata is missing or malformed |
+| 104 | `CreditNotFound` | Credit ID does not exist |
+| 105 | `InvalidStatusTransition` | Requested status change is not allowed |
+| 106 | `VerifierAlreadyExists` | Verifier address is already registered |
+| 107 | `VerifierNotFound` | Verifier address is not registered |
+| 109 | `Overflow` | Arithmetic overflow in credit calculation |
+| 110 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 |
+| 112 | `ContractPaused` | Contract is paused; state-mutating ops are blocked |
+| 113 | `IssuerNotAllowed` | Issuer is not on the approved list |
+| 115 | `InvalidNonce` | Replay-protection nonce does not match expected value |
+| 116 | `NoPendingAdmin` | No admin transfer is pending |
+| 117 | `InvalidSplit` | Fractional-credit split parameters are invalid |
+| 118 | `InvalidDisputeStatus` | Cannot dispute a credit in its current state |
+| 119 | `VerifierHasPendingCredits` | Cannot remove a verifier with pending credits |
+| 120 | `ProjectNotFound` | Project ID does not exist |
+| 121 | `DuplicateCredit` | A credit with this ID already exists |
+| 122 | `ProjectAlreadyExists` | A project with this ID already exists |
+| 123 | `SessionNotFound` | Session ID does not exist |
+| 124 | `InvalidApprovalThreshold` | `required_approvals` is 0 or exceeds verifier count |
+| 125 | `AlreadyApproved` | Verifier has already approved this credit |
+
+## Retirement (110–118)
+
+| Code | Name | Description |
+|------|------|-------------|
+| 110 | `CreditNotActive` | Credit is not in `Active` status |
+| 111 | `AlreadyInitialized` | Contract has already been initialized |
+| 112 | `NotInitialized` | Contract has not been initialized |
+| 113 | `Unauthorized` | Caller is not the credit owner or admin |
+| 114 | `ContractPaused` | Contract is paused |
+| 115 | `InvalidNonce` | Replay-protection nonce mismatch |
+| 116 | `NoPendingAdmin` | No pending admin transfer |
+| 117 | `InvalidTonnes` | `tonnes` is zero or negative |
+| 118 | `InvalidInput` | Input vectors have mismatched lengths or batch exceeds `MAX_BATCH_SIZE` (20) |
+
+## Marketplace (300–313)
+
+| Code | Name | Description |
+|------|------|-------------|
+| 300 | `OfferNotFound` | Offer ID does not exist |
+| 301 | `Unauthorized` | Caller is not the offer owner or admin |
+| 302 | `InvalidPrice` | Offer price is zero, negative, or below the minimum |
+| 303 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 |
+| 304 | `AlreadyClosed` | Offer has already been closed or filled |
+| 305 | `CreditNotActive` | Credit linked to the offer is not active |
+| 306 | `NotInitialized` | Contract has not been initialized |
+| 307 | `ContractPaused` | Contract is paused |
+| 308 | `InvalidNonce` | Replay-protection nonce mismatch |
+| 309 | `OfferExpired` | Offer has passed its expiry timestamp |
+| 310 | `Overflow` | Arithmetic overflow detected |
+| 311 | `AlreadyInitialized` | Contract has already been initialized |
+| 312 | `InsufficientFunds` | Buyer does not hold enough of the payment asset |
+| 313 | `EscrowFailed` | Escrow transfer succeeded but offer record failed to persist |
+
+## MRV Oracle (119–129)
+
+| Code | Name | Description |
+|------|------|-------------|
+| 119 | `NotInitialized` | Contract has not been initialized |
+| 120 | `Unauthorized` | Caller is not a registered oracle |
+| 121 | `AlreadyInitialized` | Contract has already been initialized |
+| 122 | `Overflow` | Arithmetic overflow in tonnage calculation |
+| 123 | `ContractPaused` | Contract is paused |
+| 124 | `ProjectNotFound` | Project ID has no MRV history |
+| 125 | `InvalidNonce` | Replay-protection nonce mismatch |
+| 126 | `InvalidProject` | Project ID is empty or malformed |
+| 127 | `InvalidTimestamp` | Timestamp is not greater than the previous reading |
+| 128 | `NoPendingAdmin` | No pending admin transfer |
+| 129 | `InvalidReading` | MRV reading value is zero or negative |
+
+## Notes
+
+- Error codes are **stable** — they will not change across contract upgrades.
+- All `tonnes` values use scaled units: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (0.1 tonne).
+- `InvalidInput` (retirement code 118) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
+- Code 126 (`InvalidProject`) is reserved for MRV Oracle; Marketplace `AlreadyInitialized` was reassigned to 130 to avoid collision.

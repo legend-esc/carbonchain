@@ -1,31 +1,84 @@
-import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
-import { IsIpfsCid } from '../../common/validators/is-ipfs-cid.decorator';
-import { IsStellarAddress } from '../../common/validators/is-stellar-address.decorator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsInt,
+  Min,
+  Max,
+  IsNumberString,
+} from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 import { IsValidMethodology } from '../validators/methodology.validator';
+import { IsTonnesMultiple } from '../validators/tonnes.validator';
+import { VALID_METHODOLOGIES } from '../methodologies';
 
 export class IssueCreditDto {
-  @IsStellarAddress()
-  issuerPublicKey!: string;
-
+  @ApiProperty({
+    example: 'GABC...XYZ',
+    description: 'Stellar public key of the issuer',
+  })
   @IsString()
   @IsNotEmpty()
-  projectId!: string;
+  issuerPublicKey: string;
 
+  @ApiProperty({ example: 'PROJ-001' })
+  @IsString()
+  @IsNotEmpty()
+  projectId: string;
+
+  @ApiProperty({ example: 2024, minimum: 1990, maximum: 2100 })
   @IsInt()
-  @Min(0)
-  vintageYear!: number;
+  @Min(1990)
+  @Max(2100)
+  vintageYear: number;
 
-  @IsValidMethodology()
-  methodology!: string;
-
+  @ApiProperty({
+    example: 'VCS',
+    description: `One of: ${VALID_METHODOLOGIES.join(', ')}, or a valid custom methodology`,
+  })
   @IsString()
   @IsNotEmpty()
-  geography!: string;
+  @IsValidMethodology({ message: 'Invalid methodology' })
+  methodology: string;
 
+  @ApiProperty({
+    example: 'NG',
+    description: 'ISO 3166-1 alpha-2 country code',
+  })
   @IsString()
   @IsNotEmpty()
-  tonnes!: string;
+  geography: string;
 
-  @IsIpfsCid()
-  ipfsHash!: string;
+  @ApiProperty({
+    example: '100000000',
+    description:
+      'tonnes value must be a multiple of 100,000 (1 tonne = 1_000_000 units)',
+  })
+  @IsNumberString()
+  @IsNotEmpty()
+  @IsTonnesMultiple({ message: 'tonnes must be a multiple of 100,000' })
+  tonnes: string;
+
+  @ApiProperty({
+    example: 'bafybei...',
+    description: 'IPFS CID of project documentation',
+  })
+  @IsString()
+  @IsNotEmpty()
+  ipfsHash: string;
+
+  /**
+   * Client-supplied nonce for replay-attack protection at the API layer.
+   * The API claims this nonce in Redis with SET NX before forwarding the
+   * transaction to the Stellar contract.  Must be unique per issuerPublicKey
+   * within the Stellar ledger close window (~5 s).
+   */
+  @ApiProperty({
+    example: '1234567890',
+    description:
+      'Nonce for idempotency / replay protection. ' +
+      'Unique per issuerPublicKey within the Stellar ledger close window.',
+  })
+  @IsNumberString()
+  @IsNotEmpty()
+  nonce: string;
 }

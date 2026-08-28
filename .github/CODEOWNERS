@@ -1,0 +1,11 @@
+# Global default owner
+* @legend-esc
+
+# Contracts
+contracts/ @legend-esc
+
+# API
+api/ @legend-esc
+
+# Frontend
+frontend/ @legend-esc

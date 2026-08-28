@@ -212,3 +212,15 @@
 .monospace {
   font-family: monospace;
 }
+
+/* Retirement history */
+.retirement-section {
+  margin-top: 2.5rem;
+}
+
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+  color: #111827;
+}

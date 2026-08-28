@@ -13,6 +13,9 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Development Environment Setup](#development-environment-setup)
 - [Running Tests](#running-tests)
 - [Code Style Guidelines](#code-style-guidelines)
+- [Adding Error Codes](#adding-error-codes)
+- [Commit Message Conventions](#commit-message-conventions)
+- [Commit Message Conventions](#commit-message-conventions)
 - [Branch Naming Conventions](#branch-naming-conventions)
 - [Pull Request Process](#pull-request-process)
 - [Issue and PR Templates](#issue-and-pr-templates)
@@ -254,17 +257,21 @@ ng test --code-coverage
 
 ### Rust
 
-Format your code with rustfmt:
+Format your code with rustfmt before every commit — this is enforced by CI (`cargo fmt --all -- --check`):
 
 ```bash
-cargo fmt
+cd contracts && cargo fmt --all
 ```
 
-Lint with clippy:
+Project style is configured in `contracts/rustfmt.toml` (100-char line width, 2021 edition, grouped imports). CI will fail if any contract is not formatted.
+
+Lint with clippy — **zero warnings are allowed** (`-D warnings` is enforced by CI):
 
 ```bash
-cargo clippy -- -D warnings
+cd contracts && cargo clippy --all-targets -- -D warnings
 ```
+
+Fix all warnings before opening a PR. Do not use `#[allow(...)]` to silence a warning without a documented reason in a comment on the same line.
 
 - Add doc comments (`///`) for all public contract functions
 - Use the `CarbonChainError` type for all error handling (see `docs/features/ERROR_CODES_REFERENCE.md`)
@@ -272,11 +279,20 @@ cargo clippy -- -D warnings
 
 ### NestJS (TypeScript)
 
-Lint:
+Lint and format are enforced by CI. Run these before every commit:
 
 ```bash
 cd api
-npm run lint
+npm run lint          # ESLint check (no auto-fix)
+npm run format:check  # Prettier check (no auto-fix)
+```
+
+To auto-fix locally:
+
+```bash
+cd api
+npm run lint:fix  # ESLint with --fix
+npm run format    # Prettier with --write
 ```
 
 Type check:
@@ -286,13 +302,6 @@ cd api
 npm run type-check
 ```
 
-Format:
-
-```bash
-cd api
-npm run format
-```
-
 - Use NestJS decorators consistently — no raw Express patterns
 - All Stellar interactions go through `StellarService` — never call the SDK directly from controllers
 - Inject dependencies via constructor injection, not property injection
@@ -300,11 +309,19 @@ npm run format
 
 ### Angular (TypeScript)
 
-Lint:
+Lint and format are enforced by CI. Run these before every commit:
 
 ```bash
 cd frontend
-ng lint
+npm run lint          # Angular ESLint via ng lint (eslint.config.mjs)
+npm run format:check  # Prettier check (no auto-fix)
+```
+
+To auto-fix locally:
+
+```bash
+cd frontend
+npx prettier --write "src/**/*.ts" "src/**/*.html" "src/*.html"
 ```
 
 Type check:
@@ -326,6 +343,56 @@ npx tsc --noEmit
 - Add tests for all new functionality before submitting a PR
 - Update relevant documentation in `docs/` alongside code changes
 - Follow existing patterns in the codebase before introducing new ones
+
+---
+
+## Commit Message Conventions
+
+CarbonChain enforces the [Conventional Commits](https://www.conventionalcommits.org/) specification. Commit messages are validated automatically by a `commit-msg` git hook (husky + commitlint) and drive automated `CHANGELOG.md` generation via [release-please](https://github.com/googleapis/release-please).
+
+### Format
+
+```
+<type>(<optional scope>): <short description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types
+
+| Type | When to use |
+|---|---|
+| `feat` | A new feature (triggers a minor version bump) |
+| `fix` | A bug fix (triggers a patch version bump) |
+| `docs` | Documentation changes only |
+| `refactor` | Code change that neither fixes a bug nor adds a feature |
+| `test` | Adding or updating tests |
+| `chore` | Maintenance, dependency updates, tooling |
+| `perf` | Performance improvement |
+| `ci` | CI/CD configuration changes |
+
+A `!` after the type (e.g. `feat!:`) or a `BREAKING CHANGE:` footer triggers a **major** version bump.
+
+### Examples
+
+```bash
+feat(credit-registry): add vintage year expiry
+fix(retirement): prevent double-retirement of same credit
+docs: update API reference for submit_credit
+chore: bump stellar-sdk to 15.1.0
+feat!: rename submit_credit nonce parameter
+```
+
+### Setup
+
+The hook is installed automatically when you run `npm install` at the repo root (husky `prepare` script). No manual setup needed.
+
+```bash
+# From repo root
+npm install
+```
 
 ---
 
@@ -418,6 +485,49 @@ git push origin feature/your-feature-name
 
 ---
 
+## Branch Protection Rules
+
+The `main` branch is protected to ensure code quality and project stability. All pull requests must comply with the following requirements before they can be merged.
+
+### Required Status Checks
+
+All of the following CI checks must pass before a PR can be merged:
+
+| Check | Purpose |
+|---|---|
+| `contracts-test` | Rust contract test suite (runs `cargo test` on all Soroban contracts) |
+| `api-lint` | TypeScript linting for the NestJS API (runs `npm run lint`) |
+| `api-test` | NestJS unit and integration tests (runs `npm run test` and `npm run test:e2e`) |
+| `api-type-check` | TypeScript type checking for the NestJS API (runs `npm run type-check`) |
+| `frontend-lint` | Angular linting (runs `ng lint`) |
+| `frontend-test` | Angular unit tests (runs `ng test --watch=false`) |
+
+Failing checks indicate bugs, style violations, or missing tests. Address all failures before requesting review.
+
+### Direct Pushes to `main` Are Blocked
+
+All changes to `main` **must** go through a pull request. Direct pushes to `main` are blocked at the repository level. This ensures:
+
+- Every change is reviewed and tested
+- CI checks run on all code before merge
+- A clear record of all changes exists in PR history
+
+### Minimum Review Requirement
+
+Each PR requires **at least one approval** from a maintainer or code owner before merge. Reviewers will check:
+
+- Code quality and adherence to style guidelines
+- Test coverage for new functionality
+- Documentation updates
+- Compliance with security best practices
+- Alignment with project architecture and patterns
+
+### Bypassing Protections
+
+Maintainers can force-merge a PR in exceptional cases (e.g., critical security fixes, broken main branch recovery). These bypasses are logged and should be extremely rare.
+
+---
+
 ## Issue and PR Templates
 
 ### Issue Template
@@ -447,14 +557,36 @@ When creating a PR, please include:
 - [ ] Tests added or updated
 - [ ] Documentation updated
 - [ ] Rust: `cargo fmt` and `cargo clippy` pass
-- [ ] API: `npm run lint` and `npm run test` pass
-- [ ] Frontend: `ng lint` and `ng test` pass
+- [ ] API: `npm run lint`, `npm run format:check`, and `npm run test` pass
+- [ ] Frontend: `npm run lint`, `npm run format:check`, and `ng test` pass
 - [ ] No secrets or private keys committed
 - [ ] `CHANGELOG.md` updated if this is a user-facing change
-
 ---
 
+## Adding Error Codes
 
+CarbonChain smart contracts use stable numeric error codes. These codes are safe to use in API clients and monitoring because they never change across contract upgrades.
+
+### Numbering Scheme
+
+Codes are allocated by range per contract:
+
+| Range | Contract |
+|-------|----------|
+| 100–125 | Credit Registry |
+| 110–118 | Retirement |
+| 115–125 | Marketplace |
+| 119–129 | MRV Oracle |
+
+When adding a new error code, pick the **next available number** within the contract's range. The overall range is 100–138; once a range is exhausted, expand upward into the shared buffer (130–138).
+
+### Steps
+
+1. **Pick the next code** — find the highest code in the contract's range from `docs/features/ERROR_CODES_REFERENCE.md`, then increment by one.
+2. **Add the variant** — define the new error variant in the contract's error enum (e.g. `contracts/credit_registry/src/lib.rs`).
+3. **Update the reference doc** — add a new row to the contract's table in `docs/features/ERROR_CODES_REFERENCE.md` with the code, name, and description.
+4. **Emits / usage** — annotate the contract function that returns the new error (in the function's doc comment and in any API docs).
+5. **Test coverage** — add a test that asserts the new error is returned in the expected scenario.
 
 ---
 

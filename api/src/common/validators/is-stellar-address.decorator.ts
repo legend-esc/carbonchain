@@ -1,6 +1,5 @@
 import {
   registerDecorator,
-  ValidationArguments,
   ValidationOptions,
   ValidatorConstraint,
   ValidatorConstraintInterface,
@@ -8,25 +7,29 @@ import {
 import { StrKey } from '@stellar/stellar-sdk';
 
 @ValidatorConstraint({ name: 'isStellarAddress', async: false })
-export class IsStellarAddressConstraint
-  implements ValidatorConstraintInterface
-{
+export class IsStellarAddressConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
     return typeof value === 'string' && StrKey.isValidEd25519PublicKey(value);
   }
 
-  defaultMessage(args: ValidationArguments): string {
-    return `${args.property} must be a valid Stellar account address`;
+  defaultMessage(): string {
+    return 'Invalid Stellar address (must start with G and be 56 chars)';
   }
 }
 
-export function IsStellarAddress(
-  validationOptions?: ValidationOptions,
-): PropertyDecorator {
-  return (target: object, propertyKey: string | symbol): void => {
+/**
+ * class-validator decorator for DTO fields carrying a Stellar ed25519
+ * public key. Drop-in alongside @IsString():
+ *
+ *   @IsString()
+ *   @IsStellarAddress()
+ *   to: string;
+ */
+export function IsStellarAddress(validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string): void {
     registerDecorator({
-      target: target.constructor,
-      propertyName: propertyKey.toString(),
+      target: object.constructor,
+      propertyName,
       options: validationOptions,
       constraints: [],
       validator: IsStellarAddressConstraint,

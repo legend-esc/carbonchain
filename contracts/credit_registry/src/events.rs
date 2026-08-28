@@ -1,26 +1,195 @@
-use soroban_sdk::{Env, Address, BytesN, symbol_short, String};
+use soroban_sdk::{contractevent, Address, BytesN, String};
 
-pub fn credit_submitted(env: &Env, issuer: Address, project_id: String, tonnes: i128) {
-    let topics = (symbol_short!("submit"), issuer);
-    env.events().publish(topics, (project_id, tonnes));
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractInitialized {
+    pub admin: Address,
+    pub retirement_contract: Address,
+    pub required_approvals: u32,
 }
 
-pub fn credit_minted(env: &Env, verifier: Address, id: BytesN<32>) {
-    let topics = (symbol_short!("mint"), verifier);
-    env.events().publish(topics, id);
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractPaused {
+    pub admin: Address,
 }
 
-pub fn credit_flagged(env: &Env, id: BytesN<32>, reason: String) {
-    let topics = (symbol_short!("flag"),);
-    env.events().publish(topics, (id, reason));
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractUnpaused {
+    pub admin: Address,
 }
 
-pub fn verifier_added(env: &Env, admin: Address, verifier: Address) {
-    let topics = (symbol_short!("ver_add"), admin);
-    env.events().publish(topics, verifier);
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierRegistered {
+    pub admin: Address,
+    pub verifier: Address,
 }
 
-pub fn verifier_removed(env: &Env, admin: Address, verifier: Address) {
-    let topics = (symbol_short!("ver_rm"), admin);
-    env.events().publish(topics, verifier);
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierRemoved {
+    pub admin: Address,
+    pub verifier: Address,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditSubmitted {
+    pub issuer: Address,
+    pub project_id: String,
+    pub credit_id: BytesN<32>,
+    pub tonnes: i128,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditMinted {
+    pub verifier: Address,
+    pub id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditFlagged {
+    pub id: BytesN<32>,
+    pub reason: String,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditDisputed {
+    pub disputer: Address,
+    pub credit_id: BytesN<32>,
+    pub evidence: String,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct DisputeResolved {
+    pub credit_id: BytesN<32>,
+    pub outcome: u32,
+}
+
+/// Emitted when a flagged credit's dispute is resolved via `resolve_flag`.
+#[contractevent]
+#[derive(Clone)]
+pub struct FlagResolved {
+    pub credit_id: BytesN<32>,
+    /// The verifier (or admin) who resolved the flag.
+    pub resolver: Address,
+    /// 0 = Confirmed (credit stays Flagged), 1 = Rejected (credit restored to Active).
+    pub resolution: u32,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditExpired {
+    pub credit_id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditsMerged {
+    pub new_id: BytesN<32>,
+    pub source_count: u32,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct ProjectRegistered {
+    pub owner: Address,
+    pub project_id: String,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditTransferred {
+    pub from: Address,
+    pub to: Address,
+    pub credit_id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct CreditSplit {
+    pub original_id: BytesN<32>,
+    pub child1_id: BytesN<32>,
+    pub child2_id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct SessionNew {
+    pub initiator: Address,
+    pub session_id: BytesN<32>,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct BatchRetired {
+    pub buyer: Address,
+    pub count: u32,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct RetirementContractUpdated {
+    pub admin: Address,
+    pub new_address: Address,
+}
+
+/// Emitted when a verifier configures their own service capabilities.
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierServicesConfigured {
+    pub verifier: Address,
+    pub service_count: u32,
+}
+
+/// Emitted when a verifier deposits stake. `total` is the verifier's new locked balance.
+#[contractevent]
+#[derive(Clone)]
+pub struct StakeDeposited {
+    pub verifier: Address,
+    pub total: i128,
+}
+
+/// Emitted when `remove_verifier` initiates the 30-day unbonding period for a verifier's stake.
+#[contractevent]
+#[derive(Clone)]
+pub struct UnbondingInitiated {
+    pub verifier: Address,
+    pub amount: i128,
+    pub unlock_at: u64,
+}
+
+/// Emitted when a verifier withdraws stake after their unbonding period has elapsed.
+#[contractevent]
+#[derive(Clone)]
+pub struct StakeWithdrawn {
+    pub verifier: Address,
+    pub amount: i128,
+}
+
+/// Emitted when the admin slashes a verifier's stake for a malicious approval.
+#[contractevent]
+#[derive(Clone)]
+pub struct VerifierSlashed {
+    pub admin: Address,
+    pub verifier: Address,
+    pub amount: i128,
+    pub credit_id: BytesN<32>,
+}
+
+/// Emitted when the contract WASM is upgraded via `upgrade()`. Records the
+/// new WASM hash and the schema version that migrations were run against.
+/// (Issue #670)
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractUpgraded {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub migrated_to_version: u32,
 }

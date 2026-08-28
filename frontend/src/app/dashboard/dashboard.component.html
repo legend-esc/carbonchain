@@ -1,7 +1,7 @@
 <div class="dashboard">
   <!-- Header -->
   <header class="dashboard__header">
-    <h1 class="dashboard__title">Carbon Credit Portfolio</h1>
+    <h1 class="dashboard__title">{{ 'dashboard.title' | translate }}</h1>
 
     <div class="dashboard__wallet">
       @if (wallet.isConnected()) {
@@ -15,7 +15,11 @@
           [disabled]="wallet.state() === 'connecting'"
           aria-label="Connect Freighter wallet"
         >
-          {{ wallet.state() === 'connecting' ? 'Connecting…' : 'Connect Wallet' }}
+          {{
+            wallet.state() === 'connecting'
+              ? ('wallet.connecting' | translate)
+              : ('wallet.connect' | translate)
+          }}
         </button>
       }
     </div>
@@ -28,45 +32,61 @@
 
   <!-- Stats bar -->
   @if (wallet.isConnected()) {
-    <section class="stats" aria-label="Portfolio summary">
-      <div class="stat-card">
-        <span class="stat-card__label">Total Credits</span>
+    <section class="stats" role="region" aria-label="Portfolio summary">
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Total credits: ' + store.credits().length"
+      >
+        <span class="stat-card__label">{{ 'dashboard.totalCredits' | translate }}</span>
         <span class="stat-card__value">{{ store.credits().length }}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-card__label">Active</span>
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Active credits: ' + store.activeCredits().length"
+      >
+        <span class="stat-card__label">{{ 'dashboard.active' | translate }}</span>
         <span class="stat-card__value">{{ store.activeCredits().length }}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-card__label">Retired</span>
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Retired credits: ' + store.retiredCredits().length"
+      >
+        <span class="stat-card__label">{{ 'dashboard.retired' | translate }}</span>
         <span class="stat-card__value">{{ store.retiredCredits().length }}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-card__label">Total Tonnes</span>
+      <div
+        class="stat-card"
+        tabindex="0"
+        [attr.aria-label]="'Total tonnes: ' + store.totalTonnes().toLocaleString()"
+      >
+        <span class="stat-card__label">{{ 'dashboard.totalTonnes' | translate }}</span>
         <span class="stat-card__value">{{ store.totalTonnes().toLocaleString() }}</span>
       </div>
     </section>
 
     <!-- Loading / error states -->
     @if (store.isLoading()) {
-      <p class="status-msg" aria-live="polite">Loading credits…</p>
+      <p class="status-msg" aria-live="polite">{{ 'dashboard.loading' | translate }}</p>
     } @else if (store.error()) {
       <p class="alert alert--error" role="alert">{{ store.error() }}</p>
     } @else if (store.credits().length === 0) {
-      <p class="status-msg">No credits found for this account.</p>
+      <p class="status-msg">{{ 'dashboard.noCredits' | translate }}</p>
     } @else {
       <!-- Credit table -->
       <section class="credits-section" aria-label="Credit list">
         <table class="credits-table">
           <thead>
             <tr>
-              <th scope="col">ID</th>
-              <th scope="col">Project</th>
-              <th scope="col">Vintage</th>
-              <th scope="col">Methodology</th>
-              <th scope="col">Geography</th>
-              <th scope="col">Tonnes</th>
-              <th scope="col">Status</th>
+              <th scope="col">{{ 'dashboard.col.id' | translate }}</th>
+              <th scope="col">{{ 'dashboard.col.project' | translate }}</th>
+              <th scope="col">{{ 'dashboard.col.vintage' | translate }}</th>
+              <th scope="col">{{ 'dashboard.col.methodology' | translate }}</th>
+              <th scope="col">{{ 'dashboard.col.geography' | translate }}</th>
+              <th scope="col">{{ 'dashboard.col.tonnes' | translate }}</th>
+              <th scope="col">{{ 'dashboard.col.status' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -97,34 +117,84 @@
       <!-- Detail panel for selected credit -->
       @if (store.selected()) {
         <aside class="detail-panel" aria-label="Credit detail">
-          <h2 class="detail-panel__title">Credit Detail</h2>
+          <h2 class="detail-panel__title">{{ 'dashboard.creditDetail' | translate }}</h2>
           <dl class="detail-list">
-            <dt>ID</dt>
+            <dt>{{ 'dashboard.col.id' | translate }}</dt>
             <dd class="monospace">{{ store.selected()!.id }}</dd>
-            <dt>Project</dt>
+            <dt>{{ 'dashboard.col.project' | translate }}</dt>
             <dd class="monospace">{{ store.selected()!.project_id }}</dd>
-            <dt>Issuer</dt>
+            <dt>{{ 'dashboard.col.issuer' | translate }}</dt>
             <dd class="monospace">{{ store.selected()!.issuer }}</dd>
-            <dt>Vintage</dt>
+            <dt>{{ 'dashboard.col.vintage' | translate }}</dt>
             <dd>{{ store.selected()!.vintage_year }}</dd>
-            <dt>Methodology</dt>
+            <dt>{{ 'dashboard.col.methodology' | translate }}</dt>
             <dd>{{ store.selected()!.methodology }}</dd>
-            <dt>Geography</dt>
+            <dt>{{ 'dashboard.col.geography' | translate }}</dt>
             <dd>{{ store.selected()!.geography }}</dd>
-            <dt>Tonnes</dt>
+            <dt>{{ 'dashboard.col.tonnes' | translate }}</dt>
             <dd>{{ formatTonnes(store.selected()!.tonnes) }}</dd>
-            <dt>IPFS</dt>
+            <dt>{{ 'dashboard.col.ipfs' | translate }}</dt>
             <dd class="monospace">{{ store.selected()!.ipfs_hash }}</dd>
-            <dt>Status</dt>
+            <dt>{{ 'dashboard.col.status' | translate }}</dt>
             <dd>
               <span class="badge" [attr.data-status]="store.selected()!.status">
                 {{ store.selected()!.status }}
               </span>
             </dd>
           </dl>
-          <button class="btn btn--ghost" (click)="selectCredit(store.selectedId()!)">Close</button>
+          <button class="btn btn--ghost" (click)="selectCredit(store.selectedId()!)">
+            {{ 'dashboard.close' | translate }}
+          </button>
         </aside>
       }
     }
+
+    <!-- Retirement History -->
+    <section class="retirement-section" aria-label="Retirement history">
+      <h2 class="section-title">Retirement History</h2>
+
+      @if (retirementsLoading()) {
+        <p class="status-msg" aria-live="polite">Loading retirements…</p>
+      } @else if (retirementsError()) {
+        <p class="alert alert--error" role="alert">{{ retirementsError() }}</p>
+      } @else if (retirements().length === 0) {
+        <p class="status-msg">No retirements yet.</p>
+      } @else {
+        <table class="credits-table" aria-label="Retirement records">
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">Credit</th>
+              <th scope="col">Tonnes Retired</th>
+              <th scope="col">Reason</th>
+              <th scope="col">Date</th>
+              <th scope="col">Tx Hash</th>
+              <th scope="col">Certificate</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of retirements(); track r.id) {
+              <tr class="credits-table__row">
+                <td class="monospace">{{ r.id | slice: 0 : 8 }}…</td>
+                <td class="monospace">{{ r.credit_id | slice: 0 : 8 }}…</td>
+                <td>{{ formatTonnes(r.tonnes_retired) }}</td>
+                <td>{{ r.reason }}</td>
+                <td>{{ formatDate(r.retired_at) }}</td>
+                <td class="monospace">{{ r.tx_hash | slice: 0 : 12 }}…</td>
+                <td>
+                  <a
+                    class="btn btn--ghost btn--sm"
+                    [routerLink]="['/certificates', r.id]"
+                    aria-label="View retirement certificate for {{ r.id | slice: 0 : 8 }}"
+                  >
+                    View
+                  </a>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
   }
 </div>

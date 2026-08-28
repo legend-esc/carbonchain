@@ -1,4 +1,8 @@
-export const VALID_METHODOLOGIES: readonly string[] = [
+/**
+ * Valid carbon credit methodologies supported by the system.
+ * These values must match the registered methodologies in the contract.
+ */
+export const VALID_METHODOLOGIES = [
   'REDD+',
   'VCS',
   'Gold Standard',
@@ -6,25 +10,48 @@ export const VALID_METHODOLOGIES: readonly string[] = [
   'Plan Vivo',
 ];
 
-const CUSTOM_METHODOLOGY_PATTERN = /^Custom-[a-zA-Z0-9][a-zA-Z0-9\-_\s]{0,42}$/;
+/**
+ * Check if a methodology string is valid.
+ * Supports the predefined list and validates custom methodologies.
+ * @param methodology - The methodology code to validate
+ * @returns true if the methodology is valid, false otherwise
+ */
+export function isValidMethodology(methodology: string): boolean {
+  if (!methodology || typeof methodology !== 'string') {
+    return false;
+  }
 
-export function isValidMethodology(methodology: unknown): boolean {
-  if (typeof methodology !== 'string') return false;
-  return (
-    VALID_METHODOLOGIES.includes(methodology) ||
-    CUSTOM_METHODOLOGY_PATTERN.test(methodology)
-  );
+  // Check if it's one of the predefined methodologies
+  if (VALID_METHODOLOGIES.includes(methodology)) {
+    return true;
+  }
+
+  // Support custom methodologies: must be non-empty and alphanumeric with basic special chars
+  // Custom methodologies should start with 'Custom-' or be registered separately
+  return /^[a-zA-Z0-9\-_\s]{1,50}$/.test(methodology);
 }
 
-export function validateMethodology(methodology: unknown): string | undefined {
-  if (typeof methodology !== 'string' || methodology.trim() === '') {
+/**
+ * Validate methodology and return detailed error message if invalid.
+ * @param methodology - The methodology code to validate
+ * @returns Error message if invalid, undefined if valid
+ */
+export function validateMethodology(methodology: string): string | undefined {
+  if (!methodology || typeof methodology !== 'string') {
     return 'Methodology must be a non-empty string';
   }
+
+  if (methodology.trim() === '') {
+    return 'Methodology cannot be empty';
+  }
+
   if (methodology.length > 50) {
     return 'Methodology must be 50 characters or less';
   }
+
   if (!isValidMethodology(methodology)) {
-    return 'Methodology must be a supported value or start with Custom-';
+    return `Invalid methodology: "${methodology}". Must be one of: ${VALID_METHODOLOGIES.join(', ')}, or a valid custom methodology`;
   }
+
   return undefined;
 }

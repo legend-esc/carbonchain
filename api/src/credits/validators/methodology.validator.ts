@@ -4,28 +4,27 @@ import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
-import { isValidMethodology } from '../methodologies';
+import { validateMethodology } from '../methodologies';
 
 @ValidatorConstraint({ name: 'isValidMethodology', async: false })
-export class IsValidMethodologyConstraint
-  implements ValidatorConstraintInterface
-{
-  validate(value: unknown): boolean {
-    return isValidMethodology(value);
+export class IsValidMethodologyConstraint implements ValidatorConstraintInterface {
+  validate(value: any): boolean {
+    if (typeof value !== 'string') {
+      return false;
+    }
+    return validateMethodology(value) === undefined;
   }
 
   defaultMessage(): string {
-    return 'Methodology must be a supported value or start with Custom-';
+    return 'Invalid methodology value';
   }
 }
 
-export function IsValidMethodology(
-  validationOptions?: ValidationOptions,
-): PropertyDecorator {
-  return (target: object, propertyKey: string | symbol): void => {
+export function IsValidMethodology(validationOptions?: ValidationOptions) {
+  return function (target: object, propertyName: string) {
     registerDecorator({
       target: target.constructor,
-      propertyName: propertyKey.toString(),
+      propertyName: propertyName,
       options: validationOptions,
       constraints: [],
       validator: IsValidMethodologyConstraint,

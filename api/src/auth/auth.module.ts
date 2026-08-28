@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { StellarAuthStrategy } from './stellar-auth.strategy';
 import { StellarModule } from '../stellar/stellar.module';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Module({
   imports: [
@@ -20,8 +21,14 @@ import { StellarModule } from '../stellar/stellar.module';
       }),
     }),
   ],
-  providers: [AuthService, StellarAuthStrategy],
+  providers: [
+    AuthService,
+    StellarAuthStrategy,
+    // JwtAuthGuard depends on AuthService (for blocklist check) — provide it
+    // explicitly so NestJS can inject AuthService via its constructor.
+    JwtAuthGuard,
+  ],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, JwtAuthGuard],
 })
 export class AuthModule {}

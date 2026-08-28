@@ -16,6 +16,8 @@ CarbonChain is a Soroban-native platform for issuing, trading, and retiring toke
 - Session-based audit trail for all credit lifecycle operations
 - Replay attack protection on all contract state transitions
 - Fractional credits (0.1 tonne resolution via i128 storage)
+  - Unit convention: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (= 0.1 tonne)
+  - All `tonnes` values must be a positive multiple of 100,000; non-multiples are rejected
 - Anchor info discovery for SEP-10 authenticated interactions
 - Health monitoring for registered verifier nodes
 - Event emission for all state changes
@@ -45,11 +47,13 @@ contract.initialize(&admin);
 // Register a verifier
 contract.register_verifier(&verifier);
 
-// Configure verifier capabilities
+// Verifier self-configures their own service capabilities
+// (verifier signs with their own key — this is NOT an admin operation)
+let nonce = contract.get_nonce(&verifier);
 let mut capabilities = Vec::new(&env);
 capabilities.push_back(ServiceType::CreditApproval);
 capabilities.push_back(ServiceType::MRVReview);
-contract.configure_verifier_services(&verifier, &capabilities);
+contract.configure_verifier_services(&verifier, &capabilities, nonce);
 
 // Submit a credit for approval
 let credit_id = contract.submit_credit(
@@ -59,12 +63,14 @@ let credit_id = contract.submit_credit(
         vintage_year: 2024,
         methodology: String::from_str(&env, "VCS"),
         geography: String::from_str(&env, "NG"),
-        tonnes: 1_000_000,   // 1 tonne in kg units
+        tonnes: 1_000_000,   // 1 tonne (1 tonne = 1_000_000 units, i.e. TONNES_SCALE)
         ipfs_hash: String::from_str(&env, "bafybei..."),
     },
 );
 
 // Verifier approves and triggers mint
+// (requires ServiceType::CreditApproval in configured services,
+//  or no services configured — open-capability assumption)
 contract.approve_and_mint(&verifier, &credit_id);
 
 // Retire a credit
@@ -215,7 +221,7 @@ carbonchain/
 
 - **Node.js** 18+ and **npm** 9+
 - **Rust** (stable toolchain) — [rustup.rs](https://rustup.rs)
-- **Soroban CLI** — `cargo install --locked soroban-cli`
+- **Soroban CLI** — `cargo install --locked stellar-cli@26.1.0 --features opt`
 - **Docker** — for local PostgreSQL
 - **Freighter browser extension** — [freighter.app](https://freighter.app)
 - A **Stellar testnet keypair** — [laboratory.stellar.org](https://laboratory.stellar.org)
@@ -231,38 +237,53 @@ git clone git@github.com:legend-esc/carbonchain.git
 cd carbonchain
 ```
 
-### 2. Install dependencies
-
-```bash
-# Backend
-cd api && npm install
-
-# Frontend
-cd ../frontend && npm install
-```
-
-### 3. Start local services
-
-```bash
-# PostgreSQL via Docker
-docker compose up -d postgres
-
-# Run database migrations
-cd api && npm run migration:run
-```
-
-### 4. Configure environment variables
+### 2. Configure environment variables
 
 ```bash
 cp api/.env.example api/.env
-cp frontend/src/environments/environment.example.ts \
-   frontend/src/environments/environment.ts
-# Fill in values — see Environment Variables below
+# Fill in ADMIN_SECRET_KEY, JWT_SECRET, and contract IDs — see Environment Variables below
 ```
 
-### 5. Start development servers
+### 3. Start the full stack with Docker Compose
+
+The `docker-compose.yml` starts all four services (PostgreSQL, Redis, API, Frontend) in the correct dependency order with health checks:
 
 ```bash
+docker compose up -d
+```
+
+| Service  | URL                          | Description                  |
+|----------|------------------------------|------------------------------|
+| Frontend | http://localhost:4200        | Angular SPA (nginx)          |
+| API      | http://localhost:3000        | NestJS REST API              |
+| Postgres | localhost:5432               | PostgreSQL 16                |
+| Redis    | localhost:6379               | Redis 7 (cache + rate limit) |
+
+Check service health:
+
+```bash
+docker compose ps
+docker compose logs -f api
+```
+
+### 4. Run database migrations
+
+```bash
+cd api && npm run migration:run
+```
+
+### 5. (Optional) Local development without Docker
+
+If you prefer to run services individually:
+
+```bash
+# Start only the backing services
+docker compose up -d postgres redis
+
+# Install dependencies
+cd api && npm install
+cd ../frontend && npm install
+
 # Terminal 1 — NestJS API (port 3000)
 cd api && npm run start:dev
 
@@ -341,10 +362,14 @@ cargo build --target wasm32-unknown-unknown --release
 
 | Contract | Stable Error Codes | Description |
 |---|---|---|
-| `credit_registry` | 100–109 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
-| `retirement` | 110–114 | Burn tokens on retirement, write immutable retirement records |
-| `marketplace` | 115–118 | Manage offer listings, integrate with Stellar DEX |
-| `mrv_oracle` | 119–120 | Accept MRV data updates, flag anomalies for re-verification |
+| `credit_registry` | 100–125 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
+| `retirement` | 110–118 | Burn tokens on retirement, write immutable retirement records |
+| `marketplace` | 115–130 | Manage offer listings, integrate with Stellar DEX |
+| `mrv_oracle` | 119–129 | Accept MRV data updates, flag anomalies for re-verification |
+| `credit_registry` | 100–126 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
+| `retirement` | 200–209 | Burn tokens on retirement, write immutable retirement records |
+| `marketplace` | 300–309 | Manage offer listings, integrate with Stellar DEX |
+| `mrv_oracle` | 400–409 | Accept MRV data updates, flag anomalies for re-verification |
 
 See `docs/features/ERROR_CODES_REFERENCE.md` for the full error code reference.
 
@@ -503,12 +528,15 @@ CarbonChain is designed to work seamlessly across all major platforms:
 
 ## Security
 
+See [SECURITY.md](SECURITY.md) for the vulnerability reporting and responsible disclosure process.
+
 - No private keys in the API — all user-facing transactions signed client-side via Freighter
-- Stable error codes (100–120) for API compatibility across contract upgrades
+- Stable error codes (100–126) for API compatibility across contract upgrades
 - Replay protection at multiple contract levels with nonce-based verification
 - Immutable audit logs — no delete functions on retirement or session records
 - Authorization checks on all state-mutating operations
 - `.claudeignore` excludes `ADMIN_SECRET_KEY` and all secrets from Claude Code context
+- `cargo audit` runs in CI on every push/PR — high-severity CVEs in Rust dependencies fail the build
 
 ---
 

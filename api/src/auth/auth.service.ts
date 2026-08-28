@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -15,7 +16,12 @@ import {
   Transaction,
   StrKey,
 } from '@stellar/stellar-sdk';
+import { randomUUID } from 'crypto';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
+import { CacheService } from '../common/cache.service';
+
+/** Redis key prefix for blocklisted JTIs. */
+const BLOCKLIST_PREFIX = 'auth:blocklist:jti:';
 
 @Injectable()
 export class AuthService {
@@ -27,6 +33,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly keypairService: StellarKeypairService,
+    private readonly cache: CacheService,
   ) {
     const network = this.configService.get<string>(
       'STELLAR_NETWORK',
@@ -44,11 +51,12 @@ export class AuthService {
    * SEP-10 §3.1 — Build a challenge transaction.
    * The server signs a transaction with a random nonce operation (manageData)
    * and returns it for the client wallet to sign.
+   * Issue #254 — Store the nonce in cache with 5-minute TTL to prevent replay attacks.
    */
-  generateChallenge(clientAccount: string): {
+  async generateChallenge(clientAccount: string): Promise<{
     transaction: string;
     network_passphrase: string;
-  } {
+  }> {
     if (!clientAccount || !StrKey.isValidEd25519PublicKey(clientAccount)) {
       throw new BadRequestException('Invalid Stellar account address');
     }
@@ -78,6 +86,9 @@ export class AuthService {
 
     tx.sign(serverKeypair);
 
+    // Store nonce in cache with 5-minute TTL (300 seconds)
+    await this.cache.set(`sep10:nonce:${nonce}`, true, 300);
+
     return {
       transaction: tx.toEnvelope().toXDR('base64'),
       network_passphrase: this.networkPassphrase,
@@ -90,8 +101,14 @@ export class AuthService {
    *  1. Transaction is parseable and within time bounds
    *  2. Server signature is present and valid
    *  3. Client signature is present and valid on the manageData operation
+   *  4. Nonce has not been previously used (Issue #254)
+   *
+   * Issue #491 — All issued tokens include a `jti` (UUID v4) claim so they
+   * can be individually revoked via POST /auth/logout.
    */
-  verifyAndIssueToken(signedTransactionXdr: string): { access_token: string } {
+  async verifyAndIssueToken(signedTransactionXdr: string): Promise<{
+    access_token: string;
+  }> {
     let tx: Transaction;
     try {
       tx = new Transaction(signedTransactionXdr, this.networkPassphrase);
@@ -152,8 +169,76 @@ export class AuthService {
       throw new UnauthorizedException('Client signature missing or invalid');
     }
 
-    const access_token = this.jwtService.sign({ account: clientAccount });
-    this.logger.log(`Issued JWT for account: ${clientAccount}`);
+    // Issue #254 — Verify nonce freshness and prevent replay attacks
+    const nonce = (manageDataOp as any).value;
+    const nonceKey = `sep10:nonce:${nonce}`;
+    const nonceExists = await this.cache.get<boolean>(nonceKey);
+    if (!nonceExists) {
+      throw new UnauthorizedException(
+        'Challenge nonce not found or already used',
+      );
+    }
+
+    // Delete nonce to prevent reuse
+    await this.cache.del(nonceKey);
+
+    // Issue #491 — Include a UUID v4 jti so tokens can be blocklisted on logout.
+    const jti = randomUUID();
+    const access_token = this.jwtService.sign({ account: clientAccount, jti });
+    this.logger.log(`Issued JWT for account: ${clientAccount} (jti: ${jti})`);
     return { access_token };
+  }
+
+  /**
+   * Issue #491 — Invalidate a JWT by storing its jti in the Redis blocklist.
+   *
+   * The token is decoded without re-verification (the guard already verified it).
+   * If the token has no `jti` claim it cannot be blocklisted — we reject it so
+   * old tokens without `jti` are treated as unrevocable and must expire naturally.
+   *
+   * @param token — raw Bearer token string (without "Bearer " prefix)
+   */
+  async logout(token: string): Promise<void> {
+    if (!token) return;
+
+    let payload: { jti?: string; exp?: number; iat?: number } | null = null;
+    try {
+      payload = this.jwtService.decode(token);
+    } catch {
+      // malformed token — nothing to revoke
+      return;
+    }
+
+    if (!payload?.jti) {
+      throw new UnauthorizedException(
+        'Token cannot be revoked: missing jti claim. Please re-authenticate.',
+      );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const exp = payload.exp ?? 0;
+    const remainingTtl = Math.max(exp - now, 1);
+
+    const blocklistKey = `${BLOCKLIST_PREFIX}${payload.jti}`;
+    const persisted = await this.cache.set(blocklistKey, true, remainingTtl);
+    if (!persisted) {
+      this.logger.error(
+        `JWT revocation NOT persisted (cache unavailable): jti=${payload.jti}`,
+      );
+      throw new ServiceUnavailableException(
+        'Unable to revoke token: revocation store unavailable. Token remains valid until it expires naturally.',
+      );
+    }
+    this.logger.log(`JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`);
+  }
+
+  /**
+   * Issue #491 — Check whether a jti has been blocklisted.
+   * Called by JwtAuthGuard on every authenticated request.
+   */
+  async isTokenRevoked(jti: string): Promise<boolean> {
+    const blocklistKey = `${BLOCKLIST_PREFIX}${jti}`;
+    const blocked = await this.cache.get<boolean>(blocklistKey);
+    return blocked === true;
   }
 }

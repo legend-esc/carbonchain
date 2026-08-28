@@ -9,10 +9,19 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "=26.0.1"
+# Pin to the rand_core 0.6 stack. soroban-env-host 26.1.3 declares loose
+# `>=` bounds on ed25519-dalek/curve25519-dalek, which resolve to the new
+# digest 0.11 / rand_core 0.10 stack; its testutils PRNG (rand_chacha 0.3)
+# is incompatible with that. Pin to the versions soroban-sdk 26.0.1 was
+# built against. Target-gated to non-wasm so the constraint unifies the
+# native test builds on 2.2.0 without bloating the 128 KiB-limited WASM.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["alloc", "rand_core"] }
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+soroban-sdk = { version = "=26.0.1", features = ["testutils"] }
 
 [features]
+library = []
 testutils = ["soroban-sdk/testutils"]
