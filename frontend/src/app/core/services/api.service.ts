@@ -157,7 +157,7 @@ export class ApiService {
     params: Record<string, string>,
   ): Observable<{ data: Offer[]; next_cursor: string | null; limit: number }> {
     return this.http.get<{ data: Offer[]; next_cursor: string | null; limit: number }>(
-      `${this.baseUrl}/credits`,
+      `${this.baseUrl}/marketplace/listings`,
       { params },
     );
   }

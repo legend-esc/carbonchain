@@ -166,10 +166,13 @@ export class StellarWalletService {
 
     const tick = async () => {
       const pk = this.publicKey();
-      if (!pk) return;
+      if (!pk || !this.isConnected()) return;
       try {
         this._balanceError.set(null);
         const bal = await this.getXlmBalance(pk);
+        // Guard against a stale write after disconnect: re-check the
+        // connection/account before publishing the result.
+        if (!this.isConnected() || this.publicKey() !== pk) return;
         this._xlmBalance.set(bal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to fetch XLM balance.';
