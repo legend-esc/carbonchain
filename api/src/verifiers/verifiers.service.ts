@@ -321,6 +321,26 @@ export class VerifiersService implements OnApplicationBootstrap {
 
     await this.getVerifier(address);
 
+    // ── #771: enforce the multi-sig approval threshold ──────────────────────
+    // `set_required_approvals` configures how many distinct verifier signatures
+    // are required before a credit mints. The contract enforces this at mint
+    // time, but failing fast at the API edge yields a clear, structured 4xx
+    // instead of an opaque contract error when the credit is already fully
+    // approved.
+    const requiredApprovals = await this.getRequiredApprovals();
+    if (requiredApprovals <= 0) {
+      throw new BadRequestException(
+        'Approval threshold is not configured on the contract',
+      );
+    }
+
+    const approvalCount = await this.getCreditApprovalCount(creditId);
+    if (approvalCount >= requiredApprovals) {
+      throw new ConflictException(
+        'Credit already has the required number of verifier approvals',
+      );
+    }
+
     // Fetch the verifier's current replay-protection nonce from the contract.
     // This must be done atomically with the transaction build to avoid
     // TOCTOU races — the nonce is consumed inside `approve_and_mint`.
@@ -370,6 +390,40 @@ export class VerifiersService implements OnApplicationBootstrap {
       }
       throw error;
     }
+  }
+
+  /**
+   * Reads the on-chain multi-sig threshold configured via `set_required_approvals`.
+   * Returns 0 (treated as "unconfigured") when the contract is unreachable.
+   */
+  private async getRequiredApprovals(): Promise<number> {
+    try {
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_required_approvals',
+        [],
+      );
+      const value = retval ? (scValToNative(retval) as number | bigint) : 0;
+      return Number(value);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Reads the number of distinct verifier approvals a credit has received.
+   */
+  private async getCreditApprovalCount(creditId: string): Promise<number> {
+    const args = [
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+    ];
+    const retval = await this.stellarService.readContract(
+      this.contractId,
+      'get_approval_count',
+      args,
+    );
+    const value = retval ? (scValToNative(retval) as number | bigint) : 0;
+    return Number(value);
   }
 
   async getReputation(address: string): Promise<VerifierReputation> {

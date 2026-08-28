@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -73,11 +74,28 @@ describe('VerifiersService.approveCredit', () => {
       .spyOn(service, 'listVerifiers')
       .mockResolvedValue(addrs.map((a) => ({ address: a })));
 
+  /** Per-method readContract mock so the new threshold reads don't collide. */
+  const setReadMock = () => {
+    mockStellarService.readContract.mockImplementation(
+      async (_contractId: string, method: string) => {
+        if (method === 'get_nonce') {
+          return xdr.ScVal.scvU64(new xdr.Uint64(42n));
+        }
+        if (method === 'get_required_approvals') {
+          // Default: a 1-of-N threshold (first approval is allowed).
+          return xdr.ScVal.scvU64(new xdr.Uint64(1n));
+        }
+        if (method === 'get_approval_count') {
+          return xdr.ScVal.scvU64(new xdr.Uint64(0n));
+        }
+        return null;
+      },
+    );
+  };
+
   /** Setup nonce + invokeContract mocks that succeed. */
   const setupSuccess = () => {
-    mockStellarService.readContract.mockResolvedValue(
-      xdr.ScVal.scvU64(new xdr.Uint64(42n)),
-    );
+    setReadMock();
     mockStellarService.invokeContract.mockResolvedValue({} as any);
     mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
   };
@@ -124,9 +142,7 @@ describe('VerifiersService.approveCredit', () => {
   describe('error handling', () => {
     const setupErrorMocks = () => {
       spyListVerifiers([VERIFIER_ADDR]);
-      mockStellarService.readContract.mockResolvedValue(
-        xdr.ScVal.scvU64(new xdr.Uint64(1n)),
-      );
+      setReadMock();
       mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
     };
 
@@ -186,6 +202,52 @@ describe('VerifiersService.approveCredit', () => {
       await expect(
         service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('multi-sig threshold enforcement (#771)', () => {
+    it('should proceed to invokeContract when approval count is below threshold', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setReadMock();
+      mockStellarService.invokeContract.mockResolvedValue({} as any);
+      mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.invokeContract).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw BadRequestException when threshold is unconfigured (0)', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      mockStellarService.readContract.mockImplementation(
+        async (_c: string, method: string) => {
+          if (method === 'get_nonce') return xdr.ScVal.scvU64(new xdr.Uint64(42n));
+          if (method === 'get_required_approvals') return xdr.ScVal.scvU64(new xdr.Uint64(0n));
+          if (method === 'get_approval_count') return xdr.ScVal.scvU64(new xdr.Uint64(0n));
+          return null;
+        },
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw ConflictException when approval count already meets threshold', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      mockStellarService.readContract.mockImplementation(
+        async (_c: string, method: string) => {
+          if (method === 'get_nonce') return xdr.ScVal.scvU64(new xdr.Uint64(42n));
+          if (method === 'get_required_approvals') return xdr.ScVal.scvU64(new xdr.Uint64(2n));
+          if (method === 'get_approval_count') return xdr.ScVal.scvU64(new xdr.Uint64(2n));
+          return null;
+        },
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(ConflictException);
+      expect(mockStellarService.invokeContract).not.toHaveBeenCalled();
     });
   });
 });

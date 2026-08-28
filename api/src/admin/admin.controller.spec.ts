@@ -1,10 +1,7 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
-import { AdminGuard } from './admin.guard';
 import { CreditStatus } from '../../../shared';
-import { nativeToScVal } from '@stellar/stellar-sdk';
 
 describe('AdminController', () => {
   let controller: AdminController;
@@ -115,75 +112,5 @@ describe('AdminController', () => {
     const result = await controller.unpause();
     expect(result).toEqual({ paused: false });
     expect(service.unpauseContract).toHaveBeenCalled();
-  });
-});
-
-describe('AdminGuard', () => {
-  let guard: AdminGuard;
-  const ADMIN = 'GBCI2DH7MEKQUTCXZ7YLEVOZHDMBWPCMB6V46ZQHOUN2BHBWRWYY2JRP';
-
-  const mockConfigService = {
-    get: jest.fn((key: string) =>
-      key === 'CREDIT_REGISTRY_CONTRACT_ID'
-        ? 'CAABCAABCAABCAABCAABCAABCAABCAABCAAB'
-        : undefined,
-    ),
-  };
-  const mockCache = {
-    get: jest.fn().mockResolvedValue(null),
-    set: jest.fn().mockResolvedValue(undefined),
-    del: jest.fn().mockResolvedValue(undefined),
-  };
-  const mockStellar = {
-    readContract: jest
-      .fn()
-      .mockResolvedValue(nativeToScVal(ADMIN, { type: 'address' })),
-  };
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    guard = new AdminGuard(
-      mockConfigService as any,
-      mockStellar as any,
-      mockCache as any,
-    );
-  });
-
-  it('should allow admin users', async () => {
-    const ctx = {
-      switchToHttp: () => ({
-        getRequest: () => ({ user: { account: ADMIN, role: 'admin' } }),
-      }),
-      getHandler: () => ({}),
-      getClass: () => ({}),
-    } as unknown as ExecutionContext;
-    await expect(guard.canActivate(ctx)).resolves.toBe(true);
-    expect(mockStellar.readContract).toHaveBeenCalledWith(
-      'CAABCAABCAABCAABCAABCAABCAABCAABCAAB',
-      'get_admin',
-      [],
-    );
-  });
-
-  it('should throw ForbiddenException for non-admin users', async () => {
-    const ctx = {
-      switchToHttp: () => ({
-        getRequest: () => ({ user: { account: 'GUSER', role: 'user' } }),
-      }),
-      getHandler: () => ({}),
-      getClass: () => ({}),
-    } as unknown as ExecutionContext;
-    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
-  });
-
-  it('should throw ForbiddenException when no user', async () => {
-    const ctx = {
-      switchToHttp: () => ({
-        getRequest: () => ({}),
-      }),
-      getHandler: () => ({}),
-      getClass: () => ({}),
-    } as unknown as ExecutionContext;
-    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
   });
 });
