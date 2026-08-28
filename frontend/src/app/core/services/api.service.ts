@@ -229,6 +229,13 @@ export class ApiService {
     });
   }
 
+  /** POST /marketplace/offer/:id/buy — fill an existing offer (buyer side) */
+  buyOffer(id: number | string, token: string): Observable<void> {
+    return this.http.post<void>(`${this.baseUrl}/marketplace/offer/${id}/buy`, {}, {
+      headers: this.authHeaders(token),
+    });
+  }
+
   // ── Verifiers ─────────────────────────────────────────────────────────────
 
   /** GET /verifiers */
