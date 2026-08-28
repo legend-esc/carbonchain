@@ -683,6 +683,11 @@ export class CreditsService {
     if (credit.owner !== caller) {
       throw new BadRequestException('Caller does not own this credit');
     }
+    if (BigInt(splitTonnes) >= BigInt(credit.tonnes)) {
+      throw new BadRequestException(
+        'splitTonnes must be less than the credit total tonnes',
+      );
+    }
 
     // ── #415: API-layer nonce deduplication ───────────────────────────────────
     if (this.nonceService) {
