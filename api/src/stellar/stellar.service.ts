@@ -417,6 +417,13 @@ export class StellarService implements OnModuleInit {
     }
   }
 
+  private isBadSequenceError(error: unknown): boolean {
+    if (typeof error === 'string') return error.includes('tx_bad_seq');
+    if (error instanceof Error) return error.message.includes('tx_bad_seq');
+    const serialized = JSON.stringify(error);
+    return typeof serialized === 'string' && serialized.includes('tx_bad_seq');
+  }
+
   async buildAndSubmit(
     operations: Operation[],
     signerKeypair: Keypair,
