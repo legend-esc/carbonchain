@@ -603,13 +603,8 @@ export class MarketplaceComponent implements OnInit {
       const { networkPassphrase } = await this.wallet.getNetworkDetails();
       // The buy flow: build a transaction XDR client-side then sign via Freighter.
       await firstValueFrom(
-        this.api.createOffer(
-          {
-            sellerPublicKey: offer.seller,
-            creditId: offer.credit_id,
-            priceXlm: offer.price_xlm,
-            tonnes: offer.tonnes_available,
-          },
+        this.api.buyOffer(
+          offer.id,
           this.auth.token() ?? '',
         ),
       );

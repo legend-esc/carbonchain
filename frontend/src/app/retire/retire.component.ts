@@ -521,7 +521,8 @@ export class RetireComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
-    if (pk && this.auth.isAuthenticated()) {
+    if (pk && this.auth.isAuthenticated() && this.store.credits().length === 0) {
+      await this.store.loadByProject(pk);
     }
   }
 

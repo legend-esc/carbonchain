@@ -250,7 +250,7 @@ export class CreditDetailComponent implements OnInit {
   readonly isOwner = () => {
     const c = this.credit();
     const pk = this.wallet.publicKey();
-    return !!c && !!pk && c.issuer === pk;
+    return !!c && !!pk && c.owner === pk;
   };
 
   async ngOnInit(): Promise<void> {
