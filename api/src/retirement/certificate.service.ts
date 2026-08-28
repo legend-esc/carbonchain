@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Worker } from 'worker_threads';
 import { join } from 'path';
+import { isValidIpfsCid } from '../common/ipfs-cid.util';
 
 export interface CertificateData {
   retirementId: string;
@@ -34,6 +35,7 @@ export class CertificateService {
   private readonly pinataApiKey: string;
   private readonly pinataSecretKey: string;
   private readonly pinataApiUrl: string;
+  private readonly ipfsTimeoutMs: number;
 
   constructor(private readonly configService: ConfigService) {
     this.pinataApiKey = this.configService.get<string>('IPFS_API_KEY', '');
@@ -44,6 +46,9 @@ export class CertificateService {
     this.pinataApiUrl = this.configService.get<string>(
       'IPFS_API_URL',
       'https://api.pinata.cloud',
+    );
+    this.ipfsTimeoutMs = Number(
+      this.configService.get<number>('IPFS_TIMEOUT_MS', 30_000),
     );
   }
 
@@ -176,14 +181,30 @@ export class CertificateService {
     });
     form.append('pinataMetadata', metadata);
 
-    const response = await fetch(`${this.pinataApiUrl}/pinning/pinFileToIPFS`, {
-      method: 'POST',
-      headers: {
-        pinata_api_key: this.pinataApiKey,
-        pinata_secret_api_key: this.pinataSecretKey,
-      },
-      body: form,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.ipfsTimeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.pinataApiUrl}/pinning/pinFileToIPFS`, {
+        method: 'POST',
+        headers: {
+          pinata_api_key: this.pinataApiKey,
+          pinata_secret_api_key: this.pinataSecretKey,
+        },
+        body: form,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          `Pinata upload timed out after ${this.ipfsTimeoutMs}ms`,
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const text = await response.text();
@@ -191,6 +212,9 @@ export class CertificateService {
     }
 
     const result = (await response.json()) as { IpfsHash: string };
+    if (!isValidIpfsCid(result.IpfsHash)) {
+      throw new Error(`Pinata returned an invalid IPFS CID: ${result.IpfsHash}`);
+    }
     return result.IpfsHash;
   }
 }

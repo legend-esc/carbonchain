@@ -7,6 +7,9 @@ import {
   InMemoryProjectRepository,
   PROJECT_REPOSITORY,
 } from './project.repository';
+import { computeFileCid } from '../common/ipfs-cid.util';
+
+const VALID_CID = computeFileCid(Buffer.from('REDD+ Project docs'));
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -75,7 +78,7 @@ describe('ProjectsService', () => {
     it('uploads documents to Pinata and stores CID', async () => {
       mockedAxios.post = jest
         .fn()
-        .mockResolvedValue({ data: { IpfsHash: 'bafybeitest123' } });
+        .mockResolvedValue({ data: { IpfsHash: VALID_CID } });
 
       const project = await service.createProject({
         name: 'REDD+ Project',
@@ -96,27 +99,64 @@ describe('ProjectsService', () => {
           }),
         }),
       );
-      expect(project.documents_cid).toBe('bafybeitest123');
+      expect(project.documents_cid).toBe(VALID_CID);
     });
 
-    it('creates project even when IPFS upload fails', async () => {
+    it('retries transient IPFS failures and succeeds (uploadToIpfsWithRetry wired)', async () => {
       mockedAxios.post = jest
         .fn()
-        .mockRejectedValue(new Error('Network error'));
+        .mockRejectedValueOnce(new Error('503'))
+        .mockRejectedValueOnce(new Error('503'))
+        .mockResolvedValueOnce({ data: { IpfsHash: VALID_CID } });
 
       const project = await service.createProject({
-        name: 'Fail IPFS',
+        name: 'Retry Project',
         developer: 'Dev',
         description: 'desc',
         location: 'US',
         methodology: 'VCS',
-        documents: { data: 'test' },
+        documents: { data: 'retry' },
       });
 
-      expect(project.id).toBeDefined();
-      expect(project.documents_cid).toBe('');
-      const stored = await repo.findById(project.id);
-      expect(stored).toBeDefined();
+      expect(project.documents_cid).toBe(VALID_CID);
+      expect(mockedAxios.post).toHaveBeenCalledTimes(3);
+    });
+
+    it('rejects (and does NOT persist) when IPFS upload fails', async () => {
+      mockedAxios.post = jest
+        .fn()
+        .mockRejectedValue(new Error('Network error'));
+
+      await expect(
+        service.createProject({
+          name: 'Fail IPFS',
+          developer: 'Dev',
+          description: 'desc',
+          location: 'US',
+          methodology: 'VCS',
+          documents: { data: 'test' },
+        }),
+      ).rejects.toThrow('Network error');
+
+      const stored = await repo.findById('fail-ipfs');
+      expect(stored).toBeUndefined();
+    });
+
+    it('rejects when Pinata returns an invalid CID', async () => {
+      mockedAxios.post = jest
+        .fn()
+        .mockResolvedValue({ data: { IpfsHash: 'not-a-cid' } });
+
+      await expect(
+        service.createProject({
+          name: 'Bad CID',
+          developer: 'Dev',
+          description: 'desc',
+          location: 'US',
+          methodology: 'VCS',
+          documents: { data: 'test' },
+        }),
+      ).rejects.toThrow(/invalid IPFS CID/);
     });
   });
 
