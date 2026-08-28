@@ -76,6 +76,7 @@ export class MarketplaceController {
 
   @ApiOperation({ summary: 'Cancel an offer' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Caller is not the offer owner' })
   @UseGuards(JwtAuthGuard)
   @Delete('offer/:id/seller/:address')
   cancelOffer(

@@ -162,7 +162,11 @@ export class VerifiersController {
    * In production the verifier should sign this transaction themselves via Freighter.
    * The current implementation signs with the admin keypair for test-mode convenience.
    */
-  @ApiOperation({ summary: 'Deposit stake for a verifier' })
+  @ApiOperation({
+    summary: 'Deposit stake for a verifier',
+    description:
+      'The :address path param is informational only — the account credited is always the authenticated caller.',
+  })
   @ApiResponse({ status: 200, description: 'Updated stake after deposit' })
   @ApiResponse({ status: 400, description: 'Invalid address or amount' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
