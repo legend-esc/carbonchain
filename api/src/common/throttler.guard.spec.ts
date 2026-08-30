@@ -207,6 +207,65 @@ describe('ThrottlerGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
   });
+
+  it('ignores a spoofed x-forwarded-for from an untrusted client IP', async () => {
+    const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) =>
+      key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+    );
+
+    const mockReq = {
+      headers: { 'x-forwarded-for': '203.0.113.9, 198.51.100.5' },
+      socket: { remoteAddress: '5.6.7.8' }, // public, untrusted peer
+      path: '/auth/challenge',
+      body: {},
+    };
+
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    // XFF is ignored, so the second request is throttled by the real socket IP.
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+  });
+
+  it('honours x-forwarded-for only behind a trusted proxy', async () => {
+    const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) =>
+      key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+    );
+
+    const mockReq = {
+      headers: { 'x-forwarded-for': '203.0.113.9, 198.51.100.5' },
+      socket: { remoteAddress: '127.0.0.1' }, // trusted loopback proxy
+      path: '/auth/challenge',
+      body: {},
+    };
+
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+
+    // Behind a trusted proxy the client is the rightmost untrusted hop (198.51.100.5).
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    // A different client through the same proxy is allowed.
+    mockReq.headers['x-forwarded-for'] = '203.0.113.9, 192.0.2.7';
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    // The original client (198.51.100.5) again exceeds the limit.
+    mockReq.headers['x-forwarded-for'] = '203.0.113.9, 198.51.100.5';
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+  });
 });
 
 describe('ThrottlerGuard (per-account mode)', () => {

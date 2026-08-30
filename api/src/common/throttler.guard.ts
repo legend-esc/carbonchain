@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   HttpException,
   HttpStatus,
+  Logger,
   Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -131,6 +132,70 @@ function isInSkipList(ip: string, cidrs: CidrEntry[]): boolean {
 }
 
 /**
+ * Default trusted reverse-proxy CIDR ranges.
+ *
+ * `x-forwarded-for` is only honoured when the *direct* connection originates
+ * from one of these ranges. We default to loopback plus the RFC1918 private
+ * and link-local ranges because that is where a reverse proxy / load balancer
+ * normally sits. Anything outside these ranges (i.e. a client connecting
+ * directly from a public IP) is never trusted, so a spoofed
+ * `x-forwarded-for` header from such a client is ignored and cannot be used
+ * to dodge rate limits.
+ *
+ * Override with the `THROTTLER_TRUSTED_PROXIES` env var (comma-separated
+ * IPv4 CIDRs). Set it to an empty value to trust nothing.
+ */
+const DEFAULT_TRUSTED_PROXY_CIDRS = [
+  '127.0.0.0/8',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '169.254.0.0/16',
+];
+
+/**
+ * Bounds for the in-memory fallback store. Expired entries are reaped on every
+ * write and by a shared background sweep so the map cannot grow without limit.
+ */
+const MAX_STORE_ENTRIES = 100_000;
+const STORE_SWEEP_INTERVAL_MS = 60_000;
+
+/**
+ * Remove expired entries from a store and, if it is still over the cap, prune
+ * the oldest (soonest-to-expire) entries first.
+ */
+function sweepStore(store: Map<string, HitRecord>): void {
+  const now = Date.now();
+  for (const [key, record] of store) {
+    if (now > record.resetAt) store.delete(key);
+  }
+
+  if (store.size <= MAX_STORE_ENTRIES) return;
+
+  const overflow = store.size - MAX_STORE_ENTRIES;
+  const entries = [...store.entries()]
+    .sort((a, b) => a[1].resetAt - b[1].resetAt)
+    .slice(0, overflow);
+  for (const [key] of entries) store.delete(key);
+}
+
+// Shared sweep timer — there is at most one, regardless of how many guard
+// instances exist, and it does not keep the process alive.
+const liveStores = new Set<Map<string, HitRecord>>();
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function registerStore(store: Map<string, HitRecord>): void {
+  if (process.env['NODE_ENV'] === 'test') return;
+  liveStores.add(store);
+  if (sweepTimer) return;
+  sweepTimer = setInterval(() => {
+    for (const s of liveStores) sweepStore(s);
+  }, STORE_SWEEP_INTERVAL_MS);
+  // Don't block process exit on a housekeeping timer.
+  sweepTimer.unref?.();
+}
+
+/**
  * Per-IP rate limiting guard.
  * Uses an in-memory map — suitable for single-instance deployments.
  * Replace with Redis-backed storage for multi-instance setups.
@@ -146,12 +211,26 @@ function isInSkipList(ip: string, cidrs: CidrEntry[]): boolean {
  * for skipped requests to avoid leaking the allowlist to external observers.
  *
  * In production the default is an empty list (no bypass).
+ *
+ * ## Trusted proxies (THROTTLER_TRUSTED_PROXIES)
+ * The `x-forwarded-for` header is only trusted when the *direct* socket peer
+ * is a configured trusted proxy. By default loopback and RFC1918 private /
+ * link-local ranges are trusted (the usual position of a reverse proxy or
+ * load balancer). Any client connecting directly from a public IP has its
+ * `x-forwarded-for` ignored, so it cannot be spoofed to dodge limits.
+ *
+ * Override with a comma-separated list of IPv4 CIDRs. Set to an empty string
+ * to trust no proxy at all (every request is throttled by its socket IP).
+ *
+ *   THROTTLER_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
  */
 @Injectable()
 export class ThrottlerGuard implements CanActivate {
   /** Fallback in-memory store used when Redis is not available. */
   private readonly store = new Map<string, HitRecord>();
   private readonly skipCidrs: CidrEntry[];
+  private readonly trustedProxies: CidrEntry[];
+  private readonly logger = new Logger(ThrottlerGuard.name);
 
   constructor(
     private readonly reflector: Reflector,
@@ -164,6 +243,16 @@ export class ThrottlerGuard implements CanActivate {
       .filter(Boolean)
       .map(parseCidr)
       .filter((e): e is CidrEntry => e !== null);
+
+    const trustedRaw = process.env['THROTTLER_TRUSTED_PROXIES']?.trim();
+    const trustedSource = trustedRaw
+      ? trustedRaw.split(',').map((s) => s.trim()).filter(Boolean)
+      : DEFAULT_TRUSTED_PROXY_CIDRS;
+    this.trustedProxies = trustedSource
+      .map(parseCidr)
+      .filter((e): e is CidrEntry => e !== null);
+
+    registerStore(this.store);
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -225,6 +314,7 @@ export class ThrottlerGuard implements CanActivate {
       }
     }
 
+    if (this.store.size > MAX_STORE_ENTRIES) sweepStore(this.store);
     const now = Date.now();
     const record = this.store.get(key);
 
@@ -332,6 +422,9 @@ export class ThrottlerGuard implements CanActivate {
     }
 
     // ── In-memory fallback ────────────────────────────────────────────────────
+    // Bound memory: only sweep eagerly once we are over the cap; the shared
+    // background timer otherwise reaps expired entries.
+    if (this.store.size > MAX_STORE_ENTRIES) sweepStore(this.store);
     const now = Date.now();
     const ttlMs = ttlSeconds * 1000;
     const record = this.store.get(key);
@@ -352,14 +445,49 @@ export class ThrottlerGuard implements CanActivate {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  /**
+   * Determine the client IP to throttle by.
+   *
+   * `x-forwarded-for` is only trusted when the *direct* socket peer is a
+   * configured trusted proxy (THROTTLER_TRUSTED_PROXIES, defaulting to
+   * loopback + RFC1918 ranges). When we do trust the proxy, we walk the
+   * header from right to left, skipping trusted proxy hops, and take the
+   * first untrusted hop as the real client. This prevents a client from
+   * spoofing `x-forwarded-for` to assume another identity and dodge limits.
+   */
   private extractIp(req: Request): string {
-    return (
-      (req.headers['x-forwarded-for'] as string | undefined)
-        ?.split(',')[0]
-        .trim() ??
-      req.socket?.remoteAddress ??
-      'unknown'
-    );
+    const socketIp = req.socket?.remoteAddress ?? 'unknown';
+
+    const xffHeader = req.headers['x-forwarded-for'];
+    const xff = Array.isArray(xffHeader) ? xffHeader[0] : xffHeader;
+
+    if (!xff || !this.isTrustedProxy(socketIp)) {
+      return socketIp;
+    }
+
+    const hops = xff
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean);
+
+    // Rightmost entries were appended most recently (closest to us). Skip
+    // trusted proxy hops and return the first untrusted hop = the client.
+    for (let i = hops.length - 1; i >= 0; i--) {
+      if (!this.isTrustedProxy(hops[i])) {
+        return hops[i];
+      }
+    }
+
+    // Every hop is a trusted proxy (unusual) — fall back to the socket peer.
+    return socketIp;
+  }
+
+  /** True when `ip` is a trusted reverse proxy we may honour XFF from. */
+  private isTrustedProxy(ip: string): boolean {
+    if (!ip || ip === 'unknown') return false;
+    // IPv6 loopback / hostname forms that ipToInt cannot represent.
+    if (ip === '::1' || ip === 'localhost') return true;
+    return isInSkipList(ip, this.trustedProxies);
   }
 
   /**

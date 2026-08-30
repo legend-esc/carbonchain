@@ -241,6 +241,42 @@ describe('CreditStore — loadByProject', () => {
   });
 });
 
+describe('CreditStore — loadByOwner', () => {
+  let store: CreditStore;
+  let listCreditsByOwner: ReturnType<typeof vi.fn>;
+  let getCredit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    listCreditsByOwner = vi.fn().mockReturnValue(
+      of({ data: ['credit-a', 'credit-b'], offset: 0, limit: 50 }),
+    );
+    getCredit = vi.fn().mockImplementation((id: string) => {
+      const byId: Record<string, typeof CREDIT_A> = {
+        'credit-a': CREDIT_A,
+        'credit-b': CREDIT_B,
+      };
+      return of(byId[id]);
+    });
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: ApiService, useValue: { listCreditsByOwner, getCredit } },
+        { provide: ToastService, useValue: { showError: vi.fn(), showSuccess: vi.fn() } },
+      ],
+    });
+    store = TestBed.inject(CreditStore);
+  });
+
+  it('loads credits by owner via the paginated owner endpoint', async () => {
+    await TestBed.runInInjectionContext(() => store.loadByOwner('GABC...WALLET'));
+
+    expect(listCreditsByOwner).toHaveBeenCalledWith('GABC...WALLET', 0, 50);
+    expect(getCredit).toHaveBeenCalledWith('credit-a');
+    expect(getCredit).toHaveBeenCalledWith('credit-b');
+    expect(store.credits().length).toBe(2);
+    expect(store.loadingState()).toBe('loaded');
+  });
+});
+
 describe('CreditStore — select / reset', () => {
   let store: CreditStore;
 
