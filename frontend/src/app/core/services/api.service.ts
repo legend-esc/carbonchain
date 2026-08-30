@@ -141,6 +141,19 @@ export class ApiService {
     return this.http.get<string[]>(`${this.baseUrl}/credits/project/${projectId}`);
   }
 
+  /** GET /credits/owner/:owner — paginated list of credit IDs owned by `owner` */
+  listCreditsByOwner(
+    owner: string,
+    offset = 0,
+    limit = 50,
+  ): Observable<{ data: string[]; offset: number; limit: number }> {
+    const params = { offset: String(offset), limit: String(limit) };
+    return this.http.get<{ data: string[]; offset: number; limit: number }>(
+      `${this.baseUrl}/credits/owner/${owner}`,
+      { params },
+    );
+  }
+
   // ── Marketplace ───────────────────────────────────────────────────────────
 
   /** GET /marketplace/listings — all active offers */

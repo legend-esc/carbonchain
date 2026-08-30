@@ -76,6 +76,39 @@ export class CreditStore {
     }
   }
 
+  /**
+   * Load all credits owned by an account (the wallet public key) via the
+   * paginated owner endpoint, then fetch each credit's metadata.
+   */
+  async loadByOwner(owner: string): Promise<void> {
+    this._loadingState.set('loading');
+    this._error.set(null);
+
+    try {
+      const limit = 50;
+      const allIds: string[] = [];
+      let offset = 0;
+
+      // The owner endpoint is paginated; collect pages until a short page.
+      for (let page = 0; page < 100; page++) {
+        const res = await firstValueFrom(this.api.listCreditsByOwner(owner, offset, limit));
+        allIds.push(...res.data);
+        if (res.data.length < limit) break;
+        offset += limit;
+      }
+
+      const credits = await Promise.all(
+        allIds.map((id) => firstValueFrom(this.api.getCredit(id))),
+      );
+      this._credits.set(credits);
+      this._loadingState.set('loaded');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load credits.';
+      this._error.set(msg);
+      this._loadingState.set('error');
+    }
+  }
+
   /** Load a single credit and merge it into the store. */
   async loadOne(id: string): Promise<void> {
     this._loadingState.set('loading');

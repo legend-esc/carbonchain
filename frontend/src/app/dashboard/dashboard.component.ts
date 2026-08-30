@@ -28,15 +28,20 @@ export class DashboardComponent implements OnInit {
   ngOnInit(): void {
     const key = this.wallet.publicKey();
     if (key) {
-      void this.store.loadByProject(key);
-      void this.loadRetirements(key);
+      void this.init(key);
     }
+  }
+
+  private async init(key: string): Promise<void> {
+    // Load the owner's credits first so the store is populated before we
+    // derive retirements from it (avoids reading stale/empty store).
+    await this.store.loadByOwner(key);
+    await this.loadRetirements(key);
   }
 
   async connectWallet(): Promise<void> {
     const publicKey = await this.wallet.connect();
-    await this.store.loadByProject(publicKey);
-    await this.loadRetirements(publicKey);
+    await this.init(publicKey);
   }
 
   selectCredit(id: string): void {
