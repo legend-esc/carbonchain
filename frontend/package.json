@@ -28,7 +28,7 @@
   "dependencies": {
     "@angular/common": "^21.2.16",
     "@angular/compiler": "^21.1.0",
-    "@angular/core": "^21.1.0",
+    "@angular/core": "^22.1.4",
     "@angular/forms": "^21.1.0",
     "@angular/localize": "^21.2.16",
     "@angular/platform-browser": "^21.1.0",
