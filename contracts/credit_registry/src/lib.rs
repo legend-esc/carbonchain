@@ -3706,7 +3706,7 @@ mod tests {
         for v in variants.iter() {
             let code = *v as u32;
             assert!(
-                code >= MIN && code <= MAX,
+                (MIN..=MAX).contains(&code),
                 "CarbonChainError code {} is outside documented band {}-{}",
                 code,
                 MIN,

@@ -56,9 +56,7 @@ export class VerifiersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Get(':id/pending')
-  async getPendingCredits(
-    @Request() req: any,
-  ): Promise<CreditMetadata[]> {
+  async getPendingCredits(@Request() req: any): Promise<CreditMetadata[]> {
     return this.verifiersService.getPendingCredits(req.user.account);
   }
 
@@ -67,9 +65,7 @@ export class VerifiersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Get(':id/history')
-  async getApprovalHistory(
-    @Request() req: any,
-  ): Promise<CreditMetadata[]> {
+  async getApprovalHistory(@Request() req: any): Promise<CreditMetadata[]> {
     return this.verifiersService.getApprovalHistory(req.user.account);
   }
 

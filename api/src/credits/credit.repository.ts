@@ -316,7 +316,9 @@ export class TypeOrmCreditRepository implements ICreditRepository {
   }
 
   findById(id: string): Promise<CreditEntity | undefined> {
-    return this.repository.findOne({ where: { id } }).then((r) => r ?? undefined);
+    return this.repository
+      .findOne({ where: { id } })
+      .then((r) => r ?? undefined);
   }
 
   async findByProject(projectId: string, page: number, limit: number) {
@@ -329,14 +331,16 @@ export class TypeOrmCreditRepository implements ICreditRepository {
 
   async findByFilter(filter: CreditFilter, page: number, limit: number) {
     const records = await this.repository.find();
-    const filtered = records.filter((credit) =>
-      (!filter.status || credit.status === filter.status) &&
-      (!filter.methodology ||
-        credit.methodology.toLowerCase() === filter.methodology.toLowerCase()) &&
-      (!filter.geography ||
-        credit.geography.toLowerCase() === filter.geography.toLowerCase()) &&
-      (filter.vintageYear === undefined ||
-        credit.vintageYear === filter.vintageYear),
+    const filtered = records.filter(
+      (credit) =>
+        (!filter.status || credit.status === filter.status) &&
+        (!filter.methodology ||
+          credit.methodology.toLowerCase() ===
+            filter.methodology.toLowerCase()) &&
+        (!filter.geography ||
+          credit.geography.toLowerCase() === filter.geography.toLowerCase()) &&
+        (filter.vintageYear === undefined ||
+          credit.vintageYear === filter.vintageYear),
     );
     return this.page(filtered, page, limit);
   }
@@ -358,7 +362,8 @@ export class TypeOrmCreditRepository implements ICreditRepository {
     }
     if (filter.methodology) {
       filtered = filtered.filter(
-        (c) => c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
+        (c) =>
+          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
       );
     }
     if (filter.geography) {
@@ -394,10 +399,10 @@ export class TypeOrmCreditRepository implements ICreditRepository {
           const id = raw.slice(sep + 1);
           startIdx = filtered.findIndex(
             (c) =>
-              c.issuedAt > issuedAt ||
-              (c.issuedAt === issuedAt && c.id > id),
+              c.issuedAt > issuedAt || (c.issuedAt === issuedAt && c.id > id),
           );
-          if (startIdx === -1) return { data: [], next_cursor: null, limit: safeLimit };
+          if (startIdx === -1)
+            return { data: [], next_cursor: null, limit: safeLimit };
         }
       } catch {
         // invalid cursor — start from beginning
@@ -407,7 +412,9 @@ export class TypeOrmCreditRepository implements ICreditRepository {
     const page = filtered.slice(startIdx, startIdx + safeLimit);
     const next_cursor =
       page.length === safeLimit
-        ? Buffer.from(`${page[page.length - 1].issuedAt}:${page[page.length - 1].id}`).toString('base64url')
+        ? Buffer.from(
+            `${page[page.length - 1].issuedAt}:${page[page.length - 1].id}`,
+          ).toString('base64url')
         : null;
 
     return { data: page, next_cursor, limit: safeLimit };

@@ -362,7 +362,10 @@ export class RetirementService {
 
     // ── #415: API-layer nonce deduplication ───────────────────────────────────
     if (this.nonceService) {
-      await this.nonceService.consumeNonce(dto.buyerPublicKey, BigInt(dto.nonce));
+      await this.nonceService.consumeNonce(
+        dto.buyerPublicKey,
+        BigInt(dto.nonce),
+      );
     }
 
     const creditIdsVal = nativeToScVal(

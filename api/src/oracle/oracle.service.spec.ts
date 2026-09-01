@@ -56,7 +56,13 @@ function makeDto(overrides: Partial<MrvWebhookDto> = {}): MrvWebhookDto {
   const oraclePublicKey = VALID_ORACLE_KEY;
   const projectId = 'PROJ-001';
   const tonnesSequestered = '1000000';
-  const signature = makeSignature(oraclePublicKey, projectId, tonnesSequestered, timestamp, nonce);
+  const signature = makeSignature(
+    oraclePublicKey,
+    projectId,
+    tonnesSequestered,
+    timestamp,
+    nonce,
+  );
   return {
     oraclePublicKey,
     projectId,
@@ -171,7 +177,13 @@ describe('OracleService', () => {
       // Recompute signature to match the modified tonnes
       const ts = dto.timestamp;
       const nonce = dto.nonce;
-      dto.signature = makeSignature(VALID_ORACLE_KEY, 'PROJ-001', '-1000000', ts, nonce);
+      dto.signature = makeSignature(
+        VALID_ORACLE_KEY,
+        'PROJ-001',
+        '-1000000',
+        ts,
+        nonce,
+      );
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
         BadRequestException,
       );
@@ -181,7 +193,13 @@ describe('OracleService', () => {
       const dto = makeDto({ tonnesSequestered: '0' });
       const ts = dto.timestamp;
       const nonce = dto.nonce;
-      dto.signature = makeSignature(VALID_ORACLE_KEY, 'PROJ-001', '0', ts, nonce);
+      dto.signature = makeSignature(
+        VALID_ORACLE_KEY,
+        'PROJ-001',
+        '0',
+        ts,
+        nonce,
+      );
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
         BadRequestException,
       );

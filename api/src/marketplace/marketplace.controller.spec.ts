@@ -17,15 +17,19 @@ describe('MarketplaceController', () => {
     buyOffer: jest.fn(),
   };
 
-  const VALID_SELLER = 'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
-  const OTHER_SELLER = 'GOTHER5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2XYZ';
+  const VALID_SELLER =
+    'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
+  const OTHER_SELLER =
+    'GOTHER5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2XYZ';
 
   const mockReq = { user: { account: VALID_SELLER } } as any;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MarketplaceController],
-      providers: [{ provide: MarketplaceService, useValue: mockMarketplaceService }],
+      providers: [
+        { provide: MarketplaceService, useValue: mockMarketplaceService },
+      ],
     }).compile();
 
     controller = module.get<MarketplaceController>(MarketplaceController);
@@ -41,7 +45,9 @@ describe('MarketplaceController', () => {
     const pageResult = { data: [], total: 0, page: 1, pageSize: 20 };
 
     it('applies default page=1 / pageSize=20 when unset', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings();
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith({
         page: 1,
@@ -53,7 +59,9 @@ describe('MarketplaceController', () => {
     });
 
     it('clamps pageSize above 100 down to 100', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings('2', '9999');
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
         expect.objectContaining({ page: 2, pageSize: 100 }),
@@ -61,7 +69,9 @@ describe('MarketplaceController', () => {
     });
 
     it('clamps pageSize of 0 up to 1', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings('1', '0');
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
         expect.objectContaining({ pageSize: 1 }),
@@ -69,7 +79,9 @@ describe('MarketplaceController', () => {
     });
 
     it('clamps a negative page up to 1', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings('-5', '20');
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
         expect.objectContaining({ page: 1 }),
@@ -77,7 +89,9 @@ describe('MarketplaceController', () => {
     });
 
     it('falls back to 1 for a non-numeric page', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings('abc', '20');
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
         expect.objectContaining({ page: 1 }),
@@ -85,7 +99,9 @@ describe('MarketplaceController', () => {
     });
 
     it('passes filters through as numbers only when provided', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings('1', '20', 'VCS', '100', '500');
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith({
         page: 1,
@@ -97,7 +113,9 @@ describe('MarketplaceController', () => {
     });
 
     it('leaves price filters undefined when omitted', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(pageResult);
+      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
+        pageResult,
+      );
       await controller.getListings('1', '20', 'VCS');
       expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
         expect.objectContaining({ minPrice: undefined, maxPrice: undefined }),
@@ -120,7 +138,7 @@ describe('MarketplaceController', () => {
       creditId: '037176a1',
       priceXlm: '10000000',
       tonnes: '1000000',
-    } as CreateOfferDto;
+    };
 
     it('overrides sellerPublicKey with the authenticated account', async () => {
       mockMarketplaceService.createOffer.mockResolvedValueOnce({

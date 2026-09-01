@@ -97,9 +97,7 @@ export class CreditStore {
         offset += limit;
       }
 
-      const credits = await Promise.all(
-        allIds.map((id) => firstValueFrom(this.api.getCredit(id))),
-      );
+      const credits = await Promise.all(allIds.map((id) => firstValueFrom(this.api.getCredit(id))));
       this._credits.set(credits);
       this._loadingState.set('loaded');
     } catch (err) {

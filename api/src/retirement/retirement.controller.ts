@@ -105,7 +105,11 @@ export class RetirementController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
     const clampedLimit = Math.min(Math.max(limit, 1), 100);
-    return this.retirementService.getRetirementsByAccount(address, page, clampedLimit);
+    return this.retirementService.getRetirementsByAccount(
+      address,
+      page,
+      clampedLimit,
+    );
   }
 
   @ApiOperation({ summary: 'Download retirement certificate as PDF' })

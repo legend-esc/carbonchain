@@ -612,7 +612,6 @@ impl Retirement {
     /// - [`RetirementError::Unauthorized`]   — caller is not the admin.
     /// - [`RetirementError::InvalidNonce`]   — `nonce` does not match the stored value.
     /// - [`RetirementError::CreditNotActive`] — `retirement_id` does not exist.
-
     /// Returns all retirement IDs for `account` (unordered, unbounded).
     /// Prefer [`get_retirements_paginated`] for large accounts.
     pub fn get_retirements_by_account(env: Env, account: Address) -> Vec<BytesN<32>> {
@@ -1864,7 +1863,7 @@ mod tests {
 
         // Verify that the admin's nonce is still valid (not consumed by the failed call)
         let admin_nonce = client.get_nonce(&retirement_admin);
-        assert!(admin_nonce >= 0, "admin nonce must be accessible");
+        let _ = admin_nonce; // nonce is accessible
     }
 
     #[test]
@@ -1886,6 +1885,6 @@ mod tests {
             );
             assert!(result.is_err(), "stale nonce must be rejected");
         }
-        assert!(current >= 0, "nonce is accessible");
+        let _ = current; // nonce is accessible
     }
 }

@@ -91,7 +91,9 @@ export class StellarService implements OnModuleInit {
         reject(new Error(`${name} timed out`));
       }, this.networkTimeoutMs);
     });
-    return Promise.race([operation, timeout]).finally(() => clearTimeout(timer));
+    return Promise.race([operation, timeout]).finally(() =>
+      clearTimeout(timer),
+    );
   }
 
   onModuleInit() {
@@ -690,16 +692,19 @@ export class StellarService implements OnModuleInit {
     startLedger = 0,
   ): Promise<rpc.Api.EventResponse[]> {
     try {
-      const response = await this.withTimeout(this.sorobanRpcServer.getEvents({
-        filters: [
-          {
-            type: 'contract',
-            contractIds: [contractId],
-          },
-        ],
-        startLedger,
-        limit: 100,
-      }), 'getContractEvents');
+      const response = await this.withTimeout(
+        this.sorobanRpcServer.getEvents({
+          filters: [
+            {
+              type: 'contract',
+              contractIds: [contractId],
+            },
+          ],
+          startLedger,
+          limit: 100,
+        }),
+        'getContractEvents',
+      );
       return response.events || [];
     } catch (error) {
       this.logger.error(

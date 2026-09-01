@@ -50,9 +50,13 @@ function mapMarketplaceError(error: Error): never {
     case 304:
       throw new ConflictException('Offer has already been closed or filled');
     case 305:
-      throw new BadRequestException('Credit linked to this offer is not active');
+      throw new BadRequestException(
+        'Credit linked to this offer is not active',
+      );
     case 306:
-      throw new ServiceUnavailableException('Marketplace contract is not initialized');
+      throw new ServiceUnavailableException(
+        'Marketplace contract is not initialized',
+      );
     case 307:
       throw new ServiceUnavailableException('Marketplace contract is paused');
     case 308:
@@ -60,7 +64,10 @@ function mapMarketplaceError(error: Error): never {
     case 309:
       throw new GoneException('Offer has expired and is no longer available');
     case 312:
-      throw new HttpException('Insufficient funds to complete the purchase', HttpStatus.PAYMENT_REQUIRED);
+      throw new HttpException(
+        'Insufficient funds to complete the purchase',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
     case 313:
       throw new BadGatewayException('Escrow transfer failed');
     default:
@@ -181,7 +188,9 @@ export class MarketplaceService {
       [key: string]: unknown;
     }>;
     // Hard cap in case the contract ignores the limit arg (older deployment).
-    return raw.slice(0, MAX_LISTINGS).map((item) => this.mapOffer(Number(item.id), item));
+    return raw
+      .slice(0, MAX_LISTINGS)
+      .map((item) => this.mapOffer(Number(item.id), item));
   }
 
   async getOffersBySeller(seller: string): Promise<string[]> {

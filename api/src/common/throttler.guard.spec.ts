@@ -210,9 +210,11 @@ describe('ThrottlerGuard', () => {
 
   it('ignores a spoofed x-forwarded-for from an untrusted client IP', async () => {
     const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
-    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) =>
-      key === ACCOUNT_THROTTLE_KEY ? undefined : options,
-    );
+    jest
+      .spyOn(reflector, 'get')
+      .mockImplementation((key: unknown) =>
+        key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+      );
 
     const mockReq = {
       headers: { 'x-forwarded-for': '203.0.113.9, 198.51.100.5' },
@@ -237,9 +239,11 @@ describe('ThrottlerGuard', () => {
 
   it('honours x-forwarded-for only behind a trusted proxy', async () => {
     const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
-    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) =>
-      key === ACCOUNT_THROTTLE_KEY ? undefined : options,
-    );
+    jest
+      .spyOn(reflector, 'get')
+      .mockImplementation((key: unknown) =>
+        key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+      );
 
     const mockReq = {
       headers: { 'x-forwarded-for': '203.0.113.9, 198.51.100.5' },

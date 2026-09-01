@@ -231,7 +231,13 @@ export class CacheService implements OnModuleDestroy {
   ): Promise<boolean> {
     if (!this.client) throw new Error('Redis is unavailable');
     const ttl = ttlSeconds ?? this.defaultTtlSeconds;
-    const result = await this.client.set(key, JSON.stringify(value), 'EX', ttl, 'NX');
+    const result = await this.client.set(
+      key,
+      JSON.stringify(value),
+      'EX',
+      ttl,
+      'NX',
+    );
     return result === 'OK';
   }
 

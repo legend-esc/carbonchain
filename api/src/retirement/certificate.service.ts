@@ -213,7 +213,9 @@ export class CertificateService {
 
     const result = (await response.json()) as { IpfsHash: string };
     if (!isValidIpfsCid(result.IpfsHash)) {
-      throw new Error(`Pinata returned an invalid IPFS CID: ${result.IpfsHash}`);
+      throw new Error(
+        `Pinata returned an invalid IPFS CID: ${result.IpfsHash}`,
+      );
     }
     return result.IpfsHash;
   }

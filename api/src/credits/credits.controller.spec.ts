@@ -50,8 +50,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '1', '20',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '1',
+        '20',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -68,8 +75,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '1', '9999',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '1',
+        '9999',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -86,8 +100,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '1', '0',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '1',
+        '0',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -104,8 +125,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '1', '-5',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '1',
+        '-5',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -122,8 +150,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '1', 'abc',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '1',
+        'abc',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -144,8 +179,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '2', '20',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '2',
+        '20',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -162,8 +204,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '0', '20',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '0',
+        '20',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -180,8 +229,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, '-10', '20',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '-10',
+        '20',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -198,8 +254,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        undefined, 'nope', '20',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'nope',
+        '20',
       );
 
       expect(mockCreditsService.listCredits).toHaveBeenCalledWith(
@@ -220,8 +283,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        'someCursor', '1', '500',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'someCursor',
+        '1',
+        '500',
       );
 
       expect(mockCreditsService.listCreditsCursor).toHaveBeenCalledWith(
@@ -238,8 +308,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        'someCursor', '1', '0',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'someCursor',
+        '1',
+        '0',
       );
 
       expect(mockCreditsService.listCreditsCursor).toHaveBeenCalledWith(
@@ -256,8 +333,15 @@ describe('CreditsController — listCredits pagination bounds', () => {
       });
 
       await controller.listCredits(
-        undefined, undefined, undefined, undefined, undefined, undefined,
-        'abc123', '5', '20',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'abc123',
+        '5',
+        '20',
       );
 
       expect(mockCreditsService.listCreditsCursor).toHaveBeenCalled();

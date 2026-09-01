@@ -92,7 +92,9 @@ export class TypeOrmRetirementRepository implements IRetirementRepository {
   }
 
   findById(id: string): Promise<RetirementEntity | undefined> {
-    return this.repository.findOne({ where: { id } }).then((record) => record ?? undefined);
+    return this.repository
+      .findOne({ where: { id } })
+      .then((record) => record ?? undefined);
   }
 
   async findByBuyer(buyer: string, page: number, limit: number) {

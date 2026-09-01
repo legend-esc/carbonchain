@@ -161,9 +161,7 @@ function isQueryTimeout(err: unknown): err is QueryTimeoutError {
  * Resolves a raw Error to contract error info when the message contains a
  * Soroban contract error code. Returns null for non-contract errors.
  */
-export function resolveContractError(
-  err: unknown,
-): ContractErrorInfo | null {
+export function resolveContractError(err: unknown): ContractErrorInfo | null {
   if (!(err instanceof Error)) return null;
   const contractCode = extractContractErrorCode(err.message);
   if (contractCode === null) return null;

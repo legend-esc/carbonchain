@@ -125,9 +125,12 @@ describe('StructuredExceptionFilter', () => {
 
     it('detects pg error code 57014', () => {
       const res = makeResponse();
-      const err = Object.assign(new Error('canceling statement due to statement timeout'), {
-        code: '57014',
-      });
+      const err = Object.assign(
+        new Error('canceling statement due to statement timeout'),
+        {
+          code: '57014',
+        },
+      );
       filter.catch(err, makeHost(res));
       expect(res._status).toBe(503);
     });
@@ -144,7 +147,10 @@ describe('StructuredExceptionFilter', () => {
       );
       expect(res._status).toBe(404);
       expect((res._body as { code: string }).code).toBe('CREDIT_NOT_FOUND');
-      expect((res._body as { details: { contractCode: number } }).details.contractCode).toBe(104);
+      expect(
+        (res._body as { details: { contractCode: number } }).details
+          .contractCode,
+      ).toBe(104);
     });
 
     it('maps marketplace 309 (OfferExpired) → 410 OFFER_EXPIRED', () => {
@@ -174,14 +180,18 @@ describe('StructuredExceptionFilter', () => {
       const res = makeResponse();
       filter.catch(new Error('Error(Contract, #307)'), makeHost(res));
       expect(res._status).toBe(503);
-      expect((res._body as { code: string }).code).toBe('MARKETPLACE_CONTRACT_PAUSED');
+      expect((res._body as { code: string }).code).toBe(
+        'MARKETPLACE_CONTRACT_PAUSED',
+      );
     });
 
     it('maps retirement 200 (CreditNotActive) → 400', () => {
       const res = makeResponse();
       filter.catch(new Error('Error(Contract, #200)'), makeHost(res));
       expect(res._status).toBe(400);
-      expect((res._body as { code: string }).code).toBe('RETIREMENT_CREDIT_NOT_ACTIVE');
+      expect((res._body as { code: string }).code).toBe(
+        'RETIREMENT_CREDIT_NOT_ACTIVE',
+      );
     });
 
     it('maps MRV oracle 401 (Unauthorized) → 403', () => {
@@ -195,7 +205,9 @@ describe('StructuredExceptionFilter', () => {
       const res = makeResponse();
       filter.catch(new Error('Error(Contract, #999)'), makeHost(res));
       expect(res._status).toBe(500);
-      expect((res._body as { code: string }).code).toBe('INTERNAL_SERVER_ERROR');
+      expect((res._body as { code: string }).code).toBe(
+        'INTERNAL_SERVER_ERROR',
+      );
     });
 
     it('does NOT misclassify a message containing "123" without the contract-error pattern', () => {
@@ -227,7 +239,10 @@ describe('StructuredExceptionFilter', () => {
       const res = makeResponse();
       filter.catch(
         new HttpException(
-          { message: ['field is required', 'field must be string'], error: 'Bad Request' },
+          {
+            message: ['field is required', 'field must be string'],
+            error: 'Bad Request',
+          },
           HttpStatus.BAD_REQUEST,
         ),
         makeHost(res),
@@ -246,7 +261,9 @@ describe('StructuredExceptionFilter', () => {
       const res = makeResponse();
       filter.catch(new Error('something unexpected'), makeHost(res));
       expect(res._status).toBe(500);
-      expect((res._body as { code: string }).code).toBe('INTERNAL_SERVER_ERROR');
+      expect((res._body as { code: string }).code).toBe(
+        'INTERNAL_SERVER_ERROR',
+      );
     });
 
     it('returns 500 for a thrown string', () => {
