@@ -101,13 +101,19 @@ impl Retirement {
     ///
     /// # Errors
     /// - [`RetirementError::AlreadyInitialized`] — contract has already been initialised.
-    pub fn initialize(env: Env, admin: Address, registry_id: Address) -> Result<(), RetirementError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        registry_id: Address,
+    ) -> Result<(), RetirementError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(RetirementError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Registry, &registry_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::Registry, &registry_id);
         env.storage().instance().set(&DataKey::Version, &0u32);
         Ok(())
     }
@@ -522,7 +528,8 @@ impl Retirement {
         Self::run_migrations(&env, previous_version + 1)?;
         let new_version = Self::get_version(&env);
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
 
         ContractUpgraded {
             admin,
@@ -715,10 +722,7 @@ impl Retirement {
     }
 
     fn get_version(env: &Env) -> u32 {
-        env.storage()
-            .instance()
-            .get(&DataKey::Version)
-            .unwrap_or(0)
+        env.storage().instance().get(&DataKey::Version).unwrap_or(0)
     }
 
     fn set_version(env: &Env, version: u32) {
@@ -1647,10 +1651,7 @@ mod tests {
         );
 
         let updated = client.get_certificate_hash(&ret_id).unwrap();
-        assert_eq!(
-            updated,
-            String::from_str(&env, "bafybei_second")
-        );
+        assert_eq!(updated, String::from_str(&env, "bafybei_second"));
     }
 
     #[test]
@@ -1878,7 +1879,11 @@ mod tests {
         let stale_nonce = 0u64; // likely stale after setup
         let current = client.get_nonce(&retirement_admin);
         if current > 0 {
-            let result = client.try_upgrade(&retirement_admin, &BytesN::from_array(&env, &[2u8; 32]), &stale_nonce);
+            let result = client.try_upgrade(
+                &retirement_admin,
+                &BytesN::from_array(&env, &[2u8; 32]),
+                &stale_nonce,
+            );
             assert!(result.is_err(), "stale nonce must be rejected");
         }
         assert!(current >= 0, "nonce is accessible");

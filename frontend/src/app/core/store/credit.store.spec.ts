@@ -247,9 +247,9 @@ describe('CreditStore — loadByOwner', () => {
   let getCredit: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    listCreditsByOwner = vi.fn().mockReturnValue(
-      of({ data: ['credit-a', 'credit-b'], offset: 0, limit: 50 }),
-    );
+    listCreditsByOwner = vi
+      .fn()
+      .mockReturnValue(of({ data: ['credit-a', 'credit-b'], offset: 0, limit: 50 }));
     getCredit = vi.fn().mockImplementation((id: string) => {
       const byId: Record<string, typeof CREDIT_A> = {
         'credit-a': CREDIT_A,

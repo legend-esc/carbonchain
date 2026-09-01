@@ -348,9 +348,7 @@ impl MrvOracle {
 
     /// Returns the trusted credit registry address, if set.
     pub fn get_trusted_registry(env: Env) -> Option<Address> {
-        env.storage()
-            .instance()
-            .get(&DataKey::TrustedRegistry)
+        env.storage().instance().get(&DataKey::TrustedRegistry)
     }
 
     /// Returns a page of registered oracles. `page_size` is capped at 50.
@@ -462,7 +460,12 @@ impl MrvOracle {
             .persistent()
             .get(&hist_meta_key)
             .unwrap_or(crate::history_ring_buffer::RingBufferMeta { head: 0, count: 0 });
-        crate::history_ring_buffer::HistoryRingBuffer::push(&env, &mut slots, &mut meta, point.clone());
+        crate::history_ring_buffer::HistoryRingBuffer::push(
+            &env,
+            &mut slots,
+            &mut meta,
+            point.clone(),
+        );
         env.storage().persistent().set(&hist_slots_key, &slots);
         env.storage().persistent().set(&hist_meta_key, &meta);
         env.storage()
@@ -616,11 +619,8 @@ impl MrvOracle {
     pub fn get_history(env: Env, project_id: String) -> Vec<MrvDataPoint> {
         let slots_key = DataKey::HistorySlots(project_id.clone());
         if env.storage().persistent().has(&slots_key) {
-            let slots: soroban_sdk::Map<u32, MrvDataPoint> = env
-                .storage()
-                .persistent()
-                .get(&slots_key)
-                .unwrap();
+            let slots: soroban_sdk::Map<u32, MrvDataPoint> =
+                env.storage().persistent().get(&slots_key).unwrap();
             let meta: crate::history_ring_buffer::RingBufferMeta = env
                 .storage()
                 .persistent()
@@ -1640,10 +1640,17 @@ mod tests {
         // but InvalidNonce is rejected first — verify stale nonce is rejected.
         let stale_nonce = nonce.saturating_sub(1);
         let result = client.try_upgrade(&admin, &fake_hash, &stale_nonce);
-        assert!(result.is_err(), "stale nonce must be rejected before wasm lookup");
+        assert!(
+            result.is_err(),
+            "stale nonce must be rejected before wasm lookup"
+        );
 
         // Current nonce must not have advanced (stale nonce was rejected pre-consume)
-        assert_eq!(client.get_nonce(&admin), nonce, "nonce must not advance on InvalidNonce rejection");
+        assert_eq!(
+            client.get_nonce(&admin),
+            nonce,
+            "nonce must not advance on InvalidNonce rejection"
+        );
 
         // A nonce beyond the window must also be rejected
         let future_nonce = nonce + 16;

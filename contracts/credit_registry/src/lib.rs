@@ -20,15 +20,16 @@ pub const UNITS_PER_TONNE: i128 = 1_000_000;
 /// Minimum credit unit — represents 0.1 tonne.
 pub const MIN_CREDIT_UNIT: i128 = 100_000;
 
+pub mod approvals_bitmap;
 pub mod errors;
 pub mod events;
-pub mod approvals_bitmap;
 pub mod migrations;
 pub mod storage;
 #[cfg(feature = "testutils")]
 pub mod test_helpers;
 pub mod types;
 
+use crate::approvals_bitmap::{clear_approvals, count_approvals, has_approved, mark_approved};
 use crate::errors::CarbonChainError;
 use crate::events::{
     ContractInitialized, ContractPaused, ContractUnpaused, ContractUpgraded, CreditDisputed,
@@ -37,33 +38,28 @@ use crate::events::{
     SessionNew, StakeDeposited, StakeWithdrawn, UnbondingInitiated, VerifierRegistered,
     VerifierRemoved, VerifierServicesConfigured, VerifierSlashed,
 };
+use crate::migrations::{run_migrations, CURRENT_VERSION};
 use crate::storage::{
     add_credit_to_owner, add_credit_to_project, add_pending_credit_to_verifier,
-    add_to_pending_credits, append_audit_log,
-    consume_nonce, consume_session_count, decrement_verifier_pending,
-    get_admin, get_audit_log, get_credit, get_credit_approvals,
-    get_credit_by_project_vintage, get_credit_verifiers,
-    get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies,
-    get_min_stake, get_next_verifier_id, get_nonce, get_pending_credits,
-    get_required_approvals, get_retirement_contract,
-    get_session, get_session_op_count, get_total_credits, get_unbonding_request,
-    get_verifier_id, get_verifier_reputation,
-    get_verifier_services_for, get_verifier_stake, get_verifier_stake_token, get_verifiers, get_version,
-    has_admin, increment_approval_count, increment_dispute_count,
-    increment_session_op_count, increment_total_credits, increment_verifier_pending,
-    is_issuer as storage_is_issuer, is_methodology_valid, is_paused, is_verifier,
-    remove_credit_approvals, remove_credit_from_owner, remove_credit_verifiers,
-    remove_from_pending_credits,
-    remove_unbonding_request, remove_verifier_stake_token,
-    set_admin, set_approved_stake_token, set_credit,
-    set_credit_by_project_vintage, set_credit_verifiers, set_issuers, set_methodologies,
-    set_min_stake, set_next_verifier_id, set_paused, set_required_approvals,
-    set_retirement_contract, set_session, set_unbonding_request,
-    set_verifier_id, set_verifier_services, set_verifier_stake, set_verifier_stake_token,
-    set_verifiers, verifier_has_credit_approval, get_approved_stake_token, SLASH_PERCENT, UNBONDING_PERIOD_SECS,
+    add_to_pending_credits, append_audit_log, consume_nonce, consume_session_count,
+    decrement_verifier_pending, get_admin, get_approved_stake_token, get_audit_log, get_credit,
+    get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
+    get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies, get_min_stake,
+    get_next_verifier_id, get_nonce, get_pending_credits, get_required_approvals,
+    get_retirement_contract, get_session, get_session_op_count, get_total_credits,
+    get_unbonding_request, get_verifier_id, get_verifier_reputation, get_verifier_services_for,
+    get_verifier_stake, get_verifier_stake_token, get_verifiers, get_version, has_admin,
+    increment_approval_count, increment_dispute_count, increment_session_op_count,
+    increment_total_credits, increment_verifier_pending, is_issuer as storage_is_issuer,
+    is_methodology_valid, is_paused, is_verifier, remove_credit_approvals,
+    remove_credit_from_owner, remove_credit_verifiers, remove_from_pending_credits,
+    remove_unbonding_request, remove_verifier_stake_token, set_admin, set_approved_stake_token,
+    set_credit, set_credit_by_project_vintage, set_credit_verifiers, set_issuers,
+    set_methodologies, set_min_stake, set_next_verifier_id, set_paused, set_required_approvals,
+    set_retirement_contract, set_session, set_unbonding_request, set_verifier_id,
+    set_verifier_services, set_verifier_stake, set_verifier_stake_token, set_verifiers,
+    verifier_has_credit_approval, SLASH_PERCENT, UNBONDING_PERIOD_SECS,
 };
-use crate::migrations::{run_migrations, CURRENT_VERSION};
-use crate::approvals_bitmap::{has_approved, mark_approved, count_approvals, clear_approvals};
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, DisputeResolution, Methodology,
     ProjectMetadata, ServiceType, Session, UnbondingRequest, VerifierReputation,
@@ -360,11 +356,12 @@ impl CreditRegistry {
 
         // Issue #663: Use try_invoke_contract so a revert in the token contract
         // returns a typed error instead of aborting the transaction.
-        let transfer_result: Result<Result<(), _>, _> = env.try_invoke_contract::<(), CarbonChainError>(
-            &token_id,
-            &Symbol::new(&env, "transfer"),
-            (verifier.clone(), escrow, amount).into_val(&env),
-        );
+        let transfer_result: Result<Result<(), _>, _> = env
+            .try_invoke_contract::<(), CarbonChainError>(
+                &token_id,
+                &Symbol::new(&env, "transfer"),
+                (verifier.clone(), escrow, amount).into_val(&env),
+            );
         match transfer_result {
             Ok(Ok(())) => {}
             _ => return Err(CarbonChainError::StakeTransferFailed),
@@ -406,8 +403,8 @@ impl CreditRegistry {
         // Issue #662: Enforce that the caller supplies the exact token that was
         // deposited. Without this check a removed verifier could pass any token_id
         // and drain request.amount of a *different* token from the shared escrow.
-        let deposited_token = get_verifier_stake_token(&env, &verifier)
-            .ok_or(CarbonChainError::InvalidStakeToken)?;
+        let deposited_token =
+            get_verifier_stake_token(&env, &verifier).ok_or(CarbonChainError::InvalidStakeToken)?;
         if token_id != deposited_token {
             return Err(CarbonChainError::InvalidStakeToken);
         }
@@ -415,11 +412,12 @@ impl CreditRegistry {
         let escrow: Address = env.current_contract_address();
 
         // Issue #663: use try_invoke_contract for a clean error on transfer failure.
-        let transfer_result: Result<Result<(), _>, _> = env.try_invoke_contract::<(), CarbonChainError>(
-            &token_id,
-            &Symbol::new(&env, "transfer"),
-            (escrow, verifier.clone(), request.amount).into_val(&env),
-        );
+        let transfer_result: Result<Result<(), _>, _> = env
+            .try_invoke_contract::<(), CarbonChainError>(
+                &token_id,
+                &Symbol::new(&env, "transfer"),
+                (escrow, verifier.clone(), request.amount).into_val(&env),
+            );
         match transfer_result {
             Ok(Ok(())) => {}
             _ => return Err(CarbonChainError::StakeTransferFailed),
@@ -2658,7 +2656,7 @@ mod tests {
             &String::from_str(&env, "NG"),
         );
         let issuer = Address::generate(&env);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce2);
         let nonce = client.get_nonce(&issuer);
@@ -2714,7 +2712,7 @@ mod tests {
             &String::from_str(&env, "NG"),
         );
         let issuer = Address::generate(&env);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce2);
         let nonce = client.get_nonce(&issuer);
@@ -3559,7 +3557,10 @@ mod tests {
         // Verifier with empty service list has open-capability: approval must succeed
         let vnonce = client.get_nonce(&verifier);
         let result = client.try_approve_and_mint(&verifier, &id, &vnonce);
-        assert!(result.is_ok(), "empty service list grants open-capability access");
+        assert!(
+            result.is_ok(),
+            "empty service list grants open-capability access"
+        );
     }
 
     /// Unconfigured verifier (no key set at all) retains full backward-compat access.
@@ -3577,7 +3578,10 @@ mod tests {
 
         let vnonce = client.get_nonce(&verifier);
         let result = client.try_approve_and_mint(&verifier, &id, &vnonce);
-        assert!(result.is_ok(), "unconfigured verifier must be able to approve");
+        assert!(
+            result.is_ok(),
+            "unconfigured verifier must be able to approve"
+        );
     }
 
     /// Verifier explicitly configured with CreditApproval can approve.
@@ -3654,7 +3658,10 @@ mod tests {
 
         // The session should now have 1 operation recorded
         let op_count = client.get_session_operation_count(&session_id);
-        assert_eq!(op_count, 1, "session should have 1 operation after submit_credit_with_session");
+        assert_eq!(
+            op_count, 1,
+            "session should have 1 operation after submit_credit_with_session"
+        );
     }
 
     #[test]
@@ -3797,7 +3804,7 @@ mod tests {
         let issuer = Address::generate(&env);
         let anonce = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_methodology(
             &admin,
@@ -3832,7 +3839,7 @@ mod tests {
         let issuer = Address::generate(&env);
         let anonce = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_methodology(
             &admin,
@@ -3867,7 +3874,7 @@ mod tests {
         let issuer = Address::generate(&env);
         let anonce = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_methodology(
             &admin,
@@ -3980,7 +3987,7 @@ mod tests {
         let issuer = Address::generate(&env);
         let anonce = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_methodology(
             &admin,
@@ -4044,7 +4051,10 @@ mod tests {
         let retirement = Address::generate(&env);
         // initialize calls set_admin internally; if extend_ttl is missing it would panic
         let result = client.try_initialize(&admin, &retirement, &1);
-        assert!(result.is_ok(), "initialize (which calls set_admin) must succeed");
+        assert!(
+            result.is_ok(),
+            "initialize (which calls set_admin) must succeed"
+        );
     }
 
     /// set_paused must extend TTL — verified by checking the paused state is observable.
@@ -4109,7 +4119,7 @@ mod tests {
 
         let anonce = client.get_nonce(&admin);
         client.register_verifier(&admin, &verifier1, &anonce);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_verifier(&admin, &verifier2, &anonce2);
 
@@ -4328,7 +4338,7 @@ mod tests {
         client.register_verifier(&admin, &verifier, &anonce);
 
         let issuer = Address::generate(&env);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce2);
         let anonce3 = client.get_nonce(&admin);
@@ -4420,7 +4430,7 @@ mod tests {
         // Register issuer and methodology once
         let anonce = client.get_nonce(&admin);
         client.register_issuer(&admin, &issuer, &anonce);
-        
+
         let anonce2 = client.get_nonce(&admin);
         client.register_methodology(
             &admin,

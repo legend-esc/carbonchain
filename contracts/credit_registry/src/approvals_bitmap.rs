@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, BytesN, Vec};
+use soroban_sdk::{BytesN, Env, Vec};
 
 pub fn get_approvals_bitmap(env: &Env, credit_id: &BytesN<32>) -> Vec<u64> {
     env.storage()
@@ -10,7 +10,11 @@ pub fn get_approvals_bitmap(env: &Env, credit_id: &BytesN<32>) -> Vec<u64> {
 pub fn set_approvals_bitmap(env: &Env, credit_id: &BytesN<32>, bitmap: &Vec<u64>) {
     let key = crate::types::DataKey::CreditApprovals(credit_id.clone());
     env.storage().persistent().set(&key, bitmap);
-    env.storage().persistent().extend_ttl(&key, crate::storage::TTL_THRESHOLD, crate::storage::MIN_TTL);
+    env.storage().persistent().extend_ttl(
+        &key,
+        crate::storage::TTL_THRESHOLD,
+        crate::storage::MIN_TTL,
+    );
 }
 
 pub fn has_approved(bitmap: &Vec<u64>, verifier_id: u32) -> bool {

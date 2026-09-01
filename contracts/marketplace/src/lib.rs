@@ -720,7 +720,9 @@ impl Marketplace {
         let end = (start_id + effective_limit as u64).min(count);
 
         // Load the active index once; mutate in-place then write back. (#695)
-        let mut active_ids: Vec<u64> = env.storage().persistent()
+        let mut active_ids: Vec<u64> = env
+            .storage()
+            .persistent()
             .get(&DataKey::ActiveOffers)
             .unwrap_or_else(|| Vec::new(&env));
         let mut index_changed = false;
@@ -748,8 +750,12 @@ impl Marketplace {
 
         // Persist the compacted index only if it changed
         if index_changed {
-            env.storage().persistent().set(&DataKey::ActiveOffers, &active_ids);
-            env.storage().persistent().extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ActiveOffers, &active_ids);
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
         }
 
         Ok(())
