@@ -17,7 +17,7 @@ import { isValidIpfsCid } from '../common/ipfs-cid.util';
 @Injectable()
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
-  private readonly ipfsTimeoutMs = 30_000;
+  private ipfsTimeoutMs: number = 30_000;
 
   constructor(
     private readonly config: ConfigService,

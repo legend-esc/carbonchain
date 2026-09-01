@@ -7,7 +7,8 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
-  PaymentRequiredException,
+  HttpException,
+  HttpStatus,
   BadGatewayException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -59,7 +60,7 @@ function mapMarketplaceError(error: Error): never {
     case 309:
       throw new GoneException('Offer has expired and is no longer available');
     case 312:
-      throw new PaymentRequiredException('Insufficient funds to complete the purchase');
+      throw new HttpException('Insufficient funds to complete the purchase', HttpStatus.PAYMENT_REQUIRED);
     case 313:
       throw new BadGatewayException('Escrow transfer failed');
     default:

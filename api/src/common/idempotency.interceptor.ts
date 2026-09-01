@@ -3,10 +3,14 @@ import {
   ExecutionContext,
   Injectable,
   NestInterceptor,
+  SetMetadata,
 } from '@nestjs/common';
 import { Observable, from } from 'rxjs';
 import { createHash } from 'crypto';
 import { CacheService } from './cache.service';
+
+/** Method decorator: marks a route as requiring Idempotency-Key enforcement. */
+export const Idempotent = () => SetMetadata('idempotent', true);
 
 const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60; // 24h
 const PROCESSING_WAIT_TIMEOUT_MS = 10_000;

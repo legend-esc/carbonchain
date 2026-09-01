@@ -8,7 +8,7 @@ import {
 } from './project.repository';
 
 @Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([ProjectEntity])],
+  imports: [ConfigModule],
   controllers: [ProjectsController],
   providers: [
     ProjectsService,

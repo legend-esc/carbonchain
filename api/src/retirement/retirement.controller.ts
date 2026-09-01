@@ -29,6 +29,7 @@ import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('retirement')
 @Controller('retirement')

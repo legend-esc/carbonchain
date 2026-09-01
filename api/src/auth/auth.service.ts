@@ -66,9 +66,10 @@ export class AuthService {
     // SEP-10 requires sequence 0 for the challenge account
     const account = new Account(serverKeypair.publicKey(), '-1');
 
-    const nonce = Buffer.from(Keypair.random().rawPublicKey()).toString(
-      'base64',
-    );
+    // Generate a random 32-byte nonce; store as raw bytes in the manageData op
+    // so that op.value.toString('base64') round-trips cleanly.
+    const nonceBytes = Keypair.random().rawPublicKey();
+    const nonce = Buffer.from(nonceBytes).toString('base64');
 
     const tx = new TransactionBuilder(account, {
       fee: '100',
@@ -77,7 +78,7 @@ export class AuthService {
       .addOperation(
         Operation.manageData({
           name: `${this.serverHomeDomain} auth`,
-          value: nonce,
+          value: nonceBytes,
           source: clientAccount,
         }),
       )

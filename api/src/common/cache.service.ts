@@ -231,10 +231,7 @@ export class CacheService implements OnModuleDestroy {
   ): Promise<boolean> {
     if (!this.client) throw new Error('Redis is unavailable');
     const ttl = ttlSeconds ?? this.defaultTtlSeconds;
-    const result = await this.client.set(key, JSON.stringify(value), {
-      EX: ttl,
-      NX: true,
-    });
+    const result = await this.client.set(key, JSON.stringify(value), 'EX', ttl, 'NX');
     return result === 'OK';
   }
 
@@ -245,7 +242,7 @@ export class CacheService implements OnModuleDestroy {
   ): Promise<void> {
     if (!this.client) throw new Error('Redis is unavailable');
     const ttl = ttlSeconds ?? this.defaultTtlSeconds;
-    await this.client.set(key, JSON.stringify(value), { EX: ttl });
+    await this.client.set(key, JSON.stringify(value), 'EX', ttl);
   }
 
   async increment(key: string, ttlSeconds: number): Promise<number> {

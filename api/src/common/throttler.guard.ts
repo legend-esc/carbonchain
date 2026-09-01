@@ -279,10 +279,10 @@ export class ThrottlerGuard implements CanActivate {
     return this.checkIpThrottle(context, options);
   }
 
-  private checkIpThrottle(
+  private async checkIpThrottle(
     context: ExecutionContext,
     options: ThrottleOptions,
-  ): boolean {
+  ): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
     const res = context.switchToHttp().getResponse?.();
     const ip = this.extractIp(req);

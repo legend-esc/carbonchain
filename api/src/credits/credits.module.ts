@@ -12,7 +12,7 @@ import { NonceService } from '../common/nonce.service';
 import { ETagCacheInterceptor } from './etag-cache.interceptor';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule, TypeOrmModule.forFeature([CreditEntity])],
+  imports: [ConfigModule, StellarModule, AuthModule],
   controllers: [CreditsController],
   providers: [
     CreditsService,
