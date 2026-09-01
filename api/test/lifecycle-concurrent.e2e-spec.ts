@@ -51,6 +51,9 @@ describe('Credit lifecycle + concurrency (e2e)', () => {
             returnValue: nativeToScVal(id, { type: 'bytes' }),
           });
         }),
+        getSorobanRpcServer: jest.fn().mockReturnValue({
+          getHealth: jest.fn().mockResolvedValue({}),
+        }),
       })
       .overrideProvider(CREDIT_REPOSITORY)
       .useValue({
