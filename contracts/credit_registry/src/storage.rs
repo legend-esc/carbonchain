@@ -603,7 +603,6 @@ pub fn increment_total_credits(env: &Env) {
         .set(&DataKey::TotalCredits, &(count + 1));
 }
 
-/// Remove a single credit ID from the per-owner index.
 // ── Verifier services ─────────────────────────────────────────────────────────
 
 /// Persist `services` for `verifier` with a long-lived TTL (~1 year).
