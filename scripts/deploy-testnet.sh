@@ -113,7 +113,8 @@ retry "initialize retirement" stellar contract invoke \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
   -- initialize \
-  --admin "$ADMIN_ADDRESS"
+  --admin "$ADMIN_ADDRESS" \
+  --registry-id "$CREDIT_REGISTRY_ID"
 
 log "Initializing marketplace..."
 retry "initialize marketplace" stellar contract invoke \
