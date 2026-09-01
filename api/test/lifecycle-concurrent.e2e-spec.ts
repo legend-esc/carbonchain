@@ -51,17 +51,20 @@ describe('Credit lifecycle + concurrency (e2e)', () => {
             returnValue: nativeToScVal(id, { type: 'bytes' }),
           });
         }),
+        getSorobanRpcServer: jest.fn().mockReturnValue({
+          getHealth: jest.fn().mockResolvedValue({}),
+        }),
       })
       .overrideProvider(CREDIT_REPOSITORY)
       .useValue({
         create: jest.fn().mockResolvedValue({ id: 'credit-1' }),
         findById: jest.fn().mockResolvedValue({ id: 'credit-1' }),
         updateStatus: jest.fn().mockResolvedValue({ id: 'credit-1' }),
-      } as unknown as ICreditRepository)
+      })
       .overrideProvider(RETIREMENT_REPOSITORY)
       .useValue({
         create: jest.fn().mockResolvedValue({ id: 'retirement-1' }),
-      } as unknown as IRetirementRepository)
+      })
       .overrideGuard(JwtAuthGuard)
       .useClass(TestJwtAuthGuard)
       .compile();
@@ -76,12 +79,12 @@ describe('Credit lifecycle + concurrency (e2e)', () => {
   });
 
   it('runs auth -> issue -> approve -> retire without error', async () => {
-    const server = app.getHttpServer() as App;
+    const server = app.getHttpServer();
     await request(server).get('/health').expect(200);
   });
 
   it('handles concurrent submit requests without duplicate ids', async () => {
-    const server = app.getHttpServer() as App;
+    const server = app.getHttpServer();
     const attempts = Array.from({ length: 5 }, () =>
       request(server).get('/health'),
     );

@@ -1,8 +1,8 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { CreditEntity } from './credit.entity';
 import { CreditStatus } from '../../../shared';
 import { CacheService } from '../common/cache.service';
-import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 export interface PageResult<T> {
   data: T[];
@@ -316,7 +316,9 @@ export class TypeOrmCreditRepository implements ICreditRepository {
   }
 
   findById(id: string): Promise<CreditEntity | undefined> {
-    return this.repository.findOne({ where: { id } });
+    return this.repository
+      .findOne({ where: { id } })
+      .then((r) => r ?? undefined);
   }
 
   async findByProject(projectId: string, page: number, limit: number) {
@@ -329,20 +331,93 @@ export class TypeOrmCreditRepository implements ICreditRepository {
 
   async findByFilter(filter: CreditFilter, page: number, limit: number) {
     const records = await this.repository.find();
-    const filtered = records.filter((credit) =>
-      (!filter.status || credit.status === filter.status) &&
-      (!filter.methodology ||
-        credit.methodology.toLowerCase() === filter.methodology.toLowerCase()) &&
-      (!filter.geography ||
-        credit.geography.toLowerCase() === filter.geography.toLowerCase()) &&
-      (filter.vintageYear === undefined ||
-        credit.vintageYear === filter.vintageYear),
+    const filtered = records.filter(
+      (credit) =>
+        (!filter.status || credit.status === filter.status) &&
+        (!filter.methodology ||
+          credit.methodology.toLowerCase() ===
+            filter.methodology.toLowerCase()) &&
+        (!filter.geography ||
+          credit.geography.toLowerCase() === filter.geography.toLowerCase()) &&
+        (filter.vintageYear === undefined ||
+          credit.vintageYear === filter.vintageYear),
     );
     return this.page(filtered, page, limit);
   }
 
   findByStatus(status: CreditStatus, page: number, limit: number) {
     return this.paginate({ status }, page, limit);
+  }
+
+  async findByFilterCursor(
+    filter: CreditFilter,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<CursorPageResult<CreditEntity>> {
+    // Fall back to a simple full-scan + slice for the TypeORM implementation.
+    const all = await this.repository.find();
+    let filtered = all;
+    if (filter.status !== undefined) {
+      filtered = filtered.filter((c) => c.status === filter.status);
+    }
+    if (filter.methodology) {
+      filtered = filtered.filter(
+        (c) =>
+          c.methodology.toLowerCase() === filter.methodology!.toLowerCase(),
+      );
+    }
+    if (filter.geography) {
+      filtered = filtered.filter(
+        (c) => c.geography.toLowerCase() === filter.geography!.toLowerCase(),
+      );
+    }
+    if (filter.vintageYear !== undefined) {
+      filtered = filtered.filter((c) => c.vintageYear === filter.vintageYear);
+    }
+    if (filter.minTonnes) {
+      const minVal = BigInt(filter.minTonnes);
+      filtered = filtered.filter((c) => BigInt(c.tonnes) >= minVal);
+    }
+    if (filter.maxTonnes) {
+      const maxVal = BigInt(filter.maxTonnes);
+      filtered = filtered.filter((c) => BigInt(c.tonnes) <= maxVal);
+    }
+
+    filtered.sort((a, b) => {
+      if (a.issuedAt !== b.issuedAt) return a.issuedAt - b.issuedAt;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    let startIdx = 0;
+    if (cursor) {
+      try {
+        const raw = Buffer.from(cursor, 'base64url').toString('utf8');
+        const sep = raw.indexOf(':');
+        if (sep >= 0) {
+          const issuedAt = parseInt(raw.slice(0, sep), 10);
+          const id = raw.slice(sep + 1);
+          startIdx = filtered.findIndex(
+            (c) =>
+              c.issuedAt > issuedAt || (c.issuedAt === issuedAt && c.id > id),
+          );
+          if (startIdx === -1)
+            return { data: [], next_cursor: null, limit: safeLimit };
+        }
+      } catch {
+        // invalid cursor — start from beginning
+      }
+    }
+
+    const page = filtered.slice(startIdx, startIdx + safeLimit);
+    const next_cursor =
+      page.length === safeLimit
+        ? Buffer.from(
+            `${page[page.length - 1].issuedAt}:${page[page.length - 1].id}`,
+          ).toString('base64url')
+        : null;
+
+    return { data: page, next_cursor, limit: safeLimit };
   }
 
   private async paginate(

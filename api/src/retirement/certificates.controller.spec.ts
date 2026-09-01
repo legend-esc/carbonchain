@@ -58,12 +58,10 @@ describe('CertificatesController', () => {
     });
 
     it('throws NotFoundException when the retirement is missing', async () => {
-      retirementService.getRetirement.mockResolvedValue(
-        undefined as unknown as RetirementRecord,
+      retirementService.getRetirement.mockResolvedValue(undefined);
+      await expect(controller.downloadCertificate('R1')).rejects.toThrow(
+        NotFoundException,
       );
-      await expect(
-        controller.downloadCertificate('R1'),
-      ).rejects.toThrow(NotFoundException);
       expect(certificateService.generatePdf).not.toHaveBeenCalled();
     });
   });

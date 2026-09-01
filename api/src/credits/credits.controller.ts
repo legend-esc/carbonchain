@@ -30,6 +30,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult, CursorPageResult } from './credit.repository';
 import { BulkCreditsDto } from './dto/bulk-credits.dto';
 import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('credits')
 @Controller('credits')

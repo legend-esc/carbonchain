@@ -154,8 +154,16 @@ describe('CreditsService.listCredits tonnes range filtering', () => {
   });
 
   it('paginates the filtered set so pages are complete', async () => {
-    const page1 = await svc.listCredits({ page: 1, limit: 2, minTonnes: '200' });
-    const page2 = await svc.listCredits({ page: 2, limit: 2, minTonnes: '200' });
+    const page1 = await svc.listCredits({
+      page: 1,
+      limit: 2,
+      minTonnes: '200',
+    });
+    const page2 = await svc.listCredits({
+      page: 2,
+      limit: 2,
+      minTonnes: '200',
+    });
 
     expect(page1.total).toBe(3);
     expect(page1.data).toHaveLength(2);

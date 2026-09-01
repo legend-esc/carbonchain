@@ -24,9 +24,6 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { OracleModule } from './oracle/oracle.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 
 @Module({
   imports: [
@@ -62,12 +59,6 @@ import { IdempotencyInterceptor } from './common/idempotency.interceptor';
       }),
     }),
     ScheduleModule.forRoot(),
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      url: process.env.DATABASE_URL,
-      autoLoadEntities: true,
-      synchronize: false,
-    }),
     CacheModule,
     HealthModule,
     StellarModule,

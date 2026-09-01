@@ -19,6 +19,7 @@ describe('Auth revocation (e2e)', () => {
       get: jest.fn(async (key: string) => revoked.get(key) ?? null),
       set: jest.fn(async (key: string, value: boolean) => {
         revoked.set(key, value);
+        return true;
       }),
       del: jest.fn(async () => undefined),
       connect: jest.fn(async () => undefined),

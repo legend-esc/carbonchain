@@ -26,8 +26,9 @@ describe('IdempotencyInterceptor', () => {
   };
 
   const makeHandler = (result: unknown): CallHandler => ({
-    handle: () =>
+    handle: jest.fn(() =>
       result instanceof Error ? throwError(() => result) : of(result),
+    ),
   });
 
   beforeEach(() => {
@@ -112,7 +113,10 @@ describe('IdempotencyInterceptor', () => {
     cache.get.mockResolvedValue(null);
     await expect(
       lastValueFrom(
-        interceptor.intercept(makeCtx('POST', 'k4'), makeHandler(new Error('boom'))),
+        interceptor.intercept(
+          makeCtx('POST', 'k4'),
+          makeHandler(new Error('boom')),
+        ),
       ),
     ).rejects.toThrow('boom');
     expect(cache.del).toHaveBeenCalled();

@@ -37,9 +37,11 @@ const mockKeypairService = {
 
 const mockConfigService = {
   get: jest.fn().mockImplementation((key: string, def: string) => {
-    if (key === 'MARKETPLACE_CONTRACT_ID') return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+    if (key === 'MARKETPLACE_CONTRACT_ID')
+      return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
     // NATIVE_TOKEN_CONTRACT_ID must be a valid Stellar contract address (C + 55 base32 chars).
-    if (key === 'NATIVE_TOKEN_CONTRACT_ID') return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+    if (key === 'NATIVE_TOKEN_CONTRACT_ID')
+      return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
     return def;
   }),
 };
@@ -99,17 +101,23 @@ describe('MarketplaceService — mapMarketplaceError', () => {
 
     it('throws ServiceUnavailableException for code 306 (NotInitialized)', async () => {
       mockStellarService.readContract.mockRejectedValueOnce(contractError(306));
-      await expect(service.getOffer(1)).rejects.toThrow(ServiceUnavailableException);
+      await expect(service.getOffer(1)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
     });
 
     it('throws ServiceUnavailableException for code 307 (ContractPaused)', async () => {
       mockStellarService.readContract.mockRejectedValueOnce(contractError(307));
-      await expect(service.getOffer(1)).rejects.toThrow(ServiceUnavailableException);
+      await expect(service.getOffer(1)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
     });
 
     it('throws UnprocessableEntityException for code 308 (InvalidNonce)', async () => {
       mockStellarService.readContract.mockRejectedValueOnce(contractError(308));
-      await expect(service.getOffer(1)).rejects.toThrow(UnprocessableEntityException);
+      await expect(service.getOffer(1)).rejects.toThrow(
+        UnprocessableEntityException,
+      );
     });
 
     it('throws GoneException for code 309 (OfferExpired)', async () => {
@@ -120,7 +128,9 @@ describe('MarketplaceService — mapMarketplaceError', () => {
     it('re-throws unrecognized errors unchanged', async () => {
       const rawErr = new Error('network connection refused');
       mockStellarService.readContract.mockRejectedValueOnce(rawErr);
-      await expect(service.getOffer(1)).rejects.toThrow('network connection refused');
+      await expect(service.getOffer(1)).rejects.toThrow(
+        'network connection refused',
+      );
     });
 
     it('does NOT throw GoneException for a message containing "123" without the contract pattern', async () => {
@@ -146,19 +156,29 @@ describe('MarketplaceService — mapMarketplaceError', () => {
 
   describe('buyOffer', () => {
     it('throws GoneException for code 309 (OfferExpired)', async () => {
-      mockStellarService.invokeContract.mockRejectedValueOnce(contractError(309));
-      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(GoneException);
+      mockStellarService.invokeContract.mockRejectedValueOnce(
+        contractError(309),
+      );
+      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(
+        GoneException,
+      );
     });
 
     it('throws BadGatewayException for code 313 (EscrowFailed)', async () => {
-      mockStellarService.invokeContract.mockRejectedValueOnce(contractError(313));
-      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(BadGatewayException);
+      mockStellarService.invokeContract.mockRejectedValueOnce(
+        contractError(313),
+      );
+      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(
+        BadGatewayException,
+      );
     });
 
     it('re-throws unknown errors from buyOffer', async () => {
       const rawErr = new Error('rpc unavailable');
       mockStellarService.invokeContract.mockRejectedValueOnce(rawErr);
-      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow('rpc unavailable');
+      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(
+        'rpc unavailable',
+      );
     });
   });
 });

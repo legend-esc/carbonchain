@@ -124,18 +124,17 @@ describe('AuthService', () => {
 
   describe('verifyAndIssueToken', () => {
     async function signedChallenge(): Promise<string> {
-      const { transaction, network_passphrase } = await service.generateChallenge(
-        VALID_CLIENT.publicKey(),
-      );
+      const { transaction, network_passphrase } =
+        await service.generateChallenge(VALID_CLIENT.publicKey());
       const tx = new Transaction(transaction, network_passphrase);
       tx.sign(VALID_CLIENT); // client signs its own manageData op
       return tx.toEnvelope().toXDR('base64');
     }
 
     it('throws BadRequestException on unparseable XDR', async () => {
-      await expect(service.verifyAndIssueToken('@@@not-xdr@@@')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.verifyAndIssueToken('@@@not-xdr@@@'),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('issues a JWT for a valid client-signed challenge', async () => {
@@ -143,7 +142,10 @@ describe('AuthService', () => {
       const result = await service.verifyAndIssueToken(signed);
       expect(result.access_token).toBe('signed.jwt.token');
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ account: VALID_CLIENT.publicKey(), jti: expect.any(String) }),
+        expect.objectContaining({
+          account: VALID_CLIENT.publicKey(),
+          jti: expect.any(String),
+        }),
       );
     });
 
@@ -160,9 +162,8 @@ describe('AuthService', () => {
       // The nonce extracted from the op value (a Buffer) must base64-encode to the
       // same string used as the cache key; otherwise verification fails with the
       // "nonce not found" error. This guards against the Buffer/base64 mismatch.
-      const { transaction, network_passphrase } = await service.generateChallenge(
-        VALID_CLIENT.publicKey(),
-      );
+      const { transaction, network_passphrase } =
+        await service.generateChallenge(VALID_CLIENT.publicKey());
       const tx = new Transaction(transaction, network_passphrase);
       const nonce = (
         tx.operations.find((op) => op.type === 'manageData') as any
@@ -188,9 +189,9 @@ describe('AuthService', () => {
 
     it('throws UnauthorizedException for a token without a jti claim', async () => {
       mockJwtService.decode.mockReturnValueOnce({ exp: 9999999999 });
-      await expect(
-        service.logout('some.token.without.jti'),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(service.logout('some.token.without.jti')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('blocklists the jti in the cache with a TTL', async () => {
@@ -223,9 +224,9 @@ describe('AuthService', () => {
         jti: 'x',
         exp: Math.floor(Date.now() / 1000) + 100,
       });
-      await expect(
-        brokenService.logout('header.payload.sig'),
-      ).rejects.toThrow(ServiceUnavailableException);
+      await expect(brokenService.logout('header.payload.sig')).rejects.toThrow(
+        ServiceUnavailableException,
+      );
     });
   });
 

@@ -14,4 +14,6 @@ pub enum RetirementError {
     InvalidTonnes = 207,
     InvalidInput = 208,
     InvalidRegistry = 209,
+    /// No retirement record exists for the given retirement ID.
+    RecordNotFound = 210,
 }

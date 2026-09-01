@@ -246,7 +246,10 @@ export class ThrottlerGuard implements CanActivate {
 
     const trustedRaw = process.env['THROTTLER_TRUSTED_PROXIES']?.trim();
     const trustedSource = trustedRaw
-      ? trustedRaw.split(',').map((s) => s.trim()).filter(Boolean)
+      ? trustedRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
       : DEFAULT_TRUSTED_PROXY_CIDRS;
     this.trustedProxies = trustedSource
       .map(parseCidr)
@@ -279,10 +282,10 @@ export class ThrottlerGuard implements CanActivate {
     return this.checkIpThrottle(context, options);
   }
 
-  private checkIpThrottle(
+  private async checkIpThrottle(
     context: ExecutionContext,
     options: ThrottleOptions,
-  ): boolean {
+  ): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
     const res = context.switchToHttp().getResponse?.();
     const ip = this.extractIp(req);

@@ -64,6 +64,9 @@ pub enum DataKey {
     PendingAdmin,
     Registry,
     Version,
+    /// IPFS hash of the off-chain retirement certificate PDF.
+    /// Set after retirement via `set_certificate_hash`.
+    CertificateHash(BytesN<32>),
 }
 
 /// A single failed retirement entry within a partial-success batch.

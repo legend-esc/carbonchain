@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { StreamableFile, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  StreamableFile,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { RetirementController } from './retirement.controller';
 import { RetirementService } from './retirement.service';
 import { CertificateService } from './certificate.service';
@@ -157,7 +161,10 @@ describe('RetirementController', () => {
     it('clamps limit above 100 down to 100', async () => {
       mockRetirementService.listRetirements.mockResolvedValueOnce(pageResult);
       await controller.listRetirements(1, 9999);
-      expect(mockRetirementService.listRetirements).toHaveBeenCalledWith(1, 100);
+      expect(mockRetirementService.listRetirements).toHaveBeenCalledWith(
+        1,
+        100,
+      );
     });
 
     it('clamps limit of 0 up to 1', async () => {
@@ -257,7 +264,9 @@ describe('RetirementController', () => {
       const pipe = new StellarAddressPipe();
       // Stellar secret keys start with S, not G — must be rejected.
       expect(() =>
-        pipe.transform('SCZANGBA5RLKJSZDFNHH36MYQC5B5D53F2LHWKDV7Q4DGZCRDNZNMZW'),
+        pipe.transform(
+          'SCZANGBA5RLKJSZDFNHH36MYQC5B5D53F2LHWKDV7Q4DGZCRDNZNMZW',
+        ),
       ).toThrow(BadRequestException);
     });
   });

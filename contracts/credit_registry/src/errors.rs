@@ -19,10 +19,16 @@ pub enum CarbonChainError {
     InvalidStatusTransition = 105,
     VerifierAlreadyExists = 106,
     VerifierNotFound = 107,
+    /// Returned when account has insufficient token balance.
+    InsufficientBalance = 108,
     Overflow = 109,
     InvalidTonnes = 110,
+    /// Returned when the supplied admin address is not the stored admin.
+    InvalidAdmin = 111,
     ContractPaused = 112,
     IssuerNotAllowed = 113,
+    /// Returned when registering a methodology that already exists or is malformed.
+    InvalidMethodology = 114,
     InvalidNonce = 115,
     NoPendingAdmin = 116,
     InvalidSplit = 117,

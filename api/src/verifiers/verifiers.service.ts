@@ -310,7 +310,10 @@ export class VerifiersService implements OnApplicationBootstrap {
     // Set VERIFIER_SIGNING_MODE=production to enforce this check.
     // In production the verifier must sign via their own wallet (Freighter).
     // See the JSDoc above for the planned two-phase signing flow.
-    const signingMode = this.configService.get<string>('VERIFIER_SIGNING_MODE', 'test');
+    const signingMode = this.configService.get<string>(
+      'VERIFIER_SIGNING_MODE',
+      'test',
+    );
     if (signingMode === 'production') {
       throw new InternalServerErrorException(
         'approveCredit cannot use the admin keypair in production. ' +

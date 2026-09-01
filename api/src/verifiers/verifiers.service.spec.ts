@@ -221,9 +221,12 @@ describe('VerifiersService.approveCredit', () => {
       spyListVerifiers([VERIFIER_ADDR]);
       mockStellarService.readContract.mockImplementation(
         async (_c: string, method: string) => {
-          if (method === 'get_nonce') return xdr.ScVal.scvU64(new xdr.Uint64(42n));
-          if (method === 'get_required_approvals') return xdr.ScVal.scvU64(new xdr.Uint64(0n));
-          if (method === 'get_approval_count') return xdr.ScVal.scvU64(new xdr.Uint64(0n));
+          if (method === 'get_nonce')
+            return xdr.ScVal.scvU64(new xdr.Uint64(42n));
+          if (method === 'get_required_approvals')
+            return xdr.ScVal.scvU64(new xdr.Uint64(0n));
+          if (method === 'get_approval_count')
+            return xdr.ScVal.scvU64(new xdr.Uint64(0n));
           return null;
         },
       );
@@ -237,9 +240,12 @@ describe('VerifiersService.approveCredit', () => {
       spyListVerifiers([VERIFIER_ADDR]);
       mockStellarService.readContract.mockImplementation(
         async (_c: string, method: string) => {
-          if (method === 'get_nonce') return xdr.ScVal.scvU64(new xdr.Uint64(42n));
-          if (method === 'get_required_approvals') return xdr.ScVal.scvU64(new xdr.Uint64(2n));
-          if (method === 'get_approval_count') return xdr.ScVal.scvU64(new xdr.Uint64(2n));
+          if (method === 'get_nonce')
+            return xdr.ScVal.scvU64(new xdr.Uint64(42n));
+          if (method === 'get_required_approvals')
+            return xdr.ScVal.scvU64(new xdr.Uint64(2n));
+          if (method === 'get_approval_count')
+            return xdr.ScVal.scvU64(new xdr.Uint64(2n));
           return null;
         },
       );

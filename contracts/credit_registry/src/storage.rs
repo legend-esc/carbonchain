@@ -69,7 +69,9 @@ pub fn get_verifier_id(env: &Env, verifier: &Address) -> Option<u32> {
 pub fn set_verifier_id(env: &Env, verifier: &Address, id: u32) {
     let key = DataKey::VerifierId(verifier.clone());
     env.storage().persistent().set(&key, &id);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn get_next_verifier_id(env: &Env) -> u32 {
@@ -132,7 +134,9 @@ pub fn set_credit_by_project_vintage(
 }
 
 pub fn set_retirement_contract(env: &Env, addr: &Address) {
-    env.storage().instance().set(&DataKey::RetirementContract, addr);
+    env.storage()
+        .instance()
+        .set(&DataKey::RetirementContract, addr);
     env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
     env.storage()
         .instance()
@@ -195,7 +199,7 @@ pub fn consume_nonce(env: &Env, addr: &Address, submitted: u64) -> bool {
         return false;
     }
     let offset = (submitted - current) as u32; // 0..NONCE_WINDOW-1
-    // Load the used-bitmap (stored as u64 bitmask, bit N = nonce current+N used).
+                                               // Load the used-bitmap (stored as u64 bitmask, bit N = nonce current+N used).
     let bitmap_key = DataKey::NonceBitmap(addr.clone());
     let mut bitmap: u64 = env.storage().persistent().get(&bitmap_key).unwrap_or(0u64);
     let bit = 1u64 << offset;
@@ -213,22 +217,18 @@ pub fn consume_nonce(env: &Env, addr: &Address, submitted: u64) -> bool {
     bitmap >>= advance;
     let key = DataKey::Nonce(addr.clone());
     env.storage().persistent().set(&key, &new_current);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     if bitmap != 0 {
         env.storage().persistent().set(&bitmap_key, &bitmap);
-        env.storage().persistent().extend_ttl(&bitmap_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&bitmap_key, TTL_THRESHOLD, MIN_TTL);
     } else {
         // Bitmap is empty — remove to save storage rent.
         env.storage().persistent().remove(&bitmap_key);
     }
-    if current != expected {
-        return false;
-    }
-    let key = DataKey::Nonce(addr.clone());
-    env.storage().persistent().set(&key, &(current + 1));
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     true
 }
 
@@ -343,7 +343,9 @@ pub fn get_required_approvals(env: &Env) -> u32 {
 }
 
 pub fn set_required_approvals(env: &Env, count: u32) {
-    env.storage().instance().set(&DataKey::RequiredApprovals, &count);
+    env.storage()
+        .instance()
+        .set(&DataKey::RequiredApprovals, &count);
     env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
     env.storage()
         .instance()
@@ -457,13 +459,19 @@ const PENDING_PAGE_SIZE: u32 = 20;
 
 pub fn add_credit_to_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
     let key = DataKey::CreditsByOwner(owner.clone());
-    let mut list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
-    if list.len() >= OWNER_PAGE_SIZE as usize {
+    let mut list: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if list.len() >= OWNER_PAGE_SIZE {
         let _ = list.pop_front();
     }
     list.push_back(credit_id.clone());
     env.storage().persistent().set(&key, &list);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
@@ -475,30 +483,42 @@ pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
 
 pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
     let key = DataKey::CreditsByOwner(owner.clone());
-    let list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
-    let mut new_list: Vec<BytesN<32>> = Vec::new(env);
-    for id in list.iter() {
-        if id != credit_id {
-            new_list.push_back(id.clone());
+    let existing: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut updated: Vec<BytesN<32>> = Vec::new(env);
+    for id in existing.iter() {
+        if id != *credit_id {
+            updated.push_back(id);
         }
     }
-    if new_list.is_empty() {
+    if updated.is_empty() {
         env.storage().persistent().remove(&key);
     } else {
-        env.storage().persistent().set(&key, &new_list);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+        env.storage().persistent().set(&key, &updated);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     }
 }
 
 pub fn add_pending_credit_to_verifier(env: &Env, verifier: &Address, credit_id: &BytesN<32>) {
     let key = DataKey::PendingCreditsByVerifier(verifier.clone());
-    let mut list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
-    if list.len() >= PENDING_PAGE_SIZE as usize {
+    let mut list: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if list.len() >= PENDING_PAGE_SIZE {
         let _ = list.pop_front();
     }
     list.push_back(credit_id.clone());
     env.storage().persistent().set(&key, &list);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
 }
 
 pub fn get_pending_credits_by_verifier(env: &Env, verifier: &Address) -> Vec<BytesN<32>> {
@@ -510,10 +530,14 @@ pub fn get_pending_credits_by_verifier(env: &Env, verifier: &Address) -> Vec<Byt
 
 pub fn remove_pending_credit_from_verifier(env: &Env, verifier: &Address, credit_id: &BytesN<32>) {
     let key = DataKey::PendingCreditsByVerifier(verifier.clone());
-    let list: Vec<BytesN<32>> = env.storage().persistent().get(&key).unwrap_or_else(|| Vec::new(env));
+    let list: Vec<BytesN<32>> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
     let mut new_list: Vec<BytesN<32>> = Vec::new(env);
     for id in list.iter() {
-        if id != credit_id {
+        if id != *credit_id {
             new_list.push_back(id.clone());
         }
     }
@@ -521,7 +545,9 @@ pub fn remove_pending_credit_from_verifier(env: &Env, verifier: &Address, credit
         env.storage().persistent().remove(&key);
     } else {
         env.storage().persistent().set(&key, &new_list);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
     }
 }
 
@@ -542,32 +568,19 @@ pub fn get_audit_log(env: &Env, log_id: &BytesN<32>) -> Option<AuditLogEntry> {
 ///   `configure_verifier_services` with an empty `Vec` has deliberately revoked
 ///   all capabilities; an empty list is NOT treated as "open access".
 /// - **Configured with a non-empty list**: returns `true` iff `service` is present.
-pub fn verifier_has_service(env: &Env, verifier: &Address, service: &crate::types::ServiceType) -> bool {
-    match env.storage().persistent().get::<_, Vec<crate::types::ServiceType>>(&DataKey::VerifierServices(verifier.clone())) {
-        None => true,            // unconfigured → full backward-compat access
-        Some(services) => services.contains(service),
-    }
-// ── Credits by owner index ─────────────────────────────────────────────────────
-
-pub fn add_credit_to_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
-    let key = DataKey::CreditsByOwner(owner.clone());
-    let mut list: Vec<BytesN<32>> = env
+pub fn verifier_has_service(
+    env: &Env,
+    verifier: &Address,
+    service: &crate::types::ServiceType,
+) -> bool {
+    match env
         .storage()
         .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env));
-    list.push_back(credit_id.clone());
-    env.storage().persistent().set(&key, &list);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
-}
-
-pub fn get_credits_by_owner(env: &Env, owner: &Address) -> Vec<BytesN<32>> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::CreditsByOwner(owner.clone()))
-        .unwrap_or_else(|| Vec::new(env))
+        .get::<_, Vec<crate::types::ServiceType>>(&DataKey::VerifierServices(verifier.clone()))
+    {
+        None => true, // unconfigured → full backward-compat access
+        Some(services) => services.contains(service),
+    }
 }
 
 // ── Total credit count ──────────────────────────────────────────────────────
@@ -588,39 +601,6 @@ pub fn increment_total_credits(env: &Env) {
     env.storage()
         .instance()
         .set(&DataKey::TotalCredits, &(count + 1));
-}
-
-/// Remove a single credit ID from the per-owner index.
-///
-/// Issue #470: `transfer_credit` and `split_credit` did not remove the credit
-/// from the old owner's `CreditsByOwner` list, leaving stale entries that
-/// caused `list_credits_by_owner` / `get_credits_by_owner` to return incorrect
-/// results.
-///
-/// Complexity note: Soroban `Vec` has no O(1) remove — this function iterates
-/// the list and rebuilds it without the target ID, which is O(n). For portfolios
-/// of up to ~50 credits this stays well within the Soroban instruction budget.
-/// For very large portfolios (hundreds of credits) the instruction cost grows
-/// linearly; callers should be aware of this trade-off and, if necessary, switch
-/// to a paginated or bitmap-based index.
-pub fn remove_credit_from_owner(env: &Env, owner: &Address, credit_id: &BytesN<32>) {
-    let key = DataKey::CreditsByOwner(owner.clone());
-    let existing: Vec<BytesN<32>> = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env));
-
-    let mut updated: Vec<BytesN<32>> = Vec::new(env);
-    for id in existing.iter() {
-        if id != *credit_id {
-            updated.push_back(id);
-        }
-    }
-    env.storage().persistent().set(&key, &updated);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
 }
 
 // ── Verifier services ─────────────────────────────────────────────────────────
@@ -760,9 +740,7 @@ pub fn set_approved_stake_token(env: &Env, token: &Address) {
 
 /// Returns the admin-configured approved stake token address, if one has been set.
 pub fn get_approved_stake_token(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ApprovedStakeToken)
+    env.storage().instance().get(&DataKey::ApprovedStakeToken)
 }
 
 // ── Per-credit verifier snapshots ──────────────────────────────────────────────

@@ -29,6 +29,7 @@ import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -104,7 +105,11 @@ export class RetirementController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
     const clampedLimit = Math.min(Math.max(limit, 1), 100);
-    return this.retirementService.getRetirementsByAccount(address, page, clampedLimit);
+    return this.retirementService.getRetirementsByAccount(
+      address,
+      page,
+      clampedLimit,
+    );
   }
 
   @ApiOperation({ summary: 'Download retirement certificate as PDF' })

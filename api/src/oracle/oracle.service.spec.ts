@@ -38,13 +38,40 @@ const mockCacheService = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeSignature(
+  oraclePublicKey: string,
   projectId: string,
   tonnes: string,
+  timestamp: number,
+  nonce: string,
   secret = 'testsecret',
 ): string {
   return createHmac('sha256', secret)
-    .update(`${projectId}:${tonnes}`)
+    .update(`${oraclePublicKey}:${projectId}:${tonnes}:${timestamp}:${nonce}`)
     .digest('hex');
+}
+
+function makeDto(overrides: Partial<MrvWebhookDto> = {}): MrvWebhookDto {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const nonce = 'nonce-' + Math.random().toString(36).slice(2);
+  const oraclePublicKey = VALID_ORACLE_KEY;
+  const projectId = 'PROJ-001';
+  const tonnesSequestered = '1000000';
+  const signature = makeSignature(
+    oraclePublicKey,
+    projectId,
+    tonnesSequestered,
+    timestamp,
+    nonce,
+  );
+  return {
+    oraclePublicKey,
+    projectId,
+    tonnesSequestered,
+    timestamp,
+    nonce,
+    signature,
+    ...overrides,
+  };
 }
 
 // Valid Stellar G-address (56 chars, base32)
@@ -90,10 +117,13 @@ describe('OracleService', () => {
 
   describe('ingestMrvData', () => {
     it('rejects invalid signature', async () => {
+      const ts = Math.floor(Date.now() / 1000);
       const dto: MrvWebhookDto = {
         oraclePublicKey: VALID_ORACLE_KEY,
         projectId: 'PROJ-001',
         tonnesSequestered: '1000000',
+        timestamp: ts,
+        nonce: 'nonce-bad',
         signature: 'badhex',
       };
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
@@ -105,12 +135,7 @@ describe('OracleService', () => {
       mockStellarService.invokeContract.mockResolvedValue({
         returnValue: null,
       });
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '1000000',
-        signature: makeSignature('PROJ-001', '1000000'),
-      };
+      const dto = makeDto();
       const result = await service.ingestMrvData(dto);
       expect(mockStellarService.invokeContract).toHaveBeenCalledWith(
         'CORACLE',
@@ -125,12 +150,7 @@ describe('OracleService', () => {
       mockStellarService.invokeContract.mockResolvedValue({
         returnValue: null,
       });
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '1000000',
-        signature: makeSignature('PROJ-001', '1000000'),
-      };
+      const dto = makeDto();
 
       const before = BigInt(Math.floor(Date.now() / 1000));
       await service.ingestMrvData(dto);
@@ -153,24 +173,33 @@ describe('OracleService', () => {
     });
 
     it('rejects negative tonnes', async () => {
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '-1000000',
-        signature: makeSignature('PROJ-001', '-1000000'),
-      };
+      const dto = makeDto({ tonnesSequestered: '-1000000' });
+      // Recompute signature to match the modified tonnes
+      const ts = dto.timestamp;
+      const nonce = dto.nonce;
+      dto.signature = makeSignature(
+        VALID_ORACLE_KEY,
+        'PROJ-001',
+        '-1000000',
+        ts,
+        nonce,
+      );
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
         BadRequestException,
       );
     });
 
     it('rejects zero tonnes', async () => {
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '0',
-        signature: makeSignature('PROJ-001', '0'),
-      };
+      const dto = makeDto({ tonnesSequestered: '0' });
+      const ts = dto.timestamp;
+      const nonce = dto.nonce;
+      dto.signature = makeSignature(
+        VALID_ORACLE_KEY,
+        'PROJ-001',
+        '0',
+        ts,
+        nonce,
+      );
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
         BadRequestException,
       );
@@ -180,12 +209,7 @@ describe('OracleService', () => {
       mockStellarService.invokeContract.mockRejectedValue(
         new Error('Contract error: InvalidTimestamp (127)'),
       );
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '1000000',
-        signature: makeSignature('PROJ-001', '1000000'),
-      };
+      const dto = makeDto();
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
         BadRequestException,
       );
@@ -195,12 +219,7 @@ describe('OracleService', () => {
       mockStellarService.invokeContract.mockRejectedValue(
         new Error('Network timeout'),
       );
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '1000000',
-        signature: makeSignature('PROJ-001', '1000000'),
-      };
+      const dto = makeDto();
       await expect(service.ingestMrvData(dto)).rejects.toThrow(
         'Failed to submit MRV data to contract',
       );
@@ -210,12 +229,7 @@ describe('OracleService', () => {
       mockStellarService.invokeContract.mockResolvedValue({
         returnValue: null,
       });
-      const dto: MrvWebhookDto = {
-        oraclePublicKey: VALID_ORACLE_KEY,
-        projectId: 'PROJ-001',
-        tonnesSequestered: '1000000',
-        signature: makeSignature('PROJ-001', '1000000'),
-      };
+      const dto = makeDto();
       await service.ingestMrvData(dto);
       expect(mockCacheService.del).toHaveBeenCalledWith(
         'oracle:history:PROJ-001',
