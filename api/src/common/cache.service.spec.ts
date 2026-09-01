@@ -135,7 +135,7 @@ describe('CacheService', () => {
 
   it('set() does not throw when Redis errors', async () => {
     mockRedisClient.set.mockRejectedValue(new Error('write error'));
-    await expect(service.set('key', 'value')).resolves.toBeUndefined();
+    await expect(service.set('key', 'value')).resolves.toBe(false);
   });
 
   // ── del ──────────────────────────────────────────────────────────────────
@@ -292,7 +292,7 @@ describe('CacheService', () => {
 
     expect(noopService.isConnected).toBe(false);
     expect(await noopService.get('key')).toBeNull();
-    await expect(noopService.set('key', 'val')).resolves.toBeUndefined();
+    await expect(noopService.set('key', 'val')).resolves.toBe(false);
     await expect(noopService.del('key')).resolves.toBeUndefined();
     await expect(noopService.delPattern('*')).resolves.toBeUndefined();
   });

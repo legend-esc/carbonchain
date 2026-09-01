@@ -26,8 +26,9 @@ describe('IdempotencyInterceptor', () => {
   };
 
   const makeHandler = (result: unknown): CallHandler => ({
-    handle: () =>
+    handle: jest.fn(() =>
       result instanceof Error ? throwError(() => result) : of(result),
+    ),
   });
 
   beforeEach(() => {
