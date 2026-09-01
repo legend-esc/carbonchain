@@ -129,6 +129,9 @@ pub enum DataKey {
     IssuerSet,
     MethodologySet,
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection.
+    /// See `consume_nonce` in storage.rs for details.
+    NonceBitmap(Address),
     PendingAdmin,
     VerifierReputation(Address),
     /// Tracks how many Pending credits are assigned to a verifier for approval.
@@ -160,8 +163,6 @@ pub enum DataKey {
     CreditsByOwner(Address),
     /// Bounded pending index: pending credits assigned to `Address`, stored in fixed-size pages.
     PendingCreditsByVerifier(Address),
-    /// Credit IDs indexed by owner address.
-    CreditsByOwner(Address),
     /// Per-credit snapshot of verifiers assigned at submission time.
     /// Used by remove_verifier to correctly block removal only when
     /// the verifier is specifically assigned to a pending credit.

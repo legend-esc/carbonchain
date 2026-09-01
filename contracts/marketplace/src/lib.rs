@@ -142,6 +142,12 @@ pub enum MarketplaceError {
     /// Escrow transfer succeeded but the offer record failed to persist;
     /// the credit was returned to the seller to avoid a stuck escrow.
     EscrowFailed = 313,
+    /// No credit exists for the given credit ID in the registry.
+    CreditNotFound = 314,
+    /// The registry_id does not match the trusted credit registry.
+    InvalidRegistry = 315,
+    /// The token_id does not match the allowed payment token.
+    InvalidToken = 316,
 }
 
 #[contractevent]
@@ -627,90 +633,6 @@ impl Marketplace {
             escrowed,
         }
         .publish(&env);
-        Ok(())
-    }
-
-    /// Purchase an active offer. Transfers the credit from escrow to the buyer.
-    ///
-    /// # Errors
-    /// - [`MarketplaceError::ContractPaused`] — contract is paused.
-    /// - [`MarketplaceError::InvalidNonce`] — `nonce` does not match the current buyer nonce.
-    /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
-    /// - [`MarketplaceError::AlreadyClosed`] — offer is no longer active.
-    /// - [`MarketplaceError::OfferExpired`] — offer has expired.
-    /// - [`MarketplaceError::InvalidPrice`] — `price_xlm` is zero or negative. (#696)
-    pub fn buy_offer(
-        env: Env,
-        buyer: Address,
-        offer_id: u64,
-        registry_id: Address,
-        nonce: u64,
-    ) -> Result<(), MarketplaceError> {
-        if Self::is_paused(&env) {
-            return Err(MarketplaceError::ContractPaused);
-        }
-        buyer.require_auth();
-        if !Self::consume_nonce(&env, &buyer, nonce) {
-            return Err(MarketplaceError::InvalidNonce);
-        }
-
-        let mut offer: Offer = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Offer(offer_id))
-            .ok_or(MarketplaceError::OfferNotFound)?;
-
-        if !offer.active {
-            return Err(MarketplaceError::AlreadyClosed);
-        }
-
-        // Check expiry
-        if let Some(expires_at) = offer.expires_at {
-            if env.ledger().timestamp() > expires_at {
-                offer.active = false;
-                env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
-                // #694: prune from active index on expiry detected during buy
-                remove_from_active_index(&env, offer_id);
-                return Err(MarketplaceError::OfferExpired);
-            }
-        }
-
-        // #696: InvalidPrice — price must be positive (defensive guard)
-        if offer.price_xlm <= 0 {
-            return Err(MarketplaceError::InvalidPrice);
-        }
-
-        let escrow_account: Address = env.current_contract_address();
-
-        // Transfer credit from escrow to buyer
-        let registry_nonce: u64 = env.invoke_contract(
-            &registry_id,
-            &Symbol::new(&env, "get_nonce"),
-            (escrow_account.clone(),).into_val(&env),
-        );
-        let _: () = env.invoke_contract(
-            &registry_id,
-            &Symbol::new(&env, "transfer_credit"),
-            (
-                escrow_account.clone(),
-                buyer.clone(),
-                offer.credit_id.clone(),
-                registry_nonce,
-            )
-                .into_val(&env),
-        );
-
-        // Mark offer closed and clean up
-        let seller = offer.seller.clone();
-        offer.active = false;
-        env.storage().persistent().set(&DataKey::Offer(offer_id), &offer);
-        env.storage().persistent().extend_ttl(&DataKey::Offer(offer_id), TTL_THRESHOLD, MIN_TTL);
-        env.storage().persistent().remove(&DataKey::EscrowedAmount(offer_id));
-
-        // #694: prune from active index on buy
-        remove_from_active_index(&env, offer_id);
-
-        OfferFilled { buyer, seller, offer_id, price_xlm: offer.price_xlm }.publish(&env);
         Ok(())
     }
 
