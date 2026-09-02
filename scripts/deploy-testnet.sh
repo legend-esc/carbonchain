@@ -117,13 +117,18 @@ retry "initialize retirement" stellar contract invoke \
   --registry-id "$CREDIT_REGISTRY_ID"
 
 log "Initializing marketplace..."
+# The marketplace requires registry_id (#692) and token_id (#691) at init.
+# token_id is the Stellar Asset Contract address for the allowed payment token.
+NATIVE_SAC="CDLZFC3SYJYDZT7K67VZ77HP6FOKNQG3CEGLH37D6JRLO7QZFIZNLKM2"
 retry "initialize marketplace" stellar contract invoke \
   --id "$MARKETPLACE_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
   -- initialize \
   --admin "$ADMIN_ADDRESS" \
-  --min-price-per-tonne 0
+  --min-price-per-tonne 0 \
+  --registry-id "$CREDIT_REGISTRY_ID" \
+  --token-id "$NATIVE_SAC"
 
 log "Initializing mrv_oracle..."
 retry "initialize mrv_oracle" stellar contract invoke \
