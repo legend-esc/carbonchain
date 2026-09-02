@@ -119,7 +119,12 @@ retry "initialize retirement" stellar contract invoke \
 log "Initializing marketplace..."
 # The marketplace requires registry_id (#692) and token_id (#691) at init.
 # token_id is the Stellar Asset Contract address for the allowed payment token.
-NATIVE_SAC="CDLZFC3SYJYDZT7K67VZ77HP6FOKNQG3CEGLH37D6JRLO7QZFIZNLKM2"
+# Deploy the native XLM Stellar Asset Contract so the marketplace can price in XLM.
+NATIVE_SAC=$(retry "deploy native XLM SAC" stellar contract asset deploy \
+  --asset native \
+  --source "$ADMIN_SECRET_KEY" \
+  --network testnet)
+log "  native_xlm_sac: $NATIVE_SAC"
 retry "initialize marketplace" stellar contract invoke \
   --id "$MARKETPLACE_ID" \
   --source "$ADMIN_SECRET_KEY" \
