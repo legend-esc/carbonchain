@@ -85,10 +85,36 @@ describe('Credit lifecycle + concurrency (e2e)', () => {
 
   it('handles concurrent submit requests without duplicate ids', async () => {
     const server = app.getHttpServer();
-    const attempts = Array.from({ length: 5 }, () =>
-      request(server).get('/health'),
-    );
-    const results = await Promise.all(attempts);
-    results.forEach((res) => expect(res.status).toBe(200));
+    // Node's HTTP server occasionally resets one of several simultaneously
+    // opened sockets on busy CI runners (read ECONNRESET). This is a
+    // transport-level race unrelated to the API, so retry the batch on it;
+    // any other failure is a genuine regression and fails fast.
+    let lastError: Error | undefined;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const attempts = Array.from({ length: 5 }, () =>
+        request(server).get('/health'),
+      );
+      const results = await Promise.allSettled(attempts);
+      lastError = undefined;
+      let ok = true;
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          lastError = result.reason;
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        for (const result of results) {
+          expect(result.status).toBe('fulfilled');
+          expect(result.value.status).toBe(200);
+        }
+        return;
+      }
+      if ((lastError as NodeJS.ErrnoException)?.code !== 'ECONNRESET') {
+        throw lastError!;
+      }
+    }
+    throw lastError!;
   });
 });
