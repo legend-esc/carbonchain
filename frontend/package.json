@@ -30,7 +30,7 @@
     "@angular/compiler": "^21.2.22",
     "@angular/core": "^21.2.22",
     "@angular/forms": "^21.2.22",
-    "@angular/localize": "^21.2.22",
+    "@angular/localize": "^22.1.5",
     "@angular/platform-browser": "^21.2.22",
     "@angular/router": "^21.2.22",
     "@angular/service-worker": "^21.2.22",
