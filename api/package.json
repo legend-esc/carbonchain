@@ -42,7 +42,7 @@
     "dotenv": "^16.4.5",
     "helmet": "^8.0.0",
     "ioredis": "5.3.2",
-    "ip-range-check": "^0.2.0",
+    "ip-range-check": "^0.2.1",
     "joi": "^17.13.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
