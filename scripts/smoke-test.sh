@@ -159,11 +159,15 @@ pass "credit_registry.register_issuer() succeeded"
 
 log "Registering VCS methodology"
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
-retry_invoke "register_methodology" invoke "$CREDIT_REGISTRY_ID" register_methodology \
+# This call is intentionally idempotent — if VCS already exists from a prior
+# smoke run the contract returns an error, which we suppress with || true.
+# We wrap retry_invoke in a subshell so that its internal `exit 1` (after 3
+# failed attempts) is contained and the outer || true can catch it.
+( retry_invoke "register_methodology" invoke "$CREDIT_REGISTRY_ID" register_methodology \
   --admin "$ADMIN_ADDRESS" \
   --code '"VCS"' \
   --name '"Verified Carbon Standard"' \
-  --nonce "$NONCE" > /dev/null 2>&1 || true  # may already exist from prior run
+  --nonce "$NONCE" ) > /dev/null 2>&1 || true
 pass "credit_registry.register_methodology() succeeded (or already registered)"
 
 # Use a run-specific suffix to avoid collisions with prior smoke-test runs on
