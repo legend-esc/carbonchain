@@ -35,7 +35,7 @@
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/typeorm": "^11.0.0",
     "@stellar/stellar-sdk": "^15.1.0",
-    "axios": "^1.7.0",
+    "axios": "^1.20.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "compression": "1.7.5",
