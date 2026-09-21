@@ -18,8 +18,11 @@ export class TokenRevocationService {
       this.logger.warn('REDIS_URL not set — token revocation disabled');
       return null;
     }
+    // #975 — Redis requires AUTH; honour REDIS_PASSWORD when it is not already
+    // embedded in REDIS_URL.
+    const password = this.config.get<string>('REDIS_PASSWORD') || undefined;
     try {
-      this.client = new Redis(url);
+      this.client = new Redis(url, { password });
       await this.client.ping();
       return this.client;
     } catch (err) {

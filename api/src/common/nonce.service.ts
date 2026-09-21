@@ -53,8 +53,12 @@ export class NonceService {
       return;
     }
 
+    // #975 — Redis requires AUTH; honour REDIS_PASSWORD when it is not already
+    // embedded in REDIS_URL.
+    const password = this.config.get<string>('REDIS_PASSWORD') || undefined;
+
     try {
-      this.client = new Redis(url);
+      this.client = new Redis(url, { password });
       this.client.on('error', (err: Error) =>
         this.logger.error(`NonceService Redis error: ${err.message}`),
       );

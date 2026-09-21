@@ -80,16 +80,30 @@ services:
       start_period: 30s
 
   # ── Redis ──────────────────────────────────────────────────────────────────
+  # #975 — persistence + auth. The mounted config enables AOF
+  # (appendonly yes, appendfsync everysec) and RDB snapshots, and points Redis
+  # at an ACL file generated from REDIS_PASSWORD at container start. Because
+  # idempotency records, revoked-token entries, nonce reservations and the
+  # webhook snapshot all live here, losing the volume would let a restarted
+  # Redis replay already-committed operations and forget revocations.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/redis-entrypoint.sh"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-carbonchain_dev_password}
     volumes:
       - redis_data:/data
+      - ./scripts/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./scripts/redis/redis-entrypoint.sh:/usr/local/etc/redis/redis-entrypoint.sh:ro
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -99,12 +113,29 @@ services:
   redis-replica-1:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --replicaof redis 6379 --loglevel warning
+    command: >
+      redis-server
+      --replicaof redis 6379
+      --masterauth "${REDIS_PASSWORD:-carbonchain_dev_password}"
+      --requirepass "${REDIS_PASSWORD:-carbonchain_dev_password}"
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1
+      --dir /data
+      --loglevel warning
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-carbonchain_dev_password}
+    volumes:
+      - redis_replica_1_data:/data
     depends_on:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -114,12 +145,29 @@ services:
   redis-replica-2:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --replicaof redis 6379 --loglevel warning
+    command: >
+      redis-server
+      --replicaof redis 6379
+      --masterauth "${REDIS_PASSWORD:-carbonchain_dev_password}"
+      --requirepass "${REDIS_PASSWORD:-carbonchain_dev_password}"
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1
+      --dir /data
+      --loglevel warning
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-carbonchain_dev_password}
+    volumes:
+      - redis_replica_2_data:/data
     depends_on:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -134,6 +182,7 @@ services:
     command: >
       sh -c "
         echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel auth-pass mymaster ${REDIS_PASSWORD:-carbonchain_dev_password}' >> /tmp/sentinel.conf &&
         echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
         echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
         echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
@@ -162,6 +211,7 @@ services:
     command: >
       sh -c "
         echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel auth-pass mymaster ${REDIS_PASSWORD:-carbonchain_dev_password}' >> /tmp/sentinel.conf &&
         echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
         echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
         echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
@@ -190,6 +240,7 @@ services:
     command: >
       sh -c "
         echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel auth-pass mymaster ${REDIS_PASSWORD:-carbonchain_dev_password}' >> /tmp/sentinel.conf &&
         echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
         echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
         echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
@@ -223,7 +274,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/carbonchain
       # #559 — route reads from @UseReplicaForRead() endpoints here.
       DATABASE_REPLICA_URLS: postgresql://postgres:postgres@postgres-replica:5432/carbonchain
-      REDIS_URL: redis://redis:6379
+      # #975 — Redis requires AUTH; the password is shared with the `redis`
+      # service and its replicas via REDIS_PASSWORD.
+      REDIS_URL: redis://:${REDIS_PASSWORD:-carbonchain_dev_password}@redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-carbonchain_dev_password}
       REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       REDIS_SENTINEL_NAME: mymaster
       PORT: 3000
@@ -271,3 +325,5 @@ volumes:
   postgres_data:
   postgres_replica_data:
   redis_data:
+  redis_replica_1_data:
+  redis_replica_2_data:

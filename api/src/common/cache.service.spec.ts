@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
 import { CacheService } from './cache.service';
+
+const RedisMock = Redis as unknown as jest.Mock;
 
 // ---------------------------------------------------------------------------
 // Mock Redis client
@@ -280,6 +283,67 @@ describe('CacheService', () => {
     await service.invalidateTag('credits:list');
     expect(mockRedisClient.del).toHaveBeenCalledWith('cache:tag:credits:list');
     expect(mockRedisClient.del).not.toHaveBeenCalledWith([]);
+  });
+
+  // ── AUTH password plumbing (#975) ────────────────────────────────────────
+
+  it('passes REDIS_PASSWORD to the Sentinel client (#975)', async () => {
+    RedisMock.mockClear();
+    const module = await Test.createTestingModule({
+      providers: [
+        CacheService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, def?: unknown) => {
+              if (key === 'REDIS_SENTINEL_HOSTS')
+                return 'redis-sentinel-1:26379';
+              if (key === 'REDIS_SENTINEL_NAME') return 'mymaster';
+              if (key === 'REDIS_PASSWORD') return 's3cret';
+              if (key === 'CACHE_TTL_SECONDS') return 60;
+              return def;
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const sentinelService = module.get<CacheService>(CacheService);
+    await sentinelService.connect();
+
+    expect(RedisMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'mymaster', password: 's3cret' }),
+    );
+
+    await sentinelService.onModuleDestroy();
+  });
+
+  it('passes REDIS_PASSWORD to the single-node client (#975)', async () => {
+    RedisMock.mockClear();
+    const module = await Test.createTestingModule({
+      providers: [
+        CacheService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, def?: unknown) => {
+              if (key === 'REDIS_URL') return 'redis://localhost:6379';
+              if (key === 'REDIS_PASSWORD') return 's3cret';
+              if (key === 'CACHE_TTL_SECONDS') return 60;
+              return def;
+            }),
+          },
+        },
+      ],
+    }).compile();
+    const singleNodeService = module.get<CacheService>(CacheService);
+    await singleNodeService.connect();
+
+    expect(RedisMock).toHaveBeenCalledWith(
+      'redis://localhost:6379',
+      expect.objectContaining({ password: 's3cret' }),
+    );
+
+    await singleNodeService.onModuleDestroy();
   });
 
   // ── no-op mode (no REDIS_URL) ─────────────────────────────────────────────

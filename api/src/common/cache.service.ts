@@ -52,6 +52,12 @@ export class CacheService implements OnModuleDestroy {
     const sentinelName =
       this.config.get<string>('REDIS_SENTINEL_NAME') ?? 'mymaster';
     const redisUrl = this.config.get<string>('REDIS_URL');
+    // #975 — Redis runs with AUTH enabled. In Sentinel mode the master address
+    // is discovered dynamically, so the password cannot be carried in the URL
+    // alone; pass it to ioredis explicitly. In single-node mode the URL may
+    // already embed the password, but an explicit REDIS_PASSWORD still wins.
+    const redisPassword =
+      this.config.get<string>('REDIS_PASSWORD') || undefined;
 
     if (sentinelHosts) {
       // ── Sentinel mode ────────────────────────────────────────────────────
@@ -72,6 +78,7 @@ export class CacheService implements OnModuleDestroy {
         this.client = new Redis({
           sentinels,
           name: sentinelName,
+          password: redisPassword,
           // Retry indefinitely with exponential backoff (capped at 5s)
           retryStrategy: (times: number) => Math.min(times * 100, 5000),
           enableOfflineQueue: true,
@@ -109,6 +116,7 @@ export class CacheService implements OnModuleDestroy {
       this.logger.log(`Connecting to Redis at ${redisUrl}`);
       try {
         this.client = new Redis(redisUrl, {
+          password: redisPassword,
           retryStrategy: (times: number) => Math.min(times * 100, 5000),
           enableOfflineQueue: true,
           lazyConnect: false,

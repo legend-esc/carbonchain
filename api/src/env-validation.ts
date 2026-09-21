@@ -15,6 +15,9 @@ export const envValidationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   FRONTEND_URL: Joi.string().uri().optional(),
   REDIS_URL: Joi.string().uri().optional(),
+  // #975 — optional Redis AUTH password. Required by the bundled compose
+  // stack; when set it is passed to ioredis in addition to REDIS_URL.
+  REDIS_PASSWORD: Joi.string().optional().allow(''),
   LOG_LEVEL: Joi.string()
     .valid('fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent')
     .default('info'),
