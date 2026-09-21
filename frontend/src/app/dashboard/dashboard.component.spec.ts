@@ -91,10 +91,10 @@ describe('DashboardComponent', () => {
 
   it('renders portfolio summary stats', () => {
     const text = fixture.nativeElement.textContent as string;
-    expect(text).toContain('dashboard.totalCredits');
-    expect(text).toContain('dashboard.active');
-    expect(text).toContain('dashboard.retired');
-    expect(text).toContain('dashboard.totalTonnes');
+    expect(text).toContain('Total Credits');
+    expect(text).toContain('Active');
+    expect(text).toContain('Retired');
+    expect(text).toContain('Total Tonnes');
   });
 
   it('renders credit table rows', () => {
@@ -139,7 +139,7 @@ describe('DashboardComponent', () => {
 
       const el = localFixture.nativeElement.querySelector('.status-msg') as HTMLElement | null;
       expect(el).not.toBeNull();
-      expect(el!.textContent).toContain('dashboard.loading');
+      expect(el!.textContent).toContain('Loading credits');
     });
 
     it('hides loading indicator after data loads (store.isLoading() is false)', async () => {
@@ -152,7 +152,7 @@ describe('DashboardComponent', () => {
 
       const loadingEls = localFixture.nativeElement.querySelectorAll('.status-msg') as NodeList;
       const hasLoadingMsg = Array.from(loadingEls).some((el) =>
-        (el as HTMLElement).textContent?.includes('dashboard.loading'),
+        (el as HTMLElement).textContent?.includes('Loading credits'),
       );
       expect(hasLoadingMsg).toBeFalsy();
     });

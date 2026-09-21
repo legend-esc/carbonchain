@@ -10,6 +10,7 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ToastService } from '../core/services/toast.service';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { TranslationService } from '../core/services/translation.service';
 
 interface FilterState {
   methodology: string;
@@ -34,17 +35,17 @@ interface FilterState {
         </div>
       } @else {
         <!-- Filter controls -->
-        <section class="filters" aria-label="Filter marketplace listings">
+        <section class="filters" [attr.aria-label]="'marketplace.filtersAria' | translate">
           <div class="filters__grid">
             <label class="filter-field" for="filter-methodology">
-              <span>Methodology</span>
+              <span>{{ 'marketplace.filter.methodology' | translate }}</span>
               <select
                 id="filter-methodology"
                 [(ngModel)]="filters.methodology"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by methodology"
+                [attr.aria-label]="'marketplace.filter.methodologyAria' | translate"
               >
-                <option value="">All methodologies</option>
+                <option value="">{{ 'marketplace.filter.allMethodologies' | translate }}</option>
                 @for (m of methodologies; track m) {
                   <option [value]="m">{{ m }}</option>
                 }
@@ -52,51 +53,51 @@ interface FilterState {
             </label>
 
             <label class="filter-field" for="filter-geography">
-              <span>Geography</span>
+              <span>{{ 'marketplace.filter.geography' | translate }}</span>
               <input
                 id="filter-geography"
                 type="text"
-                placeholder="e.g. NG, BR, US"
+                [placeholder]="'marketplace.filter.geographyPlaceholder' | translate"
                 [(ngModel)]="filters.geography"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by geography"
+                [attr.aria-label]="'marketplace.filter.geographyAria' | translate"
               />
             </label>
 
             <label class="filter-field" for="filter-vintage">
-              <span>Vintage Year</span>
+              <span>{{ 'marketplace.filter.vintage' | translate }}</span>
               <input
                 id="filter-vintage"
                 type="number"
-                placeholder="e.g. 2024"
+                [placeholder]="'marketplace.filter.vintagePlaceholder' | translate"
                 [(ngModel)]="filters.vintageYear"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by vintage year"
+                [attr.aria-label]="'marketplace.filter.vintageAria' | translate"
               />
             </label>
 
             <label class="filter-field" for="filter-min-tonnes">
-              <span>Min Tonnes</span>
+              <span>{{ 'marketplace.filter.minTonnes' | translate }}</span>
               <input
                 id="filter-min-tonnes"
                 type="number"
-                placeholder="e.g. 1"
+                [placeholder]="'marketplace.filter.minPlaceholder' | translate"
                 [(ngModel)]="filters.minTonnes"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by minimum tonnes"
+                [attr.aria-label]="'marketplace.filter.minAria' | translate"
                 min="0"
               />
             </label>
 
             <label class="filter-field" for="filter-max-tonnes">
-              <span>Max Tonnes</span>
+              <span>{{ 'marketplace.filter.maxTonnes' | translate }}</span>
               <input
                 id="filter-max-tonnes"
                 type="number"
-                placeholder="e.g. 1000"
+                [placeholder]="'marketplace.filter.maxPlaceholder' | translate"
                 [(ngModel)]="filters.maxTonnes"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by maximum tonnes"
+                [attr.aria-label]="'marketplace.filter.maxAria' | translate"
                 min="0"
               />
             </label>
@@ -106,16 +107,20 @@ interface FilterState {
               type="button"
               (click)="resetFilters()"
               [disabled]="!hasActiveFilters()"
-              aria-label="Reset all filters"
+              [attr.aria-label]="'marketplace.resetAria' | translate"
             >
-              Reset Filters
+              {{ 'marketplace.reset' | translate }}
             </button>
           </div>
         </section>
 
         <!-- Loading skeleton (initial load) -->
         @if (isLoading() && visibleOffers().length === 0) {
-          <div class="skeleton-wrapper" aria-busy="true" aria-label="Loading listings">
+          <div
+            class="skeleton-wrapper"
+            aria-busy="true"
+            [attr.aria-label]="'marketplace.loadingListingsAria' | translate"
+          >
             @for (i of skeletonRows; track i) {
               <div class="skeleton-row">
                 <div class="skeleton-cell wide"></div>
@@ -132,25 +137,25 @@ interface FilterState {
         } @else if (error()) {
           <p class="error" role="alert">{{ error() }}</p>
         } @else if (visibleOffers().length === 0) {
-          <p class="status">No active listings.</p>
+          <p class="status">{{ 'marketplace.noActiveListings' | translate }}</p>
         } @else {
-          <table class="offer-table" aria-label="Marketplace listings">
+          <table class="offer-table" [attr.aria-label]="'marketplace.listingsAria' | translate">
             <thead>
               <tr>
-                <th scope="col">Credit ID</th>
-                <th scope="col">Project</th>
-                <th scope="col">Vintage</th>
-                <th scope="col">Methodology</th>
-                <th scope="col">Tonnes</th>
-                <th scope="col">Price</th>
-                <th scope="col">Asset</th>
-                <th scope="col">Status</th>
+                <th scope="col">{{ 'marketplace.col.creditId' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.project' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.vintage' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.methodology' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.tonnes' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.price' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.asset' | translate }}</th>
+                <th scope="col">{{ 'marketplace.col.status' | translate }}</th>
                 <th scope="col">
-                  Action
+                  {{ 'marketplace.col.action' | translate }}
                   <label class="asset-picker-inline" for="global-asset-picker">
                     <select
                       id="global-asset-picker"
-                      aria-label="Select payment asset"
+                      [attr.aria-label]="'marketplace.selectAsset' | translate"
                       (change)="onAssetChange($event)"
                     >
                       @for (a of paymentAssets; track a.label) {
@@ -182,10 +187,14 @@ interface FilterState {
                       type="button"
                       [disabled]="offer.status !== 'open' || buying() === offer.id"
                       (click)="buy(offer)"
-                      [attr.aria-label]="'Buy credit ' + offer.credit_id"
+                      [attr.aria-label]="'marketplace.buyAria' | translate: { id: offer.credit_id }"
                       [attr.aria-busy]="buying() === offer.id"
                     >
-                      {{ buying() === offer.id ? 'Buying…' : 'Buy' }}
+                      {{
+                        buying() === offer.id
+                          ? ('marketplace.buying' | translate)
+                          : ('marketplace.buy' | translate)
+                      }}
                     </button>
                   </td>
                 </tr>
@@ -196,7 +205,11 @@ interface FilterState {
           <!-- Infinite scroll sentinel + Load More button -->
           <div class="load-more-area" aria-live="polite">
             @if (isLoadingMore()) {
-              <div class="spinner" role="status" aria-label="Loading more listings">
+              <div
+                class="spinner"
+                role="status"
+                [attr.aria-label]="'marketplace.loadingMoreAria' | translate"
+              >
                 <span class="spinner-dot"></span>
                 <span class="spinner-dot"></span>
                 <span class="spinner-dot"></span>
@@ -206,16 +219,13 @@ interface FilterState {
                 class="btn btn-outline load-more-btn"
                 type="button"
                 (click)="loadMore()"
-                aria-label="Load more listings"
+                [attr.aria-label]="'marketplace.loadMoreAria' | translate"
               >
-                Load More ({{ visibleOffers().length }} loaded)
+                {{ 'marketplace.loadMore' | translate: { count: visibleOffers().length } }}
               </button>
             } @else {
               <p class="end-of-list">
-                All {{ visibleOffers().length }} listing{{
-                  visibleOffers().length === 1 ? '' : 's'
-                }}
-                loaded
+                {{ 'marketplace.allLoaded' | translate: { count: visibleOffers().length } }}
               </p>
             }
           </div>
@@ -471,6 +481,7 @@ export class MarketplaceComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
+  private readonly i18n = inject(TranslationService);
 
   readonly PAGE_SIZE = 20;
   readonly skeletonRows = [1, 2, 3, 4, 5];
@@ -539,7 +550,7 @@ export class MarketplaceComponent implements OnInit {
       this.visibleOffers.set(result.data);
       this.nextCursor = result.next_cursor ?? null;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load listings.';
+      const msg = err instanceof Error ? err.message : this.i18n.t('marketplace.loadError');
       this.error.set(msg);
       this.toast.show(msg, 'error');
     } finally {
@@ -562,7 +573,7 @@ export class MarketplaceComponent implements OnInit {
       this.visibleOffers.update((prev) => [...prev, ...result.data]);
       this.nextCursor = result.next_cursor ?? null;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load more listings.';
+      const msg = err instanceof Error ? err.message : this.i18n.t('marketplace.loadMoreError');
       this.toast.show(msg, 'error');
     } finally {
       this.isLoadingMore.set(false);
@@ -594,7 +605,7 @@ export class MarketplaceComponent implements OnInit {
   async buy(offer: Offer): Promise<void> {
     const pk = this.wallet.publicKey();
     if (!pk) {
-      this.toast.show('Please connect your wallet first.', 'error');
+      this.toast.show(this.i18n.t('marketplace.connectFirst'), 'error');
       return;
     }
 
@@ -603,10 +614,10 @@ export class MarketplaceComponent implements OnInit {
       const { networkPassphrase } = await this.wallet.getNetworkDetails();
       // The buy flow: build a transaction XDR client-side then sign via Freighter.
       await firstValueFrom(this.api.buyOffer(offer.id, this.auth.token() ?? ''));
-      this.toast.show('Purchase submitted successfully!', 'success');
+      this.toast.show(this.i18n.t('marketplace.purchaseSuccess'), 'success');
       await this.load();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Purchase failed.';
+      const msg = err instanceof Error ? err.message : this.i18n.t('marketplace.purchaseError');
       this.toast.show(msg, 'error');
     } finally {
       this.buying.set(null);

@@ -1,6 +1,8 @@
 import { Component, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { StellarWalletService } from '../services/stellar-wallet.service';
+import { TranslationService } from '../services/translation.service';
+import { TranslatePipe } from '../pipes/translate.pipe';
 
 /**
  * Issue #539 — shows which Stellar network the connected wallet is on, and
@@ -11,7 +13,7 @@ import { StellarWalletService } from '../services/stellar-wallet.service';
 @Component({
   selector: 'app-network-indicator',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     @if (wallet.network(); as network) {
       <span
@@ -19,16 +21,18 @@ import { StellarWalletService } from '../services/stellar-wallet.service';
         [class.mainnet]="network === 'mainnet'"
         [class.testnet]="network === 'testnet'"
       >
-        {{ network === 'mainnet' ? 'Mainnet' : 'Testnet' }}
+        {{ (network === 'mainnet' ? 'network.mainnet' : 'network.testnet') | translate }}
       </span>
     }
 
     @if (wallet.networkMismatch()) {
       <div class="network-modal-backdrop" role="alertdialog" aria-modal="true">
         <div class="network-modal">
-          <h3>Wrong network</h3>
-          <p>Please switch to {{ expectedNetworkLabel() }} in Freighter.</p>
-          <button class="btn btn-primary" (click)="recheck()">I've switched</button>
+          <h3>{{ 'network.wrongTitle' | translate }}</h3>
+          <p>{{ 'network.switchTo' | translate: { network: expectedNetworkLabel() } }}</p>
+          <button class="btn btn-primary" (click)="recheck()">
+            {{ 'network.switched' | translate }}
+          </button>
         </div>
       </div>
     }
@@ -91,9 +95,10 @@ import { StellarWalletService } from '../services/stellar-wallet.service';
 })
 export class NetworkIndicatorComponent {
   protected readonly wallet = inject(StellarWalletService);
+  private readonly i18n = inject(TranslationService);
 
   protected readonly expectedNetworkLabel = computed(() =>
-    this.wallet.network() === 'mainnet' ? 'Mainnet' : 'Testnet',
+    this.i18n.t(this.wallet.network() === 'mainnet' ? 'network.mainnet' : 'network.testnet'),
   );
 
   async recheck(): Promise<void> {

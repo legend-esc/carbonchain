@@ -45,7 +45,7 @@ import { TranslatePipe } from '../pipes/translate.pipe';
             type="button"
             class="btn-install"
             (click)="install()"
-            aria-label="Install CarbonChain app"
+            [attr.aria-label]="'pwa.install.installAria' | translate"
           >
             {{ 'pwa.install.button' | translate }}
           </button>
@@ -53,7 +53,7 @@ import { TranslatePipe } from '../pipes/translate.pipe';
             type="button"
             class="btn-dismiss"
             (click)="dismiss()"
-            aria-label="Dismiss install prompt"
+            [attr.aria-label]="'pwa.install.dismissAria' | translate"
           >
             {{ 'pwa.install.dismiss' | translate }}
           </button>

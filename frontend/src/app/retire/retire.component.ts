@@ -19,6 +19,7 @@ import { CreditStore } from '../core/store/credit.store';
 import { ToastService } from '../core/services/toast.service';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { TranslationService } from '../core/services/translation.service';
 
 /** Validates that a tonnes value is a positive multiple of 100,000. */
 export function multipleOf100kValidator(): ValidatorFn {
@@ -49,7 +50,7 @@ export type WizardStep = 1 | 2 | 3;
         </div>
       } @else {
         <!-- Step indicator -->
-        <nav class="step-indicator" aria-label="Retirement wizard steps">
+        <nav class="step-indicator" [attr.aria-label]="'retire.stepsAria' | translate">
           @for (s of [1, 2, 3]; track s) {
             <div
               class="step"
@@ -69,15 +70,20 @@ export type WizardStep = 1 | 2 | 3;
         <!-- ── Step 1: Select Credits ── -->
         @if (currentStep() === 1) {
           <section class="step-panel" aria-labelledby="step1-heading">
-            <h2 id="step1-heading">Step 1: Select credits to retire</h2>
+            <h2 id="step1-heading">{{ 'retire.step1.title' | translate }}</h2>
 
             @if (store.isLoading()) {
-              <p class="status">Loading your credits…</p>
+              <p class="status">{{ 'retire.loadingCredits' | translate }}</p>
             } @else if (activeCredits().length === 0) {
-              <p class="status">You have no active credits to retire.</p>
+              <p class="status">{{ 'retire.noActiveCredits' | translate }}</p>
             } @else {
-              <p class="selection-hint">{{ selectedCredits().length }} credit(s) selected</p>
-              <table class="credit-table" aria-label="Your active credits">
+              <p class="selection-hint">
+                {{ 'retire.selectedCount' | translate: { count: selectedCredits().length } }}
+              </p>
+              <table
+                class="credit-table"
+                [attr.aria-label]="'retire.activeCreditsAria' | translate"
+              >
                 <thead>
                   <tr>
                     <th scope="col">
@@ -85,14 +91,14 @@ export type WizardStep = 1 | 2 | 3;
                         type="checkbox"
                         [checked]="allSelected()"
                         (change)="toggleSelectAll()"
-                        aria-label="Select all credits"
+                        [attr.aria-label]="'retire.selectAllAria' | translate"
                       />
                     </th>
-                    <th scope="col">Credit ID</th>
-                    <th scope="col">Project</th>
-                    <th scope="col">Vintage</th>
-                    <th scope="col">Methodology</th>
-                    <th scope="col">Tonnes</th>
+                    <th scope="col">{{ 'retire.col.creditId' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.project' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.vintage' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.methodology' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.tonnes' | translate }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -106,7 +112,7 @@ export type WizardStep = 1 | 2 | 3;
                       (keydown.enter)="toggleCredit(credit)"
                       (keydown.space)="$event.preventDefault(); toggleCredit(credit)"
                       [attr.aria-selected]="isSelected(credit)"
-                      [attr.aria-label]="'Select credit ' + credit.id"
+                      [attr.aria-label]="'retire.selectCreditAria' | translate: { id: credit.id }"
                     >
                       <td>
                         <input
@@ -114,7 +120,9 @@ export type WizardStep = 1 | 2 | 3;
                           [checked]="isSelected(credit)"
                           (change)="toggleCredit(credit)"
                           (click)="$event.stopPropagation()"
-                          [attr.aria-label]="'Select credit ' + credit.id"
+                          [attr.aria-label]="
+                            'retire.selectCreditAria' | translate: { id: credit.id }
+                          "
                         />
                       </td>
                       <td class="mono">{{ credit.id | slice: 0 : 12 }}…</td>
@@ -134,9 +142,9 @@ export type WizardStep = 1 | 2 | 3;
                 type="button"
                 [disabled]="selectedCredits().length === 0"
                 (click)="goToStep(2)"
-                aria-label="Continue to step 2"
+                [attr.aria-label]="'retire.continueStep2Aria' | translate"
               >
-                Next: Enter Reason ({{ selectedCredits().length }}) →
+                {{ 'retire.nextReason' | translate: { count: selectedCredits().length } }}
               </button>
             </div>
           </section>
@@ -145,43 +153,49 @@ export type WizardStep = 1 | 2 | 3;
         <!-- ── Step 2: Enter Retirement Reason ── -->
         @if (currentStep() === 2) {
           <section class="step-panel" aria-labelledby="step2-heading">
-            <h2 id="step2-heading">Step 2: Enter retirement reason</h2>
+            <h2 id="step2-heading">{{ 'retire.step2.title' | translate }}</h2>
 
             <div class="selected-summary">
-              <span>{{ selectedCredits().length }} credit(s) selected</span>
-              <span>· Total: {{ formatTonnes(totalSelectedTonnes()) }}</span>
+              <span>{{
+                'retire.selectedCount' | translate: { count: selectedCredits().length }
+              }}</span>
+              <span>{{
+                'retire.totalSelected' | translate: { tonnes: formatTonnes(totalSelectedTonnes()) }
+              }}</span>
             </div>
 
             <label class="reason-label" for="retirement-reason">
-              Retirement reason
+              {{ 'retire.reasonLabel' | translate }}
               <textarea
                 id="retirement-reason"
                 [formControl]="reasonControl"
-                placeholder="e.g. 2024 Scope 3 carbon offset"
+                [placeholder]="'retire.reasonPlaceholder' | translate"
                 rows="4"
                 aria-describedby="reason-hint reason-error"
                 maxlength="200"
               ></textarea>
               <span id="reason-hint" class="hint">
-                {{ reasonControl.value.length }}/200 characters
+                {{ 'retire.reasonChars' | translate: { count: reasonControl.value.length } }}
               </span>
               @if (reasonControl.invalid && (reasonControl.dirty || reasonControl.touched)) {
                 <span id="reason-error" class="field-error" role="alert">
-                  Reason is required and must be 200 characters or fewer.
+                  {{ 'retire.reasonError' | translate }}
                 </span>
               }
             </label>
 
             <div class="step-actions">
-              <button class="btn btn-outline" type="button" (click)="goToStep(1)">← Back</button>
+              <button class="btn btn-outline" type="button" (click)="goToStep(1)">
+                {{ 'retire.back' | translate }}
+              </button>
               <button
                 class="btn btn-primary"
                 type="button"
                 [disabled]="reasonControl.invalid"
                 (click)="goToStep(3)"
-                aria-label="Continue to step 3"
+                [attr.aria-label]="'retire.continueStep3Aria' | translate"
               >
-                Next: Confirm →
+                {{ 'retire.nextConfirm' | translate }}
               </button>
             </div>
           </section>
@@ -190,7 +204,7 @@ export type WizardStep = 1 | 2 | 3;
         <!-- ── Step 3: Confirm & Sign ── -->
         @if (currentStep() === 3) {
           <section class="step-panel" aria-labelledby="step3-heading">
-            <h2 id="step3-heading">Step 3: Confirm and sign</h2>
+            <h2 id="step3-heading">{{ 'retire.step3.title' | translate }}</h2>
 
             @if (signingError()) {
               <p class="field-error" role="alert">{{ signingError() }}</p>
@@ -198,23 +212,27 @@ export type WizardStep = 1 | 2 | 3;
 
             @if (tonnesControl.invalid) {
               <p class="field-error" role="alert">
-                Total tonnes must be a positive multiple of 100,000.
+                {{ 'retire.tonnesError' | translate }}
               </p>
             }
 
             <div class="confirm-box">
               <dl>
-                <dt>Credits to Retire</dt>
-                <dd>{{ selectedCredits().length }} credit(s)</dd>
-                <dt>Total Tonnes</dt>
+                <dt>{{ 'retire.confirm.credits' | translate }}</dt>
+                <dd>
+                  {{
+                    'retire.confirm.creditsValue' | translate: { count: selectedCredits().length }
+                  }}
+                </dd>
+                <dt>{{ 'retire.confirm.totalTonnes' | translate }}</dt>
                 <dd>{{ formatTonnes(totalSelectedTonnes()) }}</dd>
-                <dt>Retirement Reason</dt>
+                <dt>{{ 'retire.confirm.reason' | translate }}</dt>
                 <dd>{{ reasonControl.value }}</dd>
-                <dt>Your Wallet</dt>
+                <dt>{{ 'retire.confirm.wallet' | translate }}</dt>
                 <dd class="mono">{{ wallet.publicKey() }}</dd>
               </dl>
               <details class="credit-details">
-                <summary>View selected credits</summary>
+                <summary>{{ 'retire.confirm.viewCredits' | translate }}</summary>
                 <ul>
                   @for (c of selectedCredits(); track c.id) {
                     <li class="mono">{{ c.id | slice: 0 : 20 }}… — {{ formatTonnes(c.tonnes) }}</li>
@@ -223,10 +241,7 @@ export type WizardStep = 1 | 2 | 3;
               </details>
             </div>
 
-            <p class="sign-info">
-              Clicking <strong>Sign &amp; Retire</strong> will open your Freighter wallet to
-              authorise this retirement on the Stellar network.
-            </p>
+            <p class="sign-info">{{ 'retire.signInfo' | translate }}</p>
 
             <div class="step-actions">
               <button
@@ -235,7 +250,7 @@ export type WizardStep = 1 | 2 | 3;
                 (click)="goToStep(2)"
                 [disabled]="submitting()"
               >
-                ← Back
+                {{ 'retire.back' | translate }}
               </button>
               <button
                 class="btn btn-danger"
@@ -243,9 +258,9 @@ export type WizardStep = 1 | 2 | 3;
                 [disabled]="submitting() || tonnesControl.invalid"
                 (click)="submit()"
                 [attr.aria-busy]="submitting()"
-                aria-label="Sign and retire credits"
+                [attr.aria-label]="'retire.signAria' | translate"
               >
-                {{ submitting() ? 'Signing…' : 'Sign & Retire' }}
+                {{ (submitting() ? 'retire.signing' : 'retire.signAndRetire') | translate }}
               </button>
             </div>
           </section>
@@ -495,6 +510,7 @@ export class RetireComponent implements OnInit {
   protected readonly store = inject(CreditStore);
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
+  private readonly i18n = inject(TranslationService);
 
   readonly currentStep = signal<WizardStep>(1);
   readonly selectedCredits = signal<CreditMetadata[]>([]);
@@ -568,11 +584,11 @@ export class RetireComponent implements OnInit {
   stepLabel(step: number): string {
     switch (step) {
       case 1:
-        return 'Select Credits';
+        return this.i18n.t('retire.step.select');
       case 2:
-        return 'Reason';
+        return this.i18n.t('retire.step.reason');
       case 3:
-        return 'Confirm';
+        return this.i18n.t('retire.step.confirm');
       default:
         return '';
     }
@@ -587,7 +603,7 @@ export class RetireComponent implements OnInit {
 
     this.tonnesControl.setValue(Number(this.totalSelectedTonnes()));
     if (this.tonnesControl.invalid) {
-      this.signingError.set('Total tonnes must be a positive multiple of 100,000.');
+      this.signingError.set(this.i18n.t('retire.tonnesError'));
       this.currentStep.set(3);
       return;
     }
@@ -629,17 +645,20 @@ export class RetireComponent implements OnInit {
 
         if (failed.length > 0) {
           this.signingError.set(
-            `${failed.length} credit(s) failed: ${failed.map((f) => f.reason).join(', ')}`,
+            this.i18n.t('retire.failedCount', {
+              count: failed.length,
+              reasons: failed.map((f) => f.reason).join(', '),
+            }),
           );
         }
 
         if (succeeded.length > 0) {
-          this.toast.showSuccess(`${succeeded.length} credit(s) retired successfully`);
+          this.toast.showSuccess(this.i18n.t('retire.successCount', { count: succeeded.length }));
           await this.router.navigate(['/certificates', succeeded[0]]);
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Retirement failed.';
+      const msg = err instanceof Error ? err.message : this.i18n.t('retire.error');
       this.signingError.set(msg);
       this.currentStep.set(3);
     } finally {

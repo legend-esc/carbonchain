@@ -1,11 +1,13 @@
-import { Component, input } from '@angular/core';
+import { Component, inject, input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ProvenanceEvent } from '../core/services/api.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-provenance-timeline',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="timeline">
       @for (event of events(); track $index) {
@@ -23,7 +25,9 @@ import { ProvenanceEvent } from '../core/services/api.service';
               <div class="timeline__detail">{{ event.detail }}</div>
             }
             @if (event.tx_hash) {
-              <div class="timeline__tx mono">tx: {{ event.tx_hash | slice: 0 : 24 }}…</div>
+              <div class="timeline__tx mono">
+                {{ 'provenance.tx' | translate: { hash: (event.tx_hash | slice: 0 : 24) + '…' } }}
+              </div>
             }
           </div>
         </div>
@@ -154,29 +158,30 @@ import { ProvenanceEvent } from '../core/services/api.service';
 })
 export class ProvenanceTimelineComponent {
   readonly events = input<ProvenanceEvent[]>([]);
+  private readonly i18n = inject(TranslationService);
 
   formatAction(action: string): string {
     switch (action.toLowerCase()) {
       case 'issued':
-        return 'Issued';
+        return this.i18n.t('provenance.issued');
       case 'split':
-        return 'Split';
+        return this.i18n.t('provenance.split');
       case 'transferred':
-        return 'Transferred';
+        return this.i18n.t('provenance.transferred');
       case 'retired':
-        return 'Retired';
+        return this.i18n.t('provenance.retired');
       case 'approved':
-        return 'Approved';
+        return this.i18n.t('provenance.approved');
       case 'submitted':
-        return 'Submitted';
+        return this.i18n.t('provenance.submitted');
       case 'disputed':
-        return 'Disputed';
+        return this.i18n.t('provenance.disputed');
       case 'resolved':
-        return 'Resolved';
+        return this.i18n.t('provenance.resolved');
       case 'expired':
-        return 'Expired';
+        return this.i18n.t('provenance.expired');
       case 'flagged':
-        return 'Flagged';
+        return this.i18n.t('provenance.flagged');
       default:
         return action;
     }

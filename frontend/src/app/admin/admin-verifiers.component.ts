@@ -5,6 +5,8 @@ import { firstValueFrom } from 'rxjs';
 import { ApiService, VerifierInfo } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { ToastService } from '../core/services/toast.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 const METHODOLOGY_OPTIONS = ['Verra VCS', 'Gold Standard', 'CAR', 'ACR', 'Plan Vivo'];
 const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 'North America'];
@@ -12,35 +14,37 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
 @Component({
   selector: 'app-admin-verifiers',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslatePipe],
   template: `
     <div class="admin-verifiers">
       <div class="toolbar">
         <div>
-          <h1 class="page-title">Verifier Management</h1>
+          <h1 class="page-title">{{ 'verifiers.title' | translate }}</h1>
           @if (stats()) {
             <p class="stats-summary">
-              Active verifiers: <strong>{{ stats()!.activeVerifiers }}</strong>
+              {{ 'verifiers.active' | translate }} <strong>{{ stats()!.activeVerifiers }}</strong>
             </p>
           }
         </div>
-        <button class="btn btn-primary" (click)="openRegister()">+ Register Verifier</button>
+        <button class="btn btn-primary" (click)="openRegister()">
+          {{ 'verifiers.register' | translate }}
+        </button>
       </div>
 
       @if (error()) {
         <p class="alert alert--error" role="alert">{{ error() }}</p>
       } @else if (isLoading()) {
-        <p class="status">Loading verifiers…</p>
+        <p class="status">{{ 'verifiers.loading' | translate }}</p>
       } @else if (verifiers().length === 0) {
-        <p class="status">No verifiers registered.</p>
+        <p class="status">{{ 'verifiers.none' | translate }}</p>
       } @else {
-        <table class="verifiers-table" aria-label="Registered verifiers">
+        <table class="verifiers-table" [attr.aria-label]="'verifiers.tableAria' | translate">
           <thead>
             <tr>
-              <th scope="col">Address</th>
-              <th scope="col">Approvals</th>
-              <th scope="col">Disputes</th>
-              <th scope="col">Actions</th>
+              <th scope="col">{{ 'verifiers.col.address' | translate }}</th>
+              <th scope="col">{{ 'verifiers.col.approvals' | translate }}</th>
+              <th scope="col">{{ 'verifiers.col.disputes' | translate }}</th>
+              <th scope="col">{{ 'verifiers.col.actions' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -51,10 +55,10 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
                 <td>{{ v.reputation?.disputeCount ?? '—' }}</td>
                 <td class="actions-cell">
                   <button class="btn btn-sm btn-secondary" (click)="openConfigure(v.address)">
-                    Configure
+                    {{ 'verifiers.configure' | translate }}
                   </button>
                   <button class="btn btn-sm btn-danger" (click)="openSuspend(v.address)">
-                    Suspend
+                    {{ 'verifiers.suspend' | translate }}
                   </button>
                 </td>
               </tr>
@@ -74,8 +78,10 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           aria-labelledby="register-title"
           (click)="$event.stopPropagation()"
         >
-          <h2 id="register-title">Register New Verifier</h2>
-          <label class="field-label" for="register-address">Stellar Address</label>
+          <h2 id="register-title">{{ 'verifiers.registerTitle' | translate }}</h2>
+          <label class="field-label" for="register-address">
+            {{ 'verifiers.stellarAddress' | translate }}
+          </label>
           <input
             id="register-address"
             class="text-input"
@@ -85,14 +91,16 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           />
           <div class="modal-actions">
             <button class="btn btn-ghost" (click)="closeRegister()" [disabled]="isRegistering()">
-              Cancel
+              {{ 'verifiers.cancel' | translate }}
             </button>
             <button
               class="btn btn-primary"
               (click)="submitRegister()"
               [disabled]="isRegistering() || !registerAddressValue.trim()"
             >
-              {{ isRegistering() ? 'Registering…' : 'Register' }}
+              {{
+                (isRegistering() ? 'verifiers.registering' : 'verifiers.registerBtn') | translate
+              }}
             </button>
           </div>
         </div>
@@ -109,11 +117,11 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           aria-labelledby="configure-title"
           (click)="$event.stopPropagation()"
         >
-          <h2 id="configure-title">Configure Capabilities</h2>
+          <h2 id="configure-title">{{ 'verifiers.configureTitle' | translate }}</h2>
           <p class="modal-subtitle mono">{{ configuringVerifier() }}</p>
 
           <fieldset class="capability-group">
-            <legend>Methodologies</legend>
+            <legend>{{ 'verifiers.methodologies' | translate }}</legend>
             @for (m of methodologyOptions; track m) {
               <label class="checkbox-label">
                 <input
@@ -127,7 +135,7 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           </fieldset>
 
           <fieldset class="capability-group">
-            <legend>Geographies</legend>
+            <legend>{{ 'verifiers.geographies' | translate }}</legend>
             @for (g of geographyOptions; track g) {
               <label class="checkbox-label">
                 <input
@@ -142,14 +150,14 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
 
           <div class="modal-actions">
             <button class="btn btn-ghost" (click)="closeConfigure()" [disabled]="isConfiguring()">
-              Cancel
+              {{ 'verifiers.cancel' | translate }}
             </button>
             <button
               class="btn btn-primary"
               (click)="submitConfigure()"
               [disabled]="isConfiguring()"
             >
-              {{ isConfiguring() ? 'Saving…' : 'Save' }}
+              {{ (isConfiguring() ? 'verifiers.saving' : 'verifiers.save') | translate }}
             </button>
           </div>
         </div>
@@ -166,15 +174,17 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           aria-labelledby="suspend-title"
           (click)="$event.stopPropagation()"
         >
-          <h2 id="suspend-title">Suspend Verifier?</h2>
-          <p>This will suspend verifier:</p>
+          <h2 id="suspend-title">{{ 'verifiers.suspendTitle' | translate }}</h2>
+          <p>{{ 'verifiers.suspendText' | translate }}</p>
           <p class="mono suspend-address">{{ suspendingVerifier() }}</p>
           <div class="modal-actions">
             <button class="btn btn-ghost" (click)="closeSuspend()" [disabled]="isSuspending()">
-              Cancel
+              {{ 'verifiers.cancel' | translate }}
             </button>
             <button class="btn btn-danger" (click)="confirmSuspend()" [disabled]="isSuspending()">
-              {{ isSuspending() ? 'Suspending…' : 'Confirm Suspend' }}
+              {{
+                (isSuspending() ? 'verifiers.suspending' : 'verifiers.confirmSuspend') | translate
+              }}
             </button>
           </div>
         </div>
@@ -367,6 +377,7 @@ export class AdminVerifiersComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly i18n = inject(TranslationService);
 
   protected readonly verifiers = signal<VerifierInfo[]>([]);
   protected readonly isLoading = signal(false);
@@ -411,7 +422,7 @@ export class AdminVerifiersComponent implements OnInit {
       this.verifiers.set(list);
       this.stats.set(adminStats);
     } catch (err) {
-      this.error.set(err instanceof Error ? err.message : 'Failed to load verifiers.');
+      this.error.set(err instanceof Error ? err.message : this.i18n.t('verifiers.error.load'));
     } finally {
       this.isLoading.set(false);
     }
@@ -432,11 +443,14 @@ export class AdminVerifiersComponent implements OnInit {
     this.isRegistering.set(true);
     try {
       await firstValueFrom(this.api.registerVerifier(address, this.auth.token()!));
-      this.toast.show('Verifier registered successfully.', 'success');
+      this.toast.show(this.i18n.t('verifiers.toast.registered'), 'success');
       this.showRegister.set(false);
       await this.load();
     } catch (err) {
-      this.toast.show(err instanceof Error ? err.message : 'Registration failed.', 'error');
+      this.toast.show(
+        err instanceof Error ? err.message : this.i18n.t('verifiers.error.register'),
+        'error',
+      );
     } finally {
       this.isRegistering.set(false);
     }
@@ -478,10 +492,13 @@ export class AdminVerifiersComponent implements OnInit {
           this.auth.token()!,
         ),
       );
-      this.toast.show('Capabilities saved.', 'success');
+      this.toast.show(this.i18n.t('verifiers.toast.saved'), 'success');
       this.configuringVerifier.set(null);
     } catch (err) {
-      this.toast.show(err instanceof Error ? err.message : 'Configuration failed.', 'error');
+      this.toast.show(
+        err instanceof Error ? err.message : this.i18n.t('verifiers.error.config'),
+        'error',
+      );
     } finally {
       this.isConfiguring.set(false);
     }
@@ -501,11 +518,14 @@ export class AdminVerifiersComponent implements OnInit {
     this.isSuspending.set(true);
     try {
       await firstValueFrom(this.api.suspendVerifier(id, this.auth.token()!));
-      this.toast.show('Verifier suspended.', 'success');
+      this.toast.show(this.i18n.t('verifiers.toast.suspended'), 'success');
       this.suspendingVerifier.set(null);
       await this.load();
     } catch (err) {
-      this.toast.show(err instanceof Error ? err.message : 'Suspend failed.', 'error');
+      this.toast.show(
+        err instanceof Error ? err.message : this.i18n.t('verifiers.error.suspend'),
+        'error',
+      );
     } finally {
       this.isSuspending.set(false);
     }

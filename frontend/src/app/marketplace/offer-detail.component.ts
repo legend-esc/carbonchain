@@ -2,53 +2,72 @@ import { Component, input, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Offer } from '@shared';
 import { RouterModule } from '@angular/router';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-offer-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, TranslatePipe],
   template: `
     @if (expired()) {
-      <div class="offer-detail" role="alert" aria-label="Expired offer">
+      <div class="offer-detail" role="alert" [attr.aria-label]="'offer.expiredAria' | translate">
         <div class="offer-detail__header">
-          <h2>Offer Expired</h2>
-          <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+          <h2>{{ 'offer.expiredTitle' | translate }}</h2>
+          <button
+            class="btn btn-ghost"
+            (click)="closed.emit()"
+            [attr.aria-label]="'offer.close' | translate"
+          >
+            ✕
+          </button>
         </div>
 
-        <p class="error-message">This offer has expired</p>
+        <p class="error-message">{{ 'offer.expiredMessage' | translate }}</p>
 
         <div class="offer-detail__actions">
           <a class="btn btn-primary" [routerLink]="['/marketplace']" (click)="closed.emit()">
-            Back to marketplace
+            {{ 'offer.backToMarketplace' | translate }}
           </a>
-          <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+          <button class="btn btn-ghost" (click)="closed.emit()">
+            {{ 'offer.cancel' | translate }}
+          </button>
         </div>
       </div>
     } @else {
-      <div class="offer-detail" role="dialog" aria-label="Offer detail">
+      <div class="offer-detail" role="dialog" [attr.aria-label]="'offer.detailAria' | translate">
         <div class="offer-detail__header">
-          <h2>Offer #{{ offer().id }}</h2>
-          <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+          <h2>{{ 'offer.title' | translate: { id: offer().id } }}</h2>
+          <button
+            class="btn btn-ghost"
+            (click)="closed.emit()"
+            [attr.aria-label]="'offer.close' | translate"
+          >
+            ✕
+          </button>
         </div>
 
         <dl class="detail-list">
-          <dt>Credit ID</dt>
+          <dt>{{ 'offer.col.creditId' | translate }}</dt>
           <dd class="mono">{{ offer().credit_id }}</dd>
-          <dt>Seller</dt>
+          <dt>{{ 'offer.col.seller' | translate }}</dt>
           <dd class="mono">{{ offer().seller }}</dd>
-          <dt>Tonnes Available</dt>
+          <dt>{{ 'offer.col.tonnes' | translate }}</dt>
           <dd>{{ formatTonnes(offer().tonnes_available) }}</dd>
-          <dt>Price</dt>
+          <dt>{{ 'offer.col.price' | translate }}</dt>
           <dd>{{ formatXlm(offer().price_xlm) }}</dd>
-          <dt>Status</dt>
+          <dt>{{ 'offer.col.status' | translate }}</dt>
           <dd>
             <span class="badge badge-open">{{ offer().status }}</span>
           </dd>
         </dl>
 
         <div class="offer-detail__actions">
-          <button class="btn btn-primary" (click)="buy.emit(offer())">Buy Credit</button>
-          <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+          <button class="btn btn-primary" (click)="buy.emit(offer())">
+            {{ 'offer.buy' | translate }}
+          </button>
+          <button class="btn btn-ghost" (click)="closed.emit()">
+            {{ 'offer.cancel' | translate }}
+          </button>
         </div>
       </div>
     }

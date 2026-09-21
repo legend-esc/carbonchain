@@ -2,38 +2,40 @@ import { Component, inject, OnInit, output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Offer } from '@shared';
 import { ApiService } from '../core/services/api.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { firstValueFrom } from 'rxjs';
 import { signal, computed } from '@angular/core';
 
 @Component({
   selector: 'app-marketplace-list',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="listings">
       <div class="listings__toolbar">
-        <h2>Active Listings</h2>
+        <h2>{{ 'marketList.title' | translate }}</h2>
         <button class="btn btn-primary" (click)="load()" [disabled]="isLoading()">
-          {{ isLoading() ? 'Loading…' : 'Refresh' }}
+          {{ (isLoading() ? 'marketList.loading' : 'marketList.refresh') | translate }}
         </button>
       </div>
 
       @if (error()) {
         <p class="error" role="alert">{{ error() }}</p>
       } @else if (isLoading()) {
-        <p class="status">Loading listings…</p>
+        <p class="status">{{ 'marketList.loadingListings' | translate }}</p>
       } @else if (offers().length === 0) {
-        <p class="status">No active listings.</p>
+        <p class="status">{{ 'marketList.noListings' | translate }}</p>
       } @else {
-        <table class="offer-table" aria-label="Active marketplace listings">
+        <table class="offer-table" [attr.aria-label]="'marketList.tableAria' | translate">
           <thead>
             <tr>
-              <th scope="col">ID</th>
-              <th scope="col">Credit</th>
-              <th scope="col">Seller</th>
-              <th scope="col">Tonnes</th>
-              <th scope="col">Price (XLM)</th>
-              <th scope="col">Action</th>
+              <th scope="col">{{ 'marketList.col.id' | translate }}</th>
+              <th scope="col">{{ 'marketList.col.credit' | translate }}</th>
+              <th scope="col">{{ 'marketList.col.seller' | translate }}</th>
+              <th scope="col">{{ 'marketList.col.tonnes' | translate }}</th>
+              <th scope="col">{{ 'marketList.col.price' | translate }}</th>
+              <th scope="col">{{ 'marketList.col.action' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -49,7 +51,7 @@ import { signal, computed } from '@angular/core';
                     class="btn btn-sm btn-primary"
                     (click)="$event.stopPropagation(); offerSelected.emit(offer)"
                   >
-                    View
+                    {{ 'marketList.view' | translate }}
                   </button>
                 </td>
               </tr>
@@ -124,6 +126,7 @@ import { signal, computed } from '@angular/core';
 })
 export class MarketplaceListComponent implements OnInit {
   private readonly api = inject(ApiService);
+  private readonly i18n = inject(TranslationService);
 
   readonly offerSelected = output<Offer>();
 
@@ -142,7 +145,7 @@ export class MarketplaceListComponent implements OnInit {
       const listings = await firstValueFrom(this.api.getListings());
       this.offers.set(listings);
     } catch (err) {
-      this.error.set(err instanceof Error ? err.message : 'Failed to load listings.');
+      this.error.set(err instanceof Error ? err.message : this.i18n.t('marketList.loadError'));
     } finally {
       this.isLoading.set(false);
     }

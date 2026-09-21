@@ -6,22 +6,25 @@ import { CreditMetadata, CreditStatus } from '@shared';
 import { ApiService, ProvenanceEvent } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { ProvenanceTimelineComponent } from './provenance-timeline.component';
 
 @Component({
   selector: 'app-credit-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule, ProvenanceTimelineComponent],
+  imports: [CommonModule, RouterModule, ProvenanceTimelineComponent, TranslatePipe],
   template: `
     <div class="credit-detail">
       @if (loading()) {
-        <p class="status">Loading credit…</p>
+        <p class="status">{{ 'credit.loading' | translate }}</p>
       } @else if (error()) {
         <p class="error">{{ error() }}</p>
       } @else if (credit()) {
         <div class="header">
           <h1>
-            Credit <span class="mono">{{ credit()!.id | slice: 0 : 16 }}…</span>
+            {{ 'credit.heading' | translate }}
+            <span class="mono">{{ credit()!.id | slice: 0 : 16 }}…</span>
           </h1>
           <span class="badge" [class]="'badge-' + credit()!.status.toLowerCase()">{{
             credit()!.status
@@ -29,23 +32,23 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
         </div>
 
         <section class="card">
-          <h2>Metadata</h2>
+          <h2>{{ 'credit.metadata' | translate }}</h2>
           <dl>
-            <dt>Project</dt>
+            <dt>{{ 'credit.col.project' | translate }}</dt>
             <dd>{{ credit()!.project_id }}</dd>
-            <dt>Issuer</dt>
+            <dt>{{ 'credit.col.issuer' | translate }}</dt>
             <dd class="mono">{{ credit()!.issuer }}</dd>
-            <dt>Vintage Year</dt>
+            <dt>{{ 'credit.col.vintage' | translate }}</dt>
             <dd>{{ credit()!.vintage_year }}</dd>
-            <dt>Methodology</dt>
+            <dt>{{ 'credit.col.methodology' | translate }}</dt>
             <dd>{{ credit()!.methodology }}</dd>
-            <dt>Geography</dt>
+            <dt>{{ 'credit.col.geography' | translate }}</dt>
             <dd>{{ credit()!.geography }}</dd>
-            <dt>Tonnes</dt>
+            <dt>{{ 'credit.col.tonnes' | translate }}</dt>
             <dd>{{ formatTonnes(credit()!.tonnes) }}</dd>
-            <dt>Issued At</dt>
+            <dt>{{ 'credit.col.issuedAt' | translate }}</dt>
             <dd>{{ credit()!.issued_at | date: 'medium' }}</dd>
-            <dt>IPFS</dt>
+            <dt>{{ 'credit.col.ipfs' | translate }}</dt>
             <dd>
               <a
                 [href]="'https://ipfs.io/ipfs/' + credit()!.ipfs_hash"
@@ -59,30 +62,30 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
         </section>
 
         <section class="card">
-          <h2>Provenance Chain</h2>
+          <h2>{{ 'credit.provenance' | translate }}</h2>
           @if (provenanceLoading()) {
-            <p class="status">Loading provenance…</p>
+            <p class="status">{{ 'credit.loadingProvenance' | translate }}</p>
           } @else if (provenanceError()) {
             <p class="error">{{ provenanceError() }}</p>
           } @else if (provenance().length > 0) {
             <app-provenance-timeline [events]="provenance()" />
           } @else {
-            <p class="status">No provenance data available.</p>
+            <p class="status">{{ 'credit.noProvenance' | translate }}</p>
           }
         </section>
 
         <section class="card">
-          <h2>MRV History</h2>
+          <h2>{{ 'credit.mrvHistory' | translate }}</h2>
           @if (mrvHistory().length === 0) {
-            <p class="status">No MRV data points recorded.</p>
+            <p class="status">{{ 'credit.noMrv' | translate }}</p>
           } @else {
             <table class="mrv-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Tonnes Sequestered</th>
-                  <th>Oracle</th>
-                  <th>Anomaly</th>
+                  <th>{{ 'credit.col.date' | translate }}</th>
+                  <th>{{ 'credit.col.tonnesSequestered' | translate }}</th>
+                  <th>{{ 'credit.col.oracle' | translate }}</th>
+                  <th>{{ 'credit.col.anomaly' | translate }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -106,14 +109,14 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
               (click)="retire()"
               [disabled]="credit()!.status !== 'Active'"
             >
-              Retire Credit
+              {{ 'credit.retire' | translate }}
             </button>
             <button
               class="btn btn-primary"
               (click)="sell()"
               [disabled]="credit()!.status !== 'Active'"
             >
-              Sell Credit
+              {{ 'credit.sell' | translate }}
             </button>
           </div>
         }
@@ -238,6 +241,7 @@ export class CreditDetailComponent implements OnInit {
   private readonly api = inject(ApiService);
   protected readonly auth = inject(AuthService);
   protected readonly wallet = inject(StellarWalletService);
+  private readonly i18n = inject(TranslationService);
 
   readonly credit = signal<CreditMetadata | null>(null);
   readonly loading = signal(true);
@@ -259,7 +263,7 @@ export class CreditDetailComponent implements OnInit {
       const credit = await firstValueFrom(this.api.getCredit(id));
       this.credit.set(credit);
     } catch (err) {
-      this.error.set(err instanceof Error ? err.message : 'Failed to load credit.');
+      this.error.set(err instanceof Error ? err.message : this.i18n.t('credit.loadError'));
     } finally {
       this.loading.set(false);
     }
@@ -273,7 +277,9 @@ export class CreditDetailComponent implements OnInit {
       const events = await firstValueFrom(this.api.getCreditProvenance(id));
       this.provenance.set(events);
     } catch (err) {
-      this.provenanceError.set(err instanceof Error ? err.message : 'Failed to load provenance.');
+      this.provenanceError.set(
+        err instanceof Error ? err.message : this.i18n.t('credit.provenanceError'),
+      );
     } finally {
       this.provenanceLoading.set(false);
     }

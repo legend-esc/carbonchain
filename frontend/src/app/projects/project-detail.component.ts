@@ -4,36 +4,38 @@ import { ActivatedRoute, RouterModule } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ProjectProfile, CreditMetadata } from '@shared';
 import { ApiService } from '../core/services/api.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-project-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, TranslatePipe],
   template: `
     <div class="project-detail">
       @if (loading()) {
-        <p class="status">Loading project…</p>
+        <p class="status">{{ 'project.loading' | translate }}</p>
       } @else if (error()) {
         <p class="error">{{ error() }}</p>
       } @else if (project()) {
         <h1>{{ project()!.name }}</h1>
 
         <section class="card">
-          <h2>Project Metadata</h2>
+          <h2>{{ 'project.metadata' | translate }}</h2>
           <dl>
-            <dt>Developer</dt>
+            <dt>{{ 'project.developer' | translate }}</dt>
             <dd>{{ project()!.developer }}</dd>
-            <dt>Location</dt>
+            <dt>{{ 'project.location' | translate }}</dt>
             <dd>{{ project()!.location }}</dd>
-            <dt>Methodology</dt>
+            <dt>{{ 'project.methodology' | translate }}</dt>
             <dd>{{ project()!.methodology }}</dd>
-            <dt>Description</dt>
+            <dt>{{ 'project.description' | translate }}</dt>
             <dd>{{ project()!.description }}</dd>
           </dl>
         </section>
 
         <section class="card">
-          <h2>IPFS Documents</h2>
+          <h2>{{ 'project.ipfsDocuments' | translate }}</h2>
           @if (project()!.documents_cid) {
             <a
               class="ipfs-link"
@@ -41,27 +43,30 @@ import { ApiService } from '../core/services/api.service';
               target="_blank"
               rel="noopener"
             >
-              📄 View Project Documents ({{ project()!.documents_cid | slice: 0 : 20 }}…)
+              {{
+                'project.viewDocuments'
+                  | translate: { id: (project()!.documents_cid | slice: 0 : 20) }
+              }}
             </a>
           } @else {
-            <p class="status">No documents uploaded.</p>
+            <p class="status">{{ 'project.noDocuments' | translate }}</p>
           }
         </section>
 
         <section class="card">
-          <h2>Linked Credits</h2>
+          <h2>{{ 'project.linkedCredits' | translate }}</h2>
           @if (creditsLoading()) {
-            <p class="status">Loading credits…</p>
+            <p class="status">{{ 'project.loadingCredits' | translate }}</p>
           } @else if (credits().length === 0) {
-            <p class="status">No credits issued for this project.</p>
+            <p class="status">{{ 'project.noCredits' | translate }}</p>
           } @else {
             <table class="credits-table">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Vintage</th>
-                  <th>Tonnes</th>
-                  <th>Status</th>
+                  <th>{{ 'project.col.id' | translate }}</th>
+                  <th>{{ 'project.col.vintage' | translate }}</th>
+                  <th>{{ 'project.col.tonnes' | translate }}</th>
+                  <th>{{ 'project.col.status' | translate }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,6 +193,7 @@ import { ApiService } from '../core/services/api.service';
 export class ProjectDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly api = inject(ApiService);
+  private readonly i18n = inject(TranslationService);
 
   readonly project = signal<ProjectProfile | null>(null);
   readonly credits = signal<CreditMetadata[]>([]);
@@ -202,7 +208,7 @@ export class ProjectDetailComponent implements OnInit {
       this.project.set(project);
       await this.loadCredits(id);
     } catch (err) {
-      this.error.set(err instanceof Error ? err.message : 'Failed to load project.');
+      this.error.set(err instanceof Error ? err.message : this.i18n.t('project.loadError'));
     } finally {
       this.loading.set(false);
     }

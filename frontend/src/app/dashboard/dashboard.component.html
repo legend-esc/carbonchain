@@ -13,7 +13,7 @@
           class="btn btn--primary"
           (click)="connectWallet()"
           [disabled]="wallet.state() === 'connecting'"
-          aria-label="Connect Freighter wallet"
+          [attr.aria-label]="'dashboard.connectAria' | translate"
         >
           {{
             wallet.state() === 'connecting'
@@ -32,11 +32,17 @@
 
   <!-- Stats bar -->
   @if (wallet.isConnected()) {
-    <section class="stats" role="region" aria-label="Portfolio summary">
+    <section
+      class="stats"
+      role="region"
+      [attr.aria-label]="'dashboard.portfolioSummary' | translate"
+    >
       <div
         class="stat-card"
         tabindex="0"
-        [attr.aria-label]="'Total credits: ' + store.credits().length"
+        [attr.aria-label]="
+          'dashboard.totalCreditsAria' | translate: { count: store.credits().length }
+        "
       >
         <span class="stat-card__label">{{ 'dashboard.totalCredits' | translate }}</span>
         <span class="stat-card__value">{{ store.credits().length }}</span>
@@ -44,7 +50,9 @@
       <div
         class="stat-card"
         tabindex="0"
-        [attr.aria-label]="'Active credits: ' + store.activeCredits().length"
+        [attr.aria-label]="
+          'dashboard.activeAria' | translate: { count: store.activeCredits().length }
+        "
       >
         <span class="stat-card__label">{{ 'dashboard.active' | translate }}</span>
         <span class="stat-card__value">{{ store.activeCredits().length }}</span>
@@ -52,7 +60,9 @@
       <div
         class="stat-card"
         tabindex="0"
-        [attr.aria-label]="'Retired credits: ' + store.retiredCredits().length"
+        [attr.aria-label]="
+          'dashboard.retiredAria' | translate: { count: store.retiredCredits().length }
+        "
       >
         <span class="stat-card__label">{{ 'dashboard.retired' | translate }}</span>
         <span class="stat-card__value">{{ store.retiredCredits().length }}</span>
@@ -60,7 +70,9 @@
       <div
         class="stat-card"
         tabindex="0"
-        [attr.aria-label]="'Total tonnes: ' + store.totalTonnes().toLocaleString()"
+        [attr.aria-label]="
+          'dashboard.totalTonnesAria' | translate: { tonnes: store.totalTonnes().toLocaleString() }
+        "
       >
         <span class="stat-card__label">{{ 'dashboard.totalTonnes' | translate }}</span>
         <span class="stat-card__value">{{ store.totalTonnes().toLocaleString() }}</span>
@@ -76,7 +88,7 @@
       <p class="status-msg">{{ 'dashboard.noCredits' | translate }}</p>
     } @else {
       <!-- Credit table -->
-      <section class="credits-section" aria-label="Credit list">
+      <section class="credits-section" [attr.aria-label]="'dashboard.creditList' | translate">
         <table class="credits-table">
           <thead>
             <tr>
@@ -116,7 +128,7 @@
 
       <!-- Detail panel for selected credit -->
       @if (store.selected()) {
-        <aside class="detail-panel" aria-label="Credit detail">
+        <aside class="detail-panel" [attr.aria-label]="'dashboard.creditDetail' | translate">
           <h2 class="detail-panel__title">{{ 'dashboard.creditDetail' | translate }}</h2>
           <dl class="detail-list">
             <dt>{{ 'dashboard.col.id' | translate }}</dt>
@@ -150,26 +162,31 @@
     }
 
     <!-- Retirement History -->
-    <section class="retirement-section" aria-label="Retirement history">
-      <h2 class="section-title">Retirement History</h2>
+    <section
+      class="retirement-section"
+      [attr.aria-label]="'dashboard.retirementHistory' | translate"
+    >
+      <h2 class="section-title">{{ 'dashboard.retirementHistory' | translate }}</h2>
 
       @if (retirementsLoading()) {
-        <p class="status-msg" aria-live="polite">Loading retirements…</p>
+        <p class="status-msg" aria-live="polite">
+          {{ 'dashboard.retirementsLoading' | translate }}
+        </p>
       } @else if (retirementsError()) {
         <p class="alert alert--error" role="alert">{{ retirementsError() }}</p>
       } @else if (retirements().length === 0) {
-        <p class="status-msg">No retirements yet.</p>
+        <p class="status-msg">{{ 'dashboard.noRetirements' | translate }}</p>
       } @else {
-        <table class="credits-table" aria-label="Retirement records">
+        <table class="credits-table" [attr.aria-label]="'dashboard.retirementRecords' | translate">
           <thead>
             <tr>
-              <th scope="col">ID</th>
-              <th scope="col">Credit</th>
-              <th scope="col">Tonnes Retired</th>
-              <th scope="col">Reason</th>
-              <th scope="col">Date</th>
-              <th scope="col">Tx Hash</th>
-              <th scope="col">Certificate</th>
+              <th scope="col">{{ 'dashboard.col.id' | translate }}</th>
+              <th scope="col">{{ 'dashboard.ret.col.credit' | translate }}</th>
+              <th scope="col">{{ 'dashboard.ret.col.tonnes' | translate }}</th>
+              <th scope="col">{{ 'dashboard.ret.col.reason' | translate }}</th>
+              <th scope="col">{{ 'dashboard.ret.col.date' | translate }}</th>
+              <th scope="col">{{ 'dashboard.ret.col.tx' | translate }}</th>
+              <th scope="col">{{ 'dashboard.ret.col.certificate' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -185,9 +202,11 @@
                   <a
                     class="btn btn--ghost btn--sm"
                     [routerLink]="['/certificates', r.id]"
-                    aria-label="View retirement certificate for {{ r.id | slice: 0 : 8 }}"
+                    [attr.aria-label]="
+                      'dashboard.viewCertificateAria' | translate: { id: (r.id | slice: 0 : 8) }
+                    "
                   >
-                    View
+                    {{ 'dashboard.view' | translate }}
                   </a>
                 </td>
               </tr>

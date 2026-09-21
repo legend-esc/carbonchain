@@ -1,5 +1,5 @@
 @if (!onlineStatus.online()) {
-  <div class="offline-banner" role="status">You're offline — showing cached data.</div>
+  <div class="offline-banner" role="status">{{ 'app.offlineBanner' | translate }}</div>
 }
 
 <header class="app-header">
@@ -8,14 +8,14 @@
     <a routerLink="/dashboard">{{ 'nav.dashboard' | translate }}</a>
     <a routerLink="/marketplace">{{ 'nav.marketplace' | translate }}</a>
     <a routerLink="/retire">{{ 'nav.retire' | translate }}</a>
-    <a routerLink="/admin">Admin</a>
+    <a routerLink="/admin">{{ 'app.nav.admin' | translate }}</a>
   </nav>
   <app-network-indicator />
   <app-locale-switcher />
   <button
     class="theme-toggle"
     (click)="theme.toggle()"
-    [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'"
+    [attr.aria-label]="(theme.isDark() ? 'app.theme.toLight' : 'app.theme.toDark') | translate"
   >
     {{ theme.icon() }}
   </button>

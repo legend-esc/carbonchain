@@ -5,10 +5,12 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
+    "prebuild": "npm run i18n:check",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "test:ci": "ng test --watch=false --coverage",
     "lint": "ng lint",
+    "i18n:check": "node scripts/check-i18n.mjs",
     "format:check": "prettier --check \"src/**/*.ts\" \"src/**/*.html\" \"src/*.html\""
   },
   "prettier": {

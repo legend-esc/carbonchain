@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
@@ -7,14 +7,16 @@ import { ApiService } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { ToastService } from '../core/services/toast.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-admin',
   standalone: true,
-  imports: [CommonModule, FormsModule, AdminVerifiersComponent],
+  imports: [CommonModule, FormsModule, AdminVerifiersComponent, TranslatePipe],
   template: `
     <main class="admin-panel">
-      <h1 class="panel-title">Admin Panel</h1>
+      <h1 class="panel-title">{{ 'admin.title' | translate }}</h1>
 
       <!-- ── Verifier Management ──────────────────────────────────────────── -->
       <section class="panel-section">
@@ -23,11 +25,8 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
       <!-- ── Methodology Registration ────────────────────────────────────── -->
       <section class="panel-section">
-        <h2 class="section-title">Methodology Registration</h2>
-        <p class="section-description">
-          Register a new carbon credit methodology. Credits submitted with this methodology name
-          will pass validation on the contract.
-        </p>
+        <h2 class="section-title">{{ 'admin.methodology.title' | translate }}</h2>
+        <p class="section-description">{{ 'admin.methodology.description' | translate }}</p>
 
         @if (methodologyError()) {
           <p class="alert alert--error" role="alert">{{ methodologyError() }}</p>
@@ -35,23 +34,27 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         <div class="form-row">
           <div class="form-field">
-            <label class="field-label" for="method-name">Methodology Name</label>
+            <label class="field-label" for="method-name">
+              {{ 'admin.methodology.name' | translate }}
+            </label>
             <input
               id="method-name"
               class="text-input"
               type="text"
-              placeholder="e.g. VCS, Gold Standard, CDM"
+              [placeholder]="'admin.methodology.namePlaceholder' | translate"
               [(ngModel)]="methodologyName"
               [disabled]="isRegisteringMethodology()"
             />
           </div>
           <div class="form-field form-field--grow">
-            <label class="field-label" for="method-desc">Description</label>
+            <label class="field-label" for="method-desc">
+              {{ 'admin.methodology.desc' | translate }}
+            </label>
             <input
               id="method-desc"
               class="text-input"
               type="text"
-              placeholder="Short description of the methodology"
+              [placeholder]="'admin.methodology.descPlaceholder' | translate"
               [(ngModel)]="methodologyDescription"
               [disabled]="isRegisteringMethodology()"
             />
@@ -65,12 +68,12 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
               !methodologyDescription.trim()
             "
           >
-            {{ isRegisteringMethodology() ? 'Registering…' : 'Register' }}
+            {{ (isRegisteringMethodology() ? 'admin.registering' : 'admin.register') | translate }}
           </button>
         </div>
 
         @if (registeredMethodologies().length > 0) {
-          <ul class="method-list" aria-label="Registered methodologies">
+          <ul class="method-list" [attr.aria-label]="'admin.methodology.listAria' | translate">
             @for (m of registeredMethodologies(); track m.name) {
               <li class="method-item">
                 <strong>{{ m.name }}</strong
@@ -83,10 +86,9 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
       <!-- ── Required Approvals ───────────────────────────────────────────── -->
       <section class="panel-section">
-        <h2 class="section-title">Required Approvals</h2>
+        <h2 class="section-title">{{ 'admin.approvals.title' | translate }}</h2>
         <p class="section-description">
-          Set the minimum number of verifier approvals needed to mint a credit. Valid range: 1 –
-          {{ maxApprovals() }}.
+          {{ 'admin.approvals.description' | translate: { max: maxApprovals() } }}
         </p>
 
         @if (approvalsError()) {
@@ -95,7 +97,7 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         <div class="slider-row">
           <label class="field-label" for="approvals-slider">
-            Required approvals: <strong>{{ requiredApprovals() }}</strong>
+            {{ 'admin.approvals.label' | translate: { count: requiredApprovals() } }}
           </label>
           <input
             id="approvals-slider"
@@ -106,33 +108,36 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
             [value]="requiredApprovals()"
             (input)="onSliderChange($event)"
             [disabled]="isSavingApprovals()"
-            aria-label="Required approvals slider"
+            [attr.aria-label]="'admin.approvals.sliderAria' | translate"
           />
           <button
             class="btn btn-primary"
             (click)="saveRequiredApprovals()"
             [disabled]="isSavingApprovals()"
           >
-            {{ isSavingApprovals() ? 'Saving…' : 'Save' }}
+            {{ (isSavingApprovals() ? 'admin.saving' : 'admin.save') | translate }}
           </button>
         </div>
       </section>
 
       <!-- ── Staking Management ──────────────────────────────────────────── -->
       <section class="panel-section">
-        <h2 class="section-title">Verifier Staking</h2>
-        <p class="section-description">
-          Configure the minimum stake required to register a verifier, look up locked balances, and
-          slash verifiers who approved fraudulent credits.
-        </p>
+        <h2 class="section-title">{{ 'admin.staking.title' | translate }}</h2>
+        <p class="section-description">{{ 'admin.staking.description' | translate }}</p>
 
         <!-- Current minimum stake display -->
         <div class="stake-info">
-          <span class="field-label">Current minimum stake:</span>
+          <span class="field-label">{{ 'admin.staking.current' | translate }}</span>
           @if (minStakeLoading()) {
-            <span class="status-loading" aria-live="polite">Loading…</span>
+            <span class="status-loading" aria-live="polite">
+              {{ 'admin.loading' | translate }}
+            </span>
           } @else {
-            <strong aria-label="Minimum stake: {{ formatStroops(minStake()) }} XLM">
+            <strong
+              [attr.aria-label]="
+                'admin.staking.minAria' | translate: { value: formatStroops(minStake()) }
+              "
+            >
               {{ formatStroops(minStake()) }} XLM
             </strong>
             <span class="stake-sub">({{ minStake() }} stroops)</span>
@@ -146,17 +151,19 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         <div class="form-row">
           <div class="form-field">
-            <label class="field-label" for="min-stake-input">New minimum stake (XLM)</label>
+            <label class="field-label" for="min-stake-input">
+              {{ 'admin.staking.newLabel' | translate }}
+            </label>
             <input
               id="min-stake-input"
               class="text-input"
               type="number"
               min="0"
               step="100"
-              placeholder="e.g. 1000"
+              [placeholder]="'admin.staking.newPlaceholder' | translate"
               [(ngModel)]="newMinStakeXlm"
               [disabled]="isSavingMinStake()"
-              aria-label="New minimum stake in XLM"
+              [attr.aria-label]="'admin.staking.newAria' | translate"
             />
           </div>
           <button
@@ -164,14 +171,16 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
             (click)="saveMinStake()"
             [disabled]="isSavingMinStake() || newMinStakeXlm === null"
           >
-            {{ isSavingMinStake() ? 'Saving…' : 'Update Min Stake' }}
+            {{ (isSavingMinStake() ? 'admin.saving' : 'admin.staking.update') | translate }}
           </button>
         </div>
 
         <!-- Check verifier stake balance -->
         <div class="form-row" style="margin-top: 1.5rem;">
           <div class="form-field form-field--grow">
-            <label class="field-label" for="stake-check-address">Verifier address</label>
+            <label class="field-label" for="stake-check-address">
+              {{ 'admin.staking.checkLabel' | translate }}
+            </label>
             <input
               id="stake-check-address"
               class="text-input"
@@ -179,7 +188,7 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
               placeholder="G…"
               [(ngModel)]="stakeCheckAddress"
               [disabled]="isCheckingStake()"
-              aria-label="Verifier address to check stake balance"
+              [attr.aria-label]="'admin.staking.checkAria' | translate"
             />
           </div>
           <button
@@ -187,33 +196,33 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
             (click)="checkVerifierStake()"
             [disabled]="isCheckingStake() || !stakeCheckAddress.trim()"
           >
-            {{ isCheckingStake() ? 'Checking…' : 'Check Stake' }}
+            {{ (isCheckingStake() ? 'admin.staking.checking' : 'admin.staking.check') | translate }}
           </button>
         </div>
 
         @if (verifierStakeResult()) {
-          <div class="stake-result" role="region" aria-label="Stake check result">
-            <span class="field-label">Locked stake:</span>
+          <div
+            class="stake-result"
+            role="region"
+            [attr.aria-label]="'admin.staking.resultAria' | translate"
+          >
+            <span class="field-label">{{ 'admin.staking.locked' | translate }}</span>
             <strong>{{ formatStroops(verifierStakeResult()!.stake) }} XLM</strong>
             <span class="stake-sub">({{ verifierStakeResult()!.stake }} stroops)</span>
             @if (BigInt(verifierStakeResult()!.stake) < BigInt(minStake())) {
-              <span
-                class="badge badge--warn"
-                title="Below minimum — this verifier cannot be registered until they deposit more stake"
-              >
-                ⚠ Below minimum
+              <span class="badge badge--warn" [title]="'admin.staking.belowMinTitle' | translate">
+                {{ 'admin.staking.belowMin' | translate }}
               </span>
             } @else {
-              <span class="badge badge--ok">✔ Meets minimum</span>
+              <span class="badge badge--ok">{{ 'admin.staking.meetsMin' | translate }}</span>
             }
           </div>
         }
 
         <!-- Slash verifier -->
-        <h3 class="subsection-title">Slash Verifier Stake</h3>
+        <h3 class="subsection-title">{{ 'admin.slash.title' | translate }}</h3>
         <p class="section-description section-description--sm">
-          Apply a 10% penalty to a verifier's locked stake when they approved a credit that was
-          later found to be fraudulent. This action is irreversible.
+          {{ 'admin.slash.description' | translate }}
         </p>
 
         @if (slashError()) {
@@ -222,7 +231,9 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         <div class="form-row">
           <div class="form-field form-field--grow">
-            <label class="field-label" for="slash-address">Verifier address</label>
+            <label class="field-label" for="slash-address">
+              {{ 'admin.slash.address' | translate }}
+            </label>
             <input
               id="slash-address"
               class="text-input"
@@ -230,19 +241,21 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
               placeholder="G…"
               [(ngModel)]="slashAddress"
               [disabled]="isSlashing()"
-              aria-label="Verifier address to slash"
+              [attr.aria-label]="'admin.slash.addressAria' | translate"
             />
           </div>
           <div class="form-field form-field--grow">
-            <label class="field-label" for="slash-credit-id">Credit ID (hex)</label>
+            <label class="field-label" for="slash-credit-id">
+              {{ 'admin.slash.credit' | translate }}
+            </label>
             <input
               id="slash-credit-id"
               class="text-input"
               type="text"
-              placeholder="64-character hex credit ID"
+              [placeholder]="'admin.slash.creditPlaceholder' | translate"
               [(ngModel)]="slashCreditId"
               [disabled]="isSlashing()"
-              aria-label="Credit ID that triggered the slash"
+              [attr.aria-label]="'admin.slash.creditAria' | translate"
             />
           </div>
           <button
@@ -250,25 +263,22 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
             (click)="openSlashConfirm()"
             [disabled]="isSlashing() || !slashAddress.trim() || !slashCreditId.trim()"
           >
-            {{ isSlashing() ? 'Slashing…' : 'Slash 10%' }}
+            {{ (isSlashing() ? 'admin.slash.slashing' : 'admin.slash.button') | translate }}
           </button>
         </div>
       </section>
 
       <!-- ── Contract Pause / Unpause ──────────────────────────────────────── -->
       <section class="panel-section panel-section--danger">
-        <h2 class="section-title section-title--danger">Contract Pause</h2>
-        <p class="section-description">
-          Pause or resume all contract operations. When paused, no credits can be issued, retired,
-          or traded.
-        </p>
+        <h2 class="section-title section-title--danger">{{ 'admin.pause.title' | translate }}</h2>
+        <p class="section-description">{{ 'admin.pause.description' | translate }}</p>
 
         @if (pauseError()) {
           <p class="alert alert--error" role="alert">{{ pauseError() }}</p>
         }
 
         <button class="btn btn-danger" (click)="openPauseConfirm()" [disabled]="isPausing()">
-          {{ contractPaused() ? 'Unpause Contract' : 'Pause Contract' }}
+          {{ (contractPaused() ? 'admin.pause.unpause' : 'admin.pause.pause') | translate }}
         </button>
       </section>
     </main>
@@ -284,21 +294,20 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
           (click)="$event.stopPropagation()"
         >
           <h2 id="pause-title">
-            {{ contractPaused() ? 'Unpause Contract?' : 'Pause Contract?' }}
+            {{
+              (contractPaused()
+                ? 'admin.pause.confirmUnpauseTitle'
+                : 'admin.pause.confirmPauseTitle'
+              ) | translate
+            }}
           </h2>
-          <p class="pause-warning">
-            I understand that
-            {{ contractPaused() ? 'resuming' : 'pausing' }} the contract
-            <strong>{{ contractPaused() ? 'will restore' : 'will stop' }}</strong>
-            all operations — credit issuance, retirement, and trading will be
-            {{ contractPaused() ? 'enabled' : 'disabled' }} immediately.
-          </p>
+          <p class="pause-warning">{{ pauseWarning() }}</p>
           <div class="modal-actions">
             <button class="btn btn-ghost" (click)="closePauseConfirm()" [disabled]="isPausing()">
-              Cancel
+              {{ 'admin.cancel' | translate }}
             </button>
             <button class="btn btn-danger" (click)="confirmPause()" [disabled]="isPausing()">
-              {{ isPausing() ? 'Processing…' : 'I understand, proceed' }}
+              {{ (isPausing() ? 'admin.processing' : 'admin.pause.proceed') | translate }}
             </button>
           </div>
         </div>
@@ -315,20 +324,23 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
           aria-labelledby="slash-title"
           (click)="$event.stopPropagation()"
         >
-          <h2 id="slash-title">Slash Verifier Stake?</h2>
+          <h2 id="slash-title">{{ 'admin.slash.confirmTitle' | translate }}</h2>
           <p class="pause-warning">
-            This will permanently slash <strong>10%</strong> of verifier
-            <span class="monospace">{{ slashAddress | slice: 0 : 8 }}…</span>'s locked stake as a
-            penalty for approving fraudulent credit
-            <span class="monospace">{{ slashCreditId | slice: 0 : 12 }}…</span>. The slashed funds
-            are forfeited and cannot be recovered.
+            {{
+              'admin.slash.confirmText'
+                | translate
+                  : {
+                      address: (slashAddress | slice: 0 : 8),
+                      credit: (slashCreditId | slice: 0 : 12),
+                    }
+            }}
           </p>
           <div class="modal-actions">
             <button class="btn btn-ghost" (click)="closeSlashConfirm()" [disabled]="isSlashing()">
-              Cancel
+              {{ 'admin.cancel' | translate }}
             </button>
             <button class="btn btn-danger" (click)="confirmSlash()" [disabled]="isSlashing()">
-              {{ isSlashing() ? 'Slashing…' : 'I understand, slash 10%' }}
+              {{ (isSlashing() ? 'admin.slash.slashing' : 'admin.slash.confirm') | translate }}
             </button>
           </div>
         </div>
@@ -401,9 +413,23 @@ export class AdminComponent implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly wallet = inject(StellarWalletService);
   private readonly toast = inject(ToastService);
+  private readonly i18n = inject(TranslationService);
 
   // Expose BigInt to template (used in stake comparison)
   protected readonly BigInt = BigInt;
+
+  /**
+   * Composed pause/unpause confirmation sentence. Built in the component (rather
+   * than the template) so the nested verb phrases can each be translated.
+   */
+  protected readonly pauseWarning = computed(() => {
+    const paused = this.contractPaused();
+    return this.i18n.t('admin.pause.warning', {
+      action: this.i18n.t(paused ? 'admin.pause.action.resume' : 'admin.pause.action.pause'),
+      effect: this.i18n.t(paused ? 'admin.pause.effect.restore' : 'admin.pause.effect.stop'),
+      state: this.i18n.t(paused ? 'admin.pause.state.enabled' : 'admin.pause.state.disabled'),
+    });
+  });
 
   // ── Methodology registration state ──────────────────────────────────────
   protected methodologyName = '';
@@ -498,10 +524,10 @@ export class AdminComponent implements OnInit {
       this.registeredMethodologies.update((list) => [...list, { name, description }]);
       this.methodologyName = '';
       this.methodologyDescription = '';
-      this.toast.show(`Methodology "${name}" registered.`, 'success');
+      this.toast.show(this.i18n.t('admin.toast.methodology', { name }), 'success');
     } catch (err) {
       this.methodologyError.set(
-        err instanceof Error ? err.message : 'Failed to register methodology.',
+        err instanceof Error ? err.message : this.i18n.t('admin.error.methodology'),
       );
     } finally {
       this.isRegisteringMethodology.set(false);
@@ -523,10 +549,13 @@ export class AdminComponent implements OnInit {
     try {
       const token = this.auth.token()!;
       await firstValueFrom(this.api.setRequiredApprovals(this.requiredApprovals(), token));
-      this.toast.show(`Required approvals set to ${this.requiredApprovals()}.`, 'success');
+      this.toast.show(
+        this.i18n.t('admin.toast.approvals', { count: this.requiredApprovals() }),
+        'success',
+      );
     } catch (err) {
       this.approvalsError.set(
-        err instanceof Error ? err.message : 'Failed to save approvals threshold.',
+        err instanceof Error ? err.message : this.i18n.t('admin.error.approvals'),
       );
     } finally {
       this.isSavingApprovals.set(false);
@@ -542,7 +571,7 @@ export class AdminComponent implements OnInit {
     try {
       const token = this.auth.token()!;
       const address = this.wallet.publicKey();
-      if (!address) throw new Error('Not authenticated');
+      if (!address) throw new Error(this.i18n.t('admin.notAuthenticated'));
 
       // Fetch the admin's current nonce before building the transaction.
       const nonceResp = await firstValueFrom(this.api.getAdminNonce(address, token));
@@ -552,11 +581,11 @@ export class AdminComponent implements OnInit {
       this.minStake.set(amountStroops);
       this.newMinStakeXlm = null;
       this.toast.show(
-        `Minimum stake updated to ${this.formatStroops(amountStroops)} XLM.`,
+        this.i18n.t('admin.toast.minStake', { value: this.formatStroops(amountStroops) }),
         'success',
       );
     } catch (err) {
-      this.stakeError.set(err instanceof Error ? err.message : 'Failed to update minimum stake.');
+      this.stakeError.set(err instanceof Error ? err.message : this.i18n.t('admin.error.minStake'));
     } finally {
       this.isSavingMinStake.set(false);
     }
@@ -571,7 +600,9 @@ export class AdminComponent implements OnInit {
       const result = await firstValueFrom(this.api.getVerifierStake(address));
       this.verifierStakeResult.set(result);
     } catch (err) {
-      this.stakeError.set(err instanceof Error ? err.message : 'Failed to fetch verifier stake.');
+      this.stakeError.set(
+        err instanceof Error ? err.message : this.i18n.t('admin.error.verifierStake'),
+      );
     } finally {
       this.isCheckingStake.set(false);
     }
@@ -592,7 +623,7 @@ export class AdminComponent implements OnInit {
     try {
       const token = this.auth.token()!;
       const address = this.wallet.publicKey();
-      if (!address) throw new Error('Not authenticated');
+      if (!address) throw new Error(this.i18n.t('admin.notAuthenticated'));
 
       // Fetch the admin's current nonce before the slash transaction.
       const nonceResp = await firstValueFrom(this.api.getAdminNonce(address, token));
@@ -605,14 +636,14 @@ export class AdminComponent implements OnInit {
         ),
       );
       this.toast.show(
-        `Slashed 10% of verifier ${this.slashAddress.slice(0, 8)}…'s stake.`,
+        this.i18n.t('admin.toast.slashed', { address: this.slashAddress.slice(0, 8) }),
         'success',
       );
       this.slashAddress = '';
       this.slashCreditId = '';
       this.showSlashConfirm.set(false);
     } catch (err) {
-      this.slashError.set(err instanceof Error ? err.message : 'Failed to slash verifier.');
+      this.slashError.set(err instanceof Error ? err.message : this.i18n.t('admin.error.slash'));
     } finally {
       this.isSlashing.set(false);
     }
@@ -640,14 +671,12 @@ export class AdminComponent implements OnInit {
         : await firstValueFrom(this.api.pauseContract(token));
       this.contractPaused.set(result.paused);
       this.toast.show(
-        result.paused
-          ? 'Contract paused. All operations stopped.'
-          : 'Contract unpaused. Operations resumed.',
+        this.i18n.t(result.paused ? 'admin.toast.paused' : 'admin.toast.unpaused'),
         'success',
       );
       this.showPauseConfirm.set(false);
     } catch (err) {
-      this.pauseError.set(err instanceof Error ? err.message : 'Failed to toggle contract pause.');
+      this.pauseError.set(err instanceof Error ? err.message : this.i18n.t('admin.error.pause'));
     } finally {
       this.isPausing.set(false);
     }

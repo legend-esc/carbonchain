@@ -6,6 +6,7 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
 import { CreditStatus, RetirementRecord } from '@shared';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { TranslationService } from '../core/services/translation.service';
 import { firstValueFrom } from 'rxjs';
 
 @Component({
@@ -19,6 +20,7 @@ export class DashboardComponent implements OnInit {
   protected readonly store = inject(CreditStore);
   protected readonly wallet = inject(StellarWalletService);
   private readonly api = inject(ApiService);
+  private readonly i18n = inject(TranslationService);
 
   protected readonly CreditStatus = CreditStatus;
   protected readonly retirements = signal<RetirementRecord[]>([]);
@@ -70,7 +72,9 @@ export class DashboardComponent implements OnInit {
       );
       this.retirements.set(records.filter(Boolean));
     } catch (err) {
-      this.retirementsError.set(err instanceof Error ? err.message : 'Failed to load retirements.');
+      this.retirementsError.set(
+        err instanceof Error ? err.message : this.i18n.t('dashboard.loadRetirementsError'),
+      );
     } finally {
       this.retirementsLoading.set(false);
     }

@@ -242,6 +242,10 @@ jobs:
         run: cd frontend && npm run lint
       - name: Check Formatting
         run: cd frontend && npm run format:check
+      # #961 — fail the build when any UI string is not present in every active
+      # locale (extraction + missing-key lint). Also runs via `prebuild`.
+      - name: Check i18n coverage
+        run: cd frontend && npm run i18n:check
       - name: Build
         run: cd frontend && npm run build
         env:

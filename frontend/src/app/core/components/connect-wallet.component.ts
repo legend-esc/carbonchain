@@ -20,7 +20,7 @@ import { TranslatePipe } from '../pipes/translate.pipe';
           @if (wallet.xlmBalance() !== null) {
             {{ wallet.xlmBalance()! | number: '1.7-7' }} XLM
           } @else {
-            <span class="balance-loading">Loading…</span>
+            <span class="balance-loading">{{ 'wallet.loading' | translate }}</span>
           }
         </span>
 

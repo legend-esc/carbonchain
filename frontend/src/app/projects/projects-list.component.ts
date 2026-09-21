@@ -3,6 +3,8 @@ import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ApiService } from '../core/services/api.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { firstValueFrom } from 'rxjs';
 import { ProjectProfile } from '@shared';
 import { CreditStatus } from '@shared';
@@ -10,29 +12,29 @@ import { CreditStatus } from '@shared';
 @Component({
   selector: 'app-projects-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe],
   template: `
     <div class="projects">
       <div class="projects__toolbar">
-        <h1>Projects</h1>
+        <h1>{{ 'projects.title' | translate }}</h1>
         <div class="projects__filters">
           <label class="field">
-            <span>Search</span>
+            <span>{{ 'projects.search' | translate }}</span>
             <input
               type="search"
-              placeholder="Project name…"
+              [placeholder]="'projects.searchPlaceholder' | translate"
               [ngModel]="searchTerm()"
               (ngModelChange)="searchTerm.set($event); onSearchChanged()"
             />
           </label>
 
           <label class="field">
-            <span>Methodology</span>
+            <span>{{ 'projects.methodology' | translate }}</span>
             <select
               [ngModel]="selectedMethodology()"
               (ngModelChange)="selectedMethodology.set($event); onFiltersChanged()"
             >
-              <option [ngValue]="''">All</option>
+              <option [ngValue]="''">{{ 'projects.all' | translate }}</option>
               @for (m of methodologies(); track m) {
                 <option [ngValue]="m">{{ m }}</option>
               }
@@ -44,18 +46,18 @@ import { CreditStatus } from '@shared';
       @if (error()) {
         <p class="error" role="alert">{{ error() }}</p>
       } @else if (loading()) {
-        <p class="status">Loading projects…</p>
+        <p class="status">{{ 'projects.loading' | translate }}</p>
       } @else if (filteredProjects().length === 0) {
-        <p class="status">No projects match your filters.</p>
+        <p class="status">{{ 'projects.noMatch' | translate }}</p>
       } @else {
-        <table class="projects-table" aria-label="Projects list">
+        <table class="projects-table" [attr.aria-label]="'projects.tableAria' | translate">
           <thead>
             <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Developer</th>
-              <th scope="col">Location</th>
-              <th scope="col">Methodology</th>
-              <th scope="col">Documents</th>
+              <th scope="col">{{ 'projects.col.name' | translate }}</th>
+              <th scope="col">{{ 'projects.col.developer' | translate }}</th>
+              <th scope="col">{{ 'projects.col.location' | translate }}</th>
+              <th scope="col">{{ 'projects.col.methodology' | translate }}</th>
+              <th scope="col">{{ 'projects.col.documents' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -77,7 +79,7 @@ import { CreditStatus } from '@shared';
                       target="_blank"
                       rel="noopener"
                     >
-                      View
+                      {{ 'projects.view' | translate }}
                     </a>
                   } @else {
                     <span class="muted">—</span>
@@ -171,6 +173,7 @@ import { CreditStatus } from '@shared';
 })
 export class ProjectsListComponent implements OnInit {
   private readonly api = inject(ApiService);
+  private readonly i18n = inject(TranslationService);
 
   readonly projects = signal<ProjectProfile[]>([]);
   readonly loading = signal(true);
@@ -209,7 +212,7 @@ export class ProjectsListComponent implements OnInit {
       const list = await firstValueFrom(this.api.listProjects());
       this.projects.set(list);
     } catch (err) {
-      this.error.set(err instanceof Error ? err.message : 'Failed to load projects.');
+      this.error.set(err instanceof Error ? err.message : this.i18n.t('projects.loadError'));
     } finally {
       this.loading.set(false);
     }

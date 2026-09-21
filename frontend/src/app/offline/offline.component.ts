@@ -1,18 +1,17 @@
 import { Component, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { OnlineStatusService } from '../core/services/online-status.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-offline',
   standalone: true,
+  imports: [TranslatePipe],
   template: `
     <main class="offline">
-      <h1>You're offline</h1>
-      <p>
-        Check your connection. Certificates and credit pages you've already opened are still
-        available.
-      </p>
-      <button (click)="retry()">Retry</button>
+      <h1>{{ 'offline.title' | translate }}</h1>
+      <p>{{ 'offline.message' | translate }}</p>
+      <button (click)="retry()">{{ 'offline.retry' | translate }}</button>
     </main>
   `,
   styles: [

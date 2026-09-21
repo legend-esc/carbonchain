@@ -5,7 +5,7 @@ import { TranslationService } from '../services/translation.service';
 export class TranslatePipe implements PipeTransform {
   private readonly i18n = inject(TranslationService);
 
-  transform(key: string): string {
-    return this.i18n.t(key);
+  transform(key: string, params?: Record<string, string | number>): string {
+    return this.i18n.t(key, params);
   }
 }

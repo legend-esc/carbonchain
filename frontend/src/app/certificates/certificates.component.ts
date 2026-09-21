@@ -5,36 +5,38 @@ import { firstValueFrom } from 'rxjs';
 import { RetirementRecord } from '@shared';
 import { ApiService, CertificateVerification } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
+import { TranslationService } from '../core/services/translation.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-certificates',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <main class="certificate">
       @if (loading()) {
-        <p>Loading certificate…</p>
+        <p>{{ 'certificate.loading' | translate }}</p>
       } @else if (error()) {
         <p class="error">{{ error() }}</p>
       } @else if (record()) {
-        <h1>Retirement Certificate</h1>
+        <h1>{{ 'certificate.title' | translate }}</h1>
         <dl>
-          <dt>Certificate ID</dt>
+          <dt>{{ 'certificate.id' | translate }}</dt>
           <dd>{{ record()!.id }}</dd>
-          <dt>Credit ID</dt>
+          <dt>{{ 'certificate.creditId' | translate }}</dt>
           <dd>{{ record()!.credit_id }}</dd>
-          <dt>Retired By</dt>
+          <dt>{{ 'certificate.retiredBy' | translate }}</dt>
           <dd class="mono">{{ record()!.buyer }}</dd>
-          <dt>Tonnes Retired</dt>
+          <dt>{{ 'certificate.tonnes' | translate }}</dt>
           <dd>{{ tonnesDisplay() }}</dd>
-          <dt>Reason</dt>
+          <dt>{{ 'certificate.reason' | translate }}</dt>
           <dd>{{ record()!.reason }}</dd>
-          <dt>Retired At</dt>
+          <dt>{{ 'certificate.retiredAt' | translate }}</dt>
           <dd>{{ record()!.retired_at | date: 'medium' }}</dd>
-          <dt>Transaction</dt>
+          <dt>{{ 'certificate.transaction' | translate }}</dt>
           <dd class="mono">{{ record()!.tx_hash }}</dd>
           @if (record()!.certificate_ipfs_hash) {
-            <dt>Certificate IPFS</dt>
+            <dt>{{ 'certificate.ipfs' | translate }}</dt>
             <dd class="mono">{{ record()!.certificate_ipfs_hash }}</dd>
           }
         </dl>
@@ -43,12 +45,18 @@ import { AuthService } from '../core/services/auth.service';
         @if (verification()) {
           <div class="verify-result" [class.verified]="verification()!.verified">
             @if (verification()!.verified) {
-              <span class="icon">✔</span> Certificate verified on-chain
+              <span class="icon">✔</span>
               @if (verification()!.certificate_ipfs_hash) {
-                — IPFS:&nbsp;<span class="mono">{{ verification()!.certificate_ipfs_hash }}</span>
+                {{
+                  'certificate.verifiedWithIpfs'
+                    | translate
+                      : { hash: (verification()!.certificate_ipfs_hash ?? '' | slice: 0 : 16) }
+                }}
+              } @else {
+                {{ 'certificate.verified' | translate }}
               }
             } @else {
-              <span class="icon">✘</span> Verification failed — hash mismatch
+              <span class="icon">✘</span> {{ 'certificate.verifyFailed' | translate }}
             }
           </div>
         }
@@ -58,10 +66,10 @@ import { AuthService } from '../core/services/auth.service';
 
         <div class="actions">
           <button [disabled]="downloading()" (click)="download()">
-            {{ downloading() ? 'Downloading…' : 'Download Certificate (PDF)' }}
+            {{ (downloading() ? 'certificate.downloading' : 'certificate.download') | translate }}
           </button>
           <button [disabled]="verifying()" (click)="verifyCertificate()" class="verify-btn">
-            {{ verifying() ? 'Verifying…' : 'Verify Certificate' }}
+            {{ (verifying() ? 'certificate.verifying' : 'certificate.verify') | translate }}
           </button>
         </div>
       }
@@ -134,6 +142,7 @@ export class CertificatesComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
+  private readonly i18n = inject(TranslationService);
 
   readonly record = signal<RetirementRecord | null>(null);
   readonly loading = signal(true);
@@ -146,7 +155,9 @@ export class CertificatesComponent implements OnInit {
   readonly tonnesDisplay = () => {
     const r = this.record();
     if (!r) return '';
-    return (BigInt(r.tonnes_retired) / 1_000_000n).toString() + ' tonnes';
+    return this.i18n.t('certificate.tonnesValue', {
+      count: (BigInt(r.tonnes_retired) / 1_000_000n).toString(),
+    });
   };
 
   async ngOnInit(): Promise<void> {
@@ -154,7 +165,7 @@ export class CertificatesComponent implements OnInit {
     try {
       this.record.set(await firstValueFrom(this.api.getRetirement(id)));
     } catch {
-      this.error.set('Certificate not found.');
+      this.error.set(this.i18n.t('certificate.notFound'));
     } finally {
       this.loading.set(false);
     }
@@ -172,7 +183,7 @@ export class CertificatesComponent implements OnInit {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      this.error.set('Download failed.');
+      this.error.set(this.i18n.t('certificate.downloadFailed'));
     } finally {
       this.downloading.set(false);
     }
@@ -195,7 +206,7 @@ export class CertificatesComponent implements OnInit {
       const result = await firstValueFrom(this.api.verifyCertificate(id));
       this.verification.set(result);
     } catch {
-      this.verifyError.set('Verification failed — could not reach the API.');
+      this.verifyError.set(this.i18n.t('certificate.verifyError'));
     } finally {
       this.verifying.set(false);
     }
