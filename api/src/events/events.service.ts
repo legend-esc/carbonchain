@@ -56,6 +56,24 @@ export class EventsService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     this.logger.log('EventsService initialized - loading last synced ledgers');
+    // Check whether stored lastLedger is ahead of the node's current sequence on resume
+    let currentLedger = 0;
+    try {
+      if (typeof this.stellarService.getLatestLedger === 'function') {
+        currentLedger = await this.stellarService.getLatestLedger();
+      } else if (typeof this.stellarService.getSorobanRpcServer === 'function') {
+        const server = this.stellarService.getSorobanRpcServer();
+        if (server && typeof server.getLatestLedger === 'function') {
+          const res = await server.getLatestLedger();
+          currentLedger = res?.sequence || 0;
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not retrieve latest ledger on resume: ${(error as Error).message}`,
+      );
+    }
+
     // Load last synced ledger per contract from DB
     const contractIds = this.getContractIds();
     for (const contractId of contractIds) {
@@ -64,9 +82,20 @@ export class EventsService implements OnModuleInit {
         order: { ledger: 'DESC' },
       });
       if (lastEvent) {
-        this.lastLedgerCache.set(contractId, Number(lastEvent.ledger));
+        let lastLedger = Number(lastEvent.ledger);
+        if (currentLedger > 0 && lastLedger > currentLedger) {
+          this.logger.warn(
+            `Contract ${contractId}: stored lastLedger ${lastLedger} is ahead of node current sequence ${currentLedger}. Handling reorg.`,
+          );
+          for (let reverted = lastLedger; reverted > currentLedger; reverted--) {
+            await this.handleReorg(contractId, reverted);
+          }
+          lastLedger = this.lastLedgerCache.get(contractId) || currentLedger;
+        } else {
+          this.lastLedgerCache.set(contractId, lastLedger);
+        }
         this.logger.log(
-          `Contract ${contractId}: last synced ledger = ${lastEvent.ledger}`,
+          `Contract ${contractId}: last synced ledger = ${lastLedger}`,
         );
       }
     }

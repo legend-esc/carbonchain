@@ -713,4 +713,19 @@ export class StellarService implements OnModuleInit {
       return [];
     }
   }
+
+  async getLatestLedger(): Promise<number> {
+    try {
+      const response = await this.withTimeout(
+        this.sorobanRpcServer.getLatestLedger(),
+        'getLatestLedger',
+      );
+      return response.sequence;
+    } catch (error) {
+      this.logger.error(
+        `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] Failed to get latest ledger: ${(error as Error).message}`,
+      );
+      return 0;
+    }
+  }
 }
