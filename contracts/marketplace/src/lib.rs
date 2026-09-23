@@ -94,6 +94,8 @@ pub enum DataKey {
     Paused,
     EscrowedAmount(u64),
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection (#899).
+    NonceBitmap(Address),
     MinPrice,
     ActiveOffers,
     /// Trusted credit-registry contract address stored at initialisation (#692).
@@ -1135,16 +1137,40 @@ impl Marketplace {
             .unwrap_or(false)
     }
 
-    fn consume_nonce(env: &Env, addr: &Address, expected: u64) -> bool {
+    pub const NONCE_WINDOW: u64 = 16;
+
+    fn consume_nonce(env: &Env, addr: &Address, submitted: u64) -> bool {
         let current = get_nonce(env, addr);
-        if current != expected {
+        if submitted < current || submitted >= current + Self::NONCE_WINDOW {
             return false;
         }
+        let offset = (submitted - current) as u32;
+        let bitmap_key = DataKey::NonceBitmap(addr.clone());
+        let mut bitmap: u64 = env.storage().persistent().get(&bitmap_key).unwrap_or(0u64);
+        let bit = 1u64 << offset;
+        if bitmap & bit != 0 {
+            return false;
+        }
+        bitmap |= bit;
+        let mut advance = 0u32;
+        while (advance as u64) < Self::NONCE_WINDOW && (bitmap & (1u64 << advance)) != 0 {
+            advance += 1;
+        }
+        let new_current = current + advance as u64;
+        bitmap >>= advance;
         let key = DataKey::Nonce(addr.clone());
-        env.storage().persistent().set(&key, &(current + 1));
+        env.storage().persistent().set(&key, &new_current);
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+        if bitmap != 0 {
+            env.storage().persistent().set(&bitmap_key, &bitmap);
+            env.storage()
+                .persistent()
+                .extend_ttl(&bitmap_key, TTL_THRESHOLD, MIN_TTL);
+        } else {
+            env.storage().persistent().remove(&bitmap_key);
+        }
         true
     }
 

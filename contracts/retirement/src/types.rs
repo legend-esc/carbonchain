@@ -61,6 +61,8 @@ pub enum DataKey {
     Admin,
     Paused,
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection (#899).
+    NonceBitmap(Address),
     PendingAdmin,
     Registry,
     Version,
