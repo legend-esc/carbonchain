@@ -92,13 +92,41 @@ export class MarketplaceService {
     );
   }
 
+  async getNonce(address: string): Promise<number> {
+    try {
+      const args = [nativeToScVal(address, { type: 'address' })];
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_nonce',
+        args,
+      );
+      if (!retval) return 0;
+      return Number(scValToNative(retval));
+    } catch (error) {
+      this.logger.warn(`Failed to fetch nonce for ${address}: ${(error as Error).message}`);
+      return 0;
+    }
+  }
+
   async createOffer(dto: CreateOfferDto): Promise<{ offerId: string }> {
     this.logger.log(`Creating offer for credit ${dto.creditId}`);
+    const registryId = this.configService.get<string>(
+      'CREDIT_REGISTRY_CONTRACT_ID',
+      '',
+    );
+    const nonce = dto.nonce ?? (await this.getNonce(dto.sellerPublicKey));
+    const expiresAtScVal = dto.expiresAt
+      ? nativeToScVal(dto.expiresAt, { type: 'u64' })
+      : nativeToScVal(null);
+
     const args = [
       nativeToScVal(dto.sellerPublicKey, { type: 'address' }),
       nativeToScVal(Buffer.from(dto.creditId, 'hex'), { type: 'bytes' }),
       nativeToScVal(BigInt(dto.priceXlm), { type: 'i128' }),
       nativeToScVal(BigInt(dto.tonnes), { type: 'i128' }),
+      nativeToScVal(registryId, { type: 'address' }),
+      expiresAtScVal,
+      nativeToScVal(nonce, { type: 'u64' }),
     ];
     const signer = this.keypairService.getAdminKeypair();
     const response = await this.stellarService.invokeContract(
@@ -205,9 +233,16 @@ export class MarketplaceService {
   }
 
   async cancelOffer(seller: string, offerId: number): Promise<void> {
+    const registryId = this.configService.get<string>(
+      'CREDIT_REGISTRY_CONTRACT_ID',
+      '',
+    );
+    const nonce = await this.getNonce(seller);
     const args = [
       nativeToScVal(seller, { type: 'address' }),
       nativeToScVal(offerId, { type: 'u64' }),
+      nativeToScVal(registryId, { type: 'address' }),
+      nativeToScVal(nonce, { type: 'u64' }),
     ];
     const signer = this.keypairService.getAdminKeypair();
     await this.stellarService.invokeContract(
@@ -220,14 +255,21 @@ export class MarketplaceService {
 
   async buyOffer(buyerPublicKey: string, offerId: number): Promise<void> {
     try {
+      const registryId = this.configService.get<string>(
+        'CREDIT_REGISTRY_CONTRACT_ID',
+        '',
+      );
       const nativeTokenId = this.configService.get<string>(
         'NATIVE_TOKEN_CONTRACT_ID',
         '',
       );
+      const nonce = await this.getNonce(buyerPublicKey);
       const args = [
         nativeToScVal(buyerPublicKey, { type: 'address' }),
         nativeToScVal(offerId, { type: 'u64' }),
+        nativeToScVal(registryId, { type: 'address' }),
         nativeToScVal(nativeTokenId, { type: 'address' }),
+        nativeToScVal(nonce, { type: 'u64' }),
       ];
       const signer = this.keypairService.getAdminKeypair();
       await this.stellarService.invokeContract(
