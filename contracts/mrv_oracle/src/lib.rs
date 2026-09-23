@@ -136,6 +136,8 @@ const MIN_TTL: u32 = 6_307_200;
 const TTL_THRESHOLD: u32 = MIN_TTL / 2;
 /// Maximum skew allowed between a caller-supplied reading timestamp and the ledger time.
 const MAX_READING_SKEW: u64 = 3_600;
+/// Maximum number of credits flagged in a single MRV update to bound cross-contract calls.
+const MAX_FLAG_BATCH: u32 = 20;
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -491,8 +493,9 @@ impl MrvOracle {
                 threshold_bps: threshold,
             }
             .publish(&env);
-            // Cross-contract call to flag all credits in the project (best-effort)
-            for i in 0..credits.len() {
+            // Cross-contract call to flag credits in the project up to MAX_FLAG_BATCH (best-effort)
+            let flag_limit = credits.len().min(MAX_FLAG_BATCH);
+            for i in 0..flag_limit {
                 let cid = credits.get(i).unwrap();
                 // Fetch the oracle's current nonce from the registry so the
                 // flag_credit call uses a valid replay-protection nonce.
