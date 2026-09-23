@@ -45,7 +45,8 @@ use crate::storage::{
     decrement_verifier_pending, get_admin, get_approved_stake_token, get_audit_log, get_credit,
     get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
     get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies, get_min_stake,
-    get_next_verifier_id, get_nonce, get_pending_credits, get_required_approvals,
+    get_next_verifier_id, get_nonce, get_pending_credits, get_pending_credits_by_verifier,
+    get_required_approvals,
     get_retirement_contract, get_session, get_session_op_count, get_total_credits,
     get_unbonding_request, get_verifier_id, get_verifier_reputation, get_verifier_services_for,
     get_verifier_stake, get_verifier_stake_token, get_verifiers, get_version, has_admin,
@@ -214,15 +215,13 @@ impl CreditRegistry {
         if !is_verifier(&env, &verifier) {
             return Err(CarbonChainError::VerifierNotFound);
         }
-        // Issue #481: block removal only if this verifier is specifically assigned to
-        // one or more credits that are still in Pending status.  We consult the
-        // per-credit CreditVerifiers snapshot (set at submit time) via the global
-        // PendingCredits index instead of the inaccurate global counter.
-        let pending_credits = get_pending_credits(&env);
-        for credit_id in pending_credits.iter() {
-            let assigned = get_credit_verifiers(&env, &credit_id);
-            if assigned.contains(&verifier) {
-                return Err(CarbonChainError::VerifierHasPendingCredits);
+        // Pivot on PendingCreditsByVerifier index instead of a global scan.
+        let verifier_pending = get_pending_credits_by_verifier(&env, &verifier);
+        for credit_id in verifier_pending.iter() {
+            if let Some(credit) = get_credit(&env, &credit_id) {
+                if credit.status == CreditStatus::Pending {
+                    return Err(CarbonChainError::VerifierHasPendingCredits);
+                }
             }
         }
         let old = get_verifiers(&env);
