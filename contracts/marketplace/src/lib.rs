@@ -464,13 +464,24 @@ impl Marketplace {
             MIN_TTL,
         );
 
-        // Index under seller
+        // Index under seller (#882: bound index growth)
         let key = DataKey::SellerOffers(seller.clone());
         let mut ids: Vec<u64> = env
             .storage()
             .persistent()
             .get(&key)
             .unwrap_or_else(|| Vec::new(&env));
+        if ids.len() >= 50 {
+            let mut pruned = Vec::new(&env);
+            for id in ids.iter() {
+                if let Some(o) = env.storage().persistent().get::<_, Offer>(&DataKey::Offer(id)) {
+                    if o.active {
+                        pruned.push_back(id);
+                    }
+                }
+            }
+            ids = pruned;
+        }
         ids.push_back(offer_id);
         env.storage().persistent().set(&key, &ids);
         env.storage()
@@ -700,6 +711,49 @@ impl Marketplace {
             .unwrap_or(0u64)
     }
 
+    /// Sweep and cleanup inactive or expired offers from the seller index (`SellerOffers`),
+    /// returning the number of pruned offer IDs. (#882)
+    pub fn cleanup_seller_offers(env: Env, seller: Address) -> u32 {
+        let key = DataKey::SellerOffers(seller.clone());
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut cleaned: Vec<u64> = Vec::new(&env);
+        let mut pruned: u32 = 0;
+        let now = env.ledger().timestamp();
+
+        for id in ids.iter() {
+            let offer: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(id));
+            match offer {
+                Some(o) if o.active => {
+                    let expired = o.expires_at.is_some_and(|e| now > e);
+                    if expired {
+                        pruned += 1;
+                    } else {
+                        cleaned.push_back(id);
+                    }
+                }
+                _ => {
+                    pruned += 1;
+                }
+            }
+        }
+
+        if cleaned.is_empty() {
+            env.storage().persistent().remove(&key);
+        } else {
+            env.storage().persistent().set(&key, &cleaned);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+        }
+
+        pruned
+    }
+
     /// Clean up expired offers starting from `start_id`, processing at most `limit` offers (capped at 100).
     ///
     /// Marks expired offers inactive **and** removes them from the `ActiveOffers` index
@@ -742,6 +796,25 @@ impl Marketplace {
                         if let Some(pos) = active_ids.iter().position(|id| id == i) {
                             active_ids.remove(pos as u32);
                             index_changed = true;
+                        }
+
+                        // #882: Compact SellerOffers — remove the expired ID from the seller index
+                        let seller_key = DataKey::SellerOffers(offer.seller.clone());
+                        let mut seller_ids: Vec<u64> = env
+                            .storage()
+                            .persistent()
+                            .get(&seller_key)
+                            .unwrap_or_else(|| Vec::new(&env));
+                        if let Some(pos) = seller_ids.iter().position(|id| id == i) {
+                            seller_ids.remove(pos as u32);
+                            if seller_ids.is_empty() {
+                                env.storage().persistent().remove(&seller_key);
+                            } else {
+                                env.storage().persistent().set(&seller_key, &seller_ids);
+                                env.storage()
+                                    .persistent()
+                                    .extend_ttl(&seller_key, TTL_THRESHOLD, MIN_TTL);
+                            }
                         }
                     }
                 }
