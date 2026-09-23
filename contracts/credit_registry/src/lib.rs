@@ -1723,23 +1723,17 @@ impl CreditRegistry {
                 issuer = Some(credit.issuer.clone());
             }
 
-            if let Some(ref meth) = methodology {
-                if credit.methodology != *meth {
-                    return Err(CarbonChainError::InvalidMetadata);
-                }
-            } else {
+            if methodology.is_none() {
                 methodology = Some(credit.methodology.clone());
             }
 
-            if let Some(ref geo) = geography {
-                if credit.geography != *geo {
-                    return Err(CarbonChainError::InvalidMetadata);
-                }
-            } else {
+            if geography.is_none() {
                 geography = Some(credit.geography.clone());
             }
 
-            ipfs_hash = Some(credit.ipfs_hash.clone());
+            if ipfs_hash.is_none() {
+                ipfs_hash = Some(credit.ipfs_hash.clone());
+            }
             total_tonnes = total_tonnes
                 .checked_add(credit.tonnes)
                 .ok_or(CarbonChainError::Overflow)?;
