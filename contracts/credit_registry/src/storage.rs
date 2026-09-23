@@ -138,9 +138,6 @@ pub fn set_retirement_contract(env: &Env, addr: &Address) {
         .instance()
         .set(&DataKey::RetirementContract, addr);
     env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
-    env.storage()
-        .instance()
-        .set(&DataKey::RetirementContract, addr);
 }
 
 pub fn get_retirement_contract(env: &Env) -> Option<Address> {
@@ -347,9 +344,6 @@ pub fn set_required_approvals(env: &Env, count: u32) {
         .instance()
         .set(&DataKey::RequiredApprovals, &count);
     env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
-    env.storage()
-        .instance()
-        .set(&DataKey::RequiredApprovals, &count);
 }
 
 pub fn get_credit_approvals(env: &Env, credit_id: &BytesN<32>) -> Vec<u64> {
