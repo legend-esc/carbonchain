@@ -435,7 +435,7 @@ impl MrvOracle {
             oracle: oracle.clone(),
             project_id: project_id.clone(),
             tonnes,
-            recorded_at: ledger_ts,
+            recorded_at: timestamp,
             anomaly,
         };
 
