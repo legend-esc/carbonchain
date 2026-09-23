@@ -53,7 +53,7 @@ use crate::storage::{
     increment_total_credits, increment_verifier_pending, is_issuer as storage_is_issuer,
     is_methodology_valid, is_paused, is_verifier, remove_credit_approvals,
     remove_credit_from_owner, remove_credit_verifiers, remove_from_pending_credits,
-    remove_unbonding_request, remove_verifier_stake_token, set_admin, set_approved_stake_token,
+    remove_pending_credit_from_verifier, remove_unbonding_request, remove_verifier_stake_token, set_admin, set_approved_stake_token,
     set_credit, set_credit_by_project_vintage, set_credit_verifiers, set_issuers,
     set_methodologies, set_min_stake, set_next_verifier_id, set_paused, set_required_approvals,
     set_retirement_contract, set_session, set_unbonding_request, set_verifier_id,
@@ -826,11 +826,16 @@ impl CreditRegistry {
 
             // Issue #481: decrement pending count only for verifiers assigned to THIS
             // credit (the snapshot taken at submit time), not for all current verifiers.
-            // This prevents over-decrement when new verifiers are added after submission,
-            // and correctly handles verifiers removed mid-flight.
+            // If the snapshot is missing, fall back to registered verifiers to prevent counter drift.
             let assigned_verifiers = get_credit_verifiers(&env, &credit_id);
-            for v in assigned_verifiers.iter() {
+            let verifiers_to_decrement = if assigned_verifiers.is_empty() {
+                get_verifiers(&env)
+            } else {
+                assigned_verifiers
+            };
+            for v in verifiers_to_decrement.iter() {
                 decrement_verifier_pending(&env, &v);
+                remove_pending_credit_from_verifier(&env, &v, &credit_id);
             }
             // Clean up the per-credit snapshot — no longer needed after minting.
             remove_credit_verifiers(&env, &credit_id);
