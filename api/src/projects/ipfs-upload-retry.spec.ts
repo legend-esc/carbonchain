@@ -10,10 +10,12 @@ function axiosErrorWithStatus(status: number): AxiosError {
 
 describe('uploadToIpfsWithRetry', () => {
   beforeAll(() => {
-    jest.spyOn(axios, 'isAxiosError').mockImplementation(
-      (payload: unknown): payload is AxiosError =>
-        (payload as AxiosError)?.isAxiosError === true,
-    );
+    jest
+      .spyOn(axios, 'isAxiosError')
+      .mockImplementation(
+        (payload: unknown): payload is AxiosError =>
+          (payload as AxiosError)?.isAxiosError === true,
+      );
   });
 
   it('retries on 503 twice then succeeds on the third attempt', async () => {

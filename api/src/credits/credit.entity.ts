@@ -1,7 +1,14 @@
-import { Entity, PrimaryColumn, Column } from 'typeorm';
+import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
 import { CreditStatus } from '../../../shared';
 
 @Entity('credits')
+@Index('idx_credits_status_methodology_geography', [
+  'status',
+  'methodology',
+  'geography',
+])
+@Index('idx_credits_owner_address', ['issuer'])
+@Index('idx_credits_vintage_year', ['vintageYear'])
 export class CreditEntity {
   @PrimaryColumn()
   id: string;

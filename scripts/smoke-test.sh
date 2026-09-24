@@ -13,6 +13,25 @@ log()  { echo "  [smoke] $*"; }
 pass() { echo "  ✅ $*"; }
 fail() { echo "  ❌ $*" >&2; exit 1; }
 
+# Retry a command up to 3 times with exponential back-off (5s, 10s, 20s).
+# Handles transient testnet RPC timeouts and TxBadSeq races.
+# Usage: retry_invoke <label> <command...>
+retry_invoke() {
+  local label="$1"; shift
+  local attempt delay
+  for attempt in 1 2 3; do
+    if "$@"; then
+      return 0
+    fi
+    if [[ $attempt -lt 3 ]]; then
+      delay=$(( 5 * (1 << (attempt - 1)) ))   # 5s, 10s
+      log "  ⚠️  $label failed (attempt $attempt/3), retrying in ${delay}s…"
+      sleep "$delay"
+    fi
+  done
+  fail "$label failed after 3 attempts"
+}
+
 require_env() {
   [[ -n "${!1:-}" ]] || fail "Required env var $1 is not set"
 }
@@ -97,9 +116,22 @@ VERIFIER_SECRET=$(stellar keys show smoke-verifier 2>/dev/null)
 VERIFIER_ADDRESS=$(stellar keys address smoke-verifier 2>/dev/null)
 [[ -n "$VERIFIER_ADDRESS" ]] || fail "Could not generate smoke-verifier keypair"
 stellar keys fund "$VERIFIER_ADDRESS" --network testnet 2>/dev/null || true
+# Give Horizon a moment to propagate the funded account before transacting.
+sleep 6
+
+# Issue #565: register_verifier now requires the verifier to have locked at
+# least get_min_stake() via deposit_stake. This pipeline does not deploy a
+# stake token, so lower the minimum to zero for the smoke run (mirrors
+# test_helpers.rs initialize()).
+NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
+retry_invoke "set_min_stake" invoke "$CREDIT_REGISTRY_ID" set_min_stake \
+  --admin "$ADMIN_ADDRESS" \
+  --amount 0 \
+  --nonce "$NONCE" > /dev/null
+pass "credit_registry.set_min_stake(0) succeeded"
 
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
-invoke "$CREDIT_REGISTRY_ID" register_verifier \
+retry_invoke "register_verifier" invoke "$CREDIT_REGISTRY_ID" register_verifier \
   --admin "$ADMIN_ADDRESS" \
   --verifier "$VERIFIER_ADDRESS" \
   --nonce "$NONCE" > /dev/null
@@ -115,9 +147,11 @@ ISSUER_SECRET=$(stellar keys show smoke-issuer 2>/dev/null)
 ISSUER_ADDRESS=$(stellar keys address smoke-issuer 2>/dev/null)
 [[ -n "$ISSUER_ADDRESS" ]] || fail "Could not generate smoke-issuer keypair"
 stellar keys fund "$ISSUER_ADDRESS" --network testnet 2>/dev/null || true
+# Give Horizon a moment to propagate the funded account before transacting.
+sleep 6
 
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
-invoke "$CREDIT_REGISTRY_ID" register_issuer \
+retry_invoke "register_issuer" invoke "$CREDIT_REGISTRY_ID" register_issuer \
   --admin "$ADMIN_ADDRESS" \
   --issuer "$ISSUER_ADDRESS" \
   --nonce "$NONCE" > /dev/null
@@ -125,11 +159,15 @@ pass "credit_registry.register_issuer() succeeded"
 
 log "Registering VCS methodology"
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
-invoke "$CREDIT_REGISTRY_ID" register_methodology \
+# This call is intentionally idempotent — if VCS already exists from a prior
+# smoke run the contract returns an error, which we suppress with || true.
+# We wrap retry_invoke in a subshell so that its internal `exit 1` (after 3
+# failed attempts) is contained and the outer || true can catch it.
+( retry_invoke "register_methodology" invoke "$CREDIT_REGISTRY_ID" register_methodology \
   --admin "$ADMIN_ADDRESS" \
   --code '"VCS"' \
   --name '"Verified Carbon Standard"' \
-  --nonce "$NONCE" > /dev/null 2>&1 || true  # may already exist from prior run
+  --nonce "$NONCE" ) > /dev/null 2>&1 || true
 pass "credit_registry.register_methodology() succeeded (or already registered)"
 
 # Use a run-specific suffix to avoid collisions with prior smoke-test runs on
@@ -141,7 +179,7 @@ SMOKE_PROJECT_ID="SMOKE-${RUN_ID}"
 SMOKE_IPFS_HASH="bafybeismoke$(printf '%050d' "$RANDOM")"
 
 log "Registering test project (run-id: $RUN_ID)"
-invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" register_project \
+retry_invoke "register_project" invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" register_project \
   --owner "$ISSUER_ADDRESS" \
   --project-id "\"${SMOKE_PROJECT_ID}\"" \
   --name '"Smoke Test Project"' \
@@ -151,7 +189,7 @@ pass "credit_registry.register_project() succeeded"
 
 log "Submitting a test credit"
 ISSUER_NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ISSUER_ADDRESS")
-CREDIT_ID=$(invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" submit_credit \
+CREDIT_ID=$(retry_invoke "submit_credit" invoke_as "$ISSUER_SECRET" "$CREDIT_REGISTRY_ID" submit_credit \
   --issuer "$ISSUER_ADDRESS" \
   --project-id "\"${SMOKE_PROJECT_ID}\"" \
   --vintage-year 2024 \
@@ -172,7 +210,7 @@ pass "credit_registry.get_credit() status = $CREDIT_STATUS"
 
 log "Approving and minting the credit"
 VERIFIER_NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$VERIFIER_ADDRESS")
-invoke_as "$VERIFIER_SECRET" "$CREDIT_REGISTRY_ID" approve_and_mint \
+retry_invoke "approve_and_mint" invoke_as "$VERIFIER_SECRET" "$CREDIT_REGISTRY_ID" approve_and_mint \
   --verifier "$VERIFIER_ADDRESS" \
   --credit-id "$CREDIT_ID" \
   --nonce "$VERIFIER_NONCE" > /dev/null

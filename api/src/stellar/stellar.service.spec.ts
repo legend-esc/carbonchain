@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { Keypair, Operation } from '@stellar/stellar-sdk';
+import { Keypair, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 import { SequenceNumberManager } from './sequence-number-manager.service';
 
@@ -333,13 +333,7 @@ describe('StellarService - sequence number integration', () => {
           hash: 'fee-test-txn',
         });
 
-        const { rpc: rpcMock } = jest.requireMock('@stellar/stellar-sdk');
-        const setBaseFeeSpies: jest.Mock[] = [];
-        rpcMock.assembleTransaction.mockImplementation((tx: unknown) => {
-          const setBaseFee = jest.fn().mockReturnValue({ build: () => tx });
-          setBaseFeeSpies.push(setBaseFee);
-          return { setBaseFee, build: () => tx };
-        });
+        const cloneFromSpy = jest.spyOn(TransactionBuilder, 'cloneFrom');
 
         await service.invokeContract(
           CONTRACT_ID,
@@ -348,16 +342,21 @@ describe('StellarService - sequence number integration', () => {
           signerKeypair,
         );
 
-        // setBaseFee should have been called with ceil(1000 * 1.1) = '1100'
-        expect(setBaseFeeSpies.length).toBeGreaterThan(0);
-        expect(setBaseFeeSpies[0]).toHaveBeenCalledWith('1100');
+        // The fee is applied via TransactionBuilder.cloneFrom after assembly:
+        // ceil(1000 * 1.1) = '1100'
+        const opts = cloneFromSpy.mock.calls[0]?.[1] as { fee?: string };
+        expect(opts?.fee).toBe('1100');
+        cloneFromSpy.mockRestore();
       });
 
       it('uses a custom FEE_BUFFER_MULTIPLIER from env', async () => {
-        const customModule = await buildModule({ FEE_BUFFER_MULTIPLIER: '1.5' });
+        const customModule = await buildModule({
+          FEE_BUFFER_MULTIPLIER: '1.5',
+        });
         const customService = customModule.get<StellarService>(StellarService);
-        const customSeqMgr =
-          customModule.get<SequenceNumberManager>(SequenceNumberManager);
+        const customSeqMgr = customModule.get<SequenceNumberManager>(
+          SequenceNumberManager,
+        );
         customService.onModuleInit();
         customSeqMgr.cacheSequenceNumber(signerKeypair.publicKey(), 20);
 
@@ -376,13 +375,7 @@ describe('StellarService - sequence number integration', () => {
           hash: 'custom-fee-txn',
         });
 
-        const { rpc: rpcMock } = jest.requireMock('@stellar/stellar-sdk');
-        const setBaseFeeSpies: jest.Mock[] = [];
-        rpcMock.assembleTransaction.mockImplementation((tx: unknown) => {
-          const setBaseFee = jest.fn().mockReturnValue({ build: () => tx });
-          setBaseFeeSpies.push(setBaseFee);
-          return { setBaseFee, build: () => tx };
-        });
+        const cloneFromSpy = jest.spyOn(TransactionBuilder, 'cloneFrom');
 
         await customService.invokeContract(
           CONTRACT_ID,
@@ -391,7 +384,9 @@ describe('StellarService - sequence number integration', () => {
           signerKeypair,
         );
 
-        expect(setBaseFeeSpies[0]).toHaveBeenCalledWith('300');
+        const opts = cloneFromSpy.mock.calls[0]?.[1] as { fee?: string };
+        expect(opts?.fee).toBe('300');
+        cloneFromSpy.mockRestore();
       });
 
       it('uses minimum of 100 stroops when minResourceFee is 0', async () => {
@@ -411,13 +406,7 @@ describe('StellarService - sequence number integration', () => {
           hash: 'min-fee-txn',
         });
 
-        const { rpc: rpcMock } = jest.requireMock('@stellar/stellar-sdk');
-        const setBaseFeeSpies: jest.Mock[] = [];
-        rpcMock.assembleTransaction.mockImplementation((tx: unknown) => {
-          const setBaseFee = jest.fn().mockReturnValue({ build: () => tx });
-          setBaseFeeSpies.push(setBaseFee);
-          return { setBaseFee, build: () => tx };
-        });
+        const cloneFromSpy = jest.spyOn(TransactionBuilder, 'cloneFrom');
 
         await service.invokeContract(
           CONTRACT_ID,
@@ -426,7 +415,10 @@ describe('StellarService - sequence number integration', () => {
           signerKeypair,
         );
 
-        expect(setBaseFeeSpies[0]).toHaveBeenCalledWith('100');
+        // max(ceil(0 * 1.1), 100) = '100'
+        const opts = cloneFromSpy.mock.calls[0]?.[1] as { fee?: string };
+        expect(opts?.fee).toBe('100');
+        cloneFromSpy.mockRestore();
       });
     });
 

@@ -59,5 +59,10 @@
   "retire.retireAnother": "Retirar otro",
   "retire.errorTitle": "❌ Retiro Fallido",
   "retire.tryAgain": "Intentar de nuevo",
-  "retire.wallet": "Billetera"
+  "retire.wallet": "Billetera",
+
+  "pwa.install.title": "Instalar CarbonChain",
+  "pwa.install.message": "Instala la aplicación para acceso sin conexión y una experiencia más rápida",
+  "pwa.install.button": "Instalar",
+  "pwa.install.dismiss": "Ahora no"
 }

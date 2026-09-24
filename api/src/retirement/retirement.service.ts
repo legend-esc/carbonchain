@@ -5,7 +5,9 @@ import {
   ServiceUnavailableException,
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
   Inject,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
@@ -13,17 +15,21 @@ import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { CreditStatus, RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
+import { CertificateService } from './certificate.service';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
+import { NonceService } from '../common/nonce.service';
 import type { ICreditRepository } from '../credits/credit.repository';
 import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
 import { RetireDto, FullRetireDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
-import { parseCreditId } from '../common/credit-id';
+import { computeFileCid, cidsMatch } from '../common/ipfs-cid.util';
 import {
-  ListRetirementsDto,
-  PaginatedRetirements,
-} from './dto/list-retirements.dto';
+  METRICS_EVENT_EMITTER,
+  RETIREMENT_COMPLETED,
+} from '../metrics/metrics-events';
+import type { RetirementCompletedEvent } from '../metrics/metrics-events';
+import type { EventEmitter } from 'events';
 
 export const MAX_BATCH_SIZE = 10;
 
@@ -42,6 +48,8 @@ export interface CertificateVerification {
   tx_hash: string;
   verified: boolean;
   ledger_sequence?: number;
+  /** Issue #544 — IPFS hash of the certificate PDF as committed on-chain. */
+  certificate_ipfs_hash?: string;
 }
 
 /** Payload carried by the CreditRetired application event. */
@@ -79,6 +87,11 @@ export class RetirementService {
     @Inject(CREDIT_REPOSITORY)
     private readonly creditRepo: ICreditRepository,
     @Inject(EVENT_EMITTER) private readonly eventEmitter: IEventEmitter,
+    @Optional() private readonly nonceService?: NonceService,
+    @Optional() private readonly certificateService?: CertificateService,
+    @Optional()
+    @Inject(METRICS_EVENT_EMITTER)
+    private readonly metricsEmitter?: EventEmitter,
   ) {
     this.retirementContractId = this.configService.get<string>(
       'RETIREMENT_CONTRACT_ID',
@@ -112,15 +125,29 @@ export class RetirementService {
       );
     }
 
+    const tonnesToRetire = dto.tonnes ? dto.tonnes : credit.tonnes;
+    if (BigInt(tonnesToRetire) <= 0n || BigInt(tonnesToRetire) > BigInt(credit.tonnes)) {
+      throw new BadRequestException(
+        `Invalid retirement tonnes: ${tonnesToRetire}. Must be between 1 and ${credit.tonnes}`,
+      );
+    }
+
+    const isPartial = BigInt(tonnesToRetire) < BigInt(credit.tonnes);
+
     const result = await this.retire({
       buyerPublicKey,
       creditId,
-      tonnes: credit.tonnes,
+      tonnes: tonnesToRetire,
       reason: dto.reason,
       nonce: dto.nonce,
+      vintageYear: credit.vintageYear,
     });
 
-    credit.status = CreditStatus.Retired;
+    if (isPartial) {
+      credit.tonnes = (BigInt(credit.tonnes) - BigInt(tonnesToRetire)).toString();
+    } else {
+      credit.status = CreditStatus.Retired;
+    }
     await this.creditRepo.save(credit);
 
     return result;
@@ -150,6 +177,16 @@ export class RetirementService {
     this.logger.log(
       `Retiring credit ${dto.creditId} for ${dto.buyerPublicKey}`,
     );
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    // Claim the nonce in Redis before submitting the transaction on-chain.
+    // A duplicate nonce within the Stellar ledger close window returns 409.
+    if (dto.nonce !== undefined && this.nonceService) {
+      await this.nonceService.consumeNonce(
+        dto.buyerPublicKey,
+        BigInt(dto.nonce),
+      );
+    }
 
     const args = [
       nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
@@ -189,6 +226,8 @@ export class RetirementService {
         ).toString('hex')
       : 'unknown';
 
+    const txHash = (response as unknown as { hash?: string })?.hash ?? '';
+
     // ── Step 1: Persist to off-chain index ───────────────────────────────────
     // The record MUST be written before the CreditRetired event is emitted.
     // If this write throws, the event is never emitted and the caller receives
@@ -200,7 +239,9 @@ export class RetirementService {
     entity.tonnesRetired = dto.tonnes;
     entity.reason = dto.reason;
     entity.retiredAt = Math.floor(Date.now() / 1000);
-    entity.txHash = '';
+    entity.txHash = txHash;
+    // Issue #589 — persist vintage year for certificate provenance
+    entity.vintageYear = dto.vintageYear ?? 0;
     await this.retirementRepo.save(entity);
 
     // ── Step 2: Emit CreditRetired event ─────────────────────────────────────
@@ -215,7 +256,98 @@ export class RetirementService {
     };
     this.eventEmitter.emit('CreditRetired', event);
 
-    return { retirementId, certificateIpfsHash: '' };
+    // ── Step 3: Generate certificate PDF and pin to IPFS (issue #493) ────────
+    // CertificateService is optional so RetirementService remains testable
+    // without it. Pinata failures are gracefully handled inside
+    // generateAndPin() — the retirement succeeds even when IPFS is down.
+    let certificateIpfsHash: string | null = null;
+    if (this.certificateService) {
+      try {
+        const result = await this.certificateService.generateAndPin({
+          retirementId,
+          creditId: dto.creditId,
+          buyer: dto.buyerPublicKey,
+          tonnes: dto.tonnes,
+          reason: dto.reason,
+          timestamp: entity.retiredAt,
+          // Issue #589 — include vintage year in certificate data
+          ...(dto.vintageYear ? { vintageYear: dto.vintageYear } : {}),
+        });
+        certificateIpfsHash = result.ipfsHash;
+
+        // ── Issue #544: commit the IPFS hash on-chain ─────────────────────
+        // This makes the certificate independently verifiable: anyone can
+        // fetch the hash from the contract, download from IPFS, and confirm
+        // the content hash matches.  We use the admin keypair and the admin's
+        // current nonce.  The call is fire-and-forget with a warning on
+        // failure so that a transient RPC error does not roll back the
+        // retirement itself.
+        try {
+          const adminKeypair = this.keypairService.getAdminKeypair();
+          const adminPublicKey = adminKeypair.publicKey();
+          const adminNonce = await this.stellarService.readContract(
+            this.retirementContractId,
+            'get_nonce',
+            [nativeToScVal(adminPublicKey, { type: 'address' })],
+          );
+          const nonceValue = adminNonce
+            ? BigInt(scValToNative(adminNonce) as number | bigint)
+            : 0n;
+
+          await this.stellarService.invokeContract(
+            this.retirementContractId,
+            'set_certificate_hash',
+            [
+              nativeToScVal(adminPublicKey, { type: 'address' }),
+              nativeToScVal(Buffer.from(retirementId, 'hex'), {
+                type: 'bytes',
+              }),
+              nativeToScVal(certificateIpfsHash, { type: 'string' }),
+              nativeToScVal(nonceValue, { type: 'u64' }),
+            ],
+            adminKeypair,
+          );
+
+          // Persist the hash to the off-chain index so it is returned in
+          // GET /certificates/:id without an additional on-chain read.
+          entity.certificateIpfsHash = certificateIpfsHash ?? '';
+          await this.retirementRepo.save(entity);
+
+          this.logger.log(
+            `Certificate hash committed on-chain for retirement ${retirementId}: ${certificateIpfsHash}`,
+          );
+        } catch (onChainErr) {
+          this.logger.warn(
+            `Failed to commit certificate hash on-chain for retirement ${retirementId}: ` +
+              `${(onChainErr as Error).message}. Hash is in IPFS but not yet on-chain.`,
+          );
+          // Do not rethrow — retirement already succeeded; on-chain commit can
+          // be retried separately via a background job.
+        }
+      } catch (certErr) {
+        // A failed cert-gen must not be silently swallowed: the retirement
+        // record exists on-chain but the caller would receive an empty hash
+        // with a 201, leaving the certificate permanently unrecoverable.
+        // Throw so the caller knows to retry or investigate.
+        this.logger.error(
+          `Certificate generation failed for retirement ${retirementId}: ` +
+            `${(certErr as Error).message}`,
+        );
+        throw new InternalServerErrorException(
+          `Retirement succeeded on-chain (id: ${retirementId}) but certificate ` +
+            `generation failed: ${(certErr as Error).message}. ` +
+            `Retry POST /credits/${dto.creditId}/retire or contact support.`,
+        );
+      }
+    }
+
+    // Issue #495 — emit retirement metric event (single retirement).
+    this.metricsEmitter?.emit(RETIREMENT_COMPLETED, {
+      type: 'single',
+      count: 1,
+    } satisfies RetirementCompletedEvent);
+
+    return { retirementId, certificateIpfsHash: certificateIpfsHash ?? '' };
   }
 
   /**
@@ -225,6 +357,11 @@ export class RetirementService {
    * Persists one RetirementEntity per successful retirement and returns
    * a partial-success shape so callers can distinguish which credits
    * succeeded and which failed.
+   *
+   * All DB writes are wrapped in a single transaction via saveAll().
+   * If the contract reverts, no DB writes occur. If the DB transaction
+   * fails after a successful contract call, the entire batch is marked
+   * as failed and no events are emitted.
    */
   async batchRetire(dto: BatchRetireDto): Promise<BatchRetireResult> {
     if (dto.creditIds.length > MAX_BATCH_SIZE) {
@@ -242,14 +379,18 @@ export class RetirementService {
       `Batch retiring ${dto.creditIds.length} credits for ${dto.buyerPublicKey}`,
     );
 
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(
+        dto.buyerPublicKey,
+        BigInt(dto.nonce),
+      );
+    }
+
     const creditIdsVal = nativeToScVal(
       dto.creditIds.map((id) => Buffer.from(id, 'hex')),
-      { type: 'vec' },
     );
-    const tonnesVal = nativeToScVal(
-      dto.tonnes.map((t) => BigInt(t)),
-      { type: 'vec' },
-    );
+    const tonnesVal = nativeToScVal(dto.tonnes.map((t) => BigInt(t)));
     const args = [
       nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
       creditIdsVal,
@@ -275,56 +416,159 @@ export class RetirementService {
           error: 'Contract is currently paused',
         });
       }
-      throw error;
+      // The whole batch reverted on-chain — no DB writes and no events.
+      // Surface every credit as failed so callers can reconcile.
+      this.logger.error(
+        `Batch retire contract call failed: ${msg}. No records persisted.`,
+      );
+      return {
+        succeeded: [],
+        failed: dto.creditIds.map((id) => ({
+          id,
+          reason: msg || 'Contract reverted',
+        })),
+      };
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
-    const retirementIds: string[] = rv
-      ? (
-          scValToNative(
-            rv as Parameters<typeof scValToNative>[0],
-          ) as Uint8Array[]
-        ).map((b) => Buffer.from(b).toString('hex'))
-      : [];
+    const txHash = (response as unknown as { hash?: string })?.hash ?? '';
 
-    const succeeded: string[] = [];
-    const failed: { id: string; reason: string }[] = [];
-    const now = Math.floor(Date.now() / 1000);
+    // The contract returns BatchRetireResult { succeeded: Vec<BytesN<32>>, failed: Vec<{credit_id, error_code}> }
+    let succeededIds: string[] = [];
+    let contractFailed: { id: string; reason: string }[] = [];
 
-    for (let i = 0; i < retirementIds.length; i++) {
-      try {
-        const entity = new RetirementEntity();
-        entity.id = retirementIds[i];
-        entity.creditId = dto.creditIds[i];
-        entity.buyer = dto.buyerPublicKey;
-        entity.tonnesRetired = dto.tonnes[i];
-        entity.reason = dto.reason;
-        entity.retiredAt = now;
-        entity.txHash = '';
-        await this.retirementRepo.save(entity);
+    if (rv) {
+      const native = scValToNative(
+        rv as Parameters<typeof scValToNative>[0],
+      ) as {
+        succeeded?: Uint8Array[];
+        failed?: Array<{ credit_id: Uint8Array; error_code: number }>;
+      };
 
-        const event: CreditRetiredEvent = {
-          retirementId: entity.id,
-          creditId: entity.creditId,
-          buyer: entity.buyer,
-          tonnesRetired: entity.tonnesRetired,
-          retiredAt: entity.retiredAt,
-        };
-        this.eventEmitter.emit('CreditRetired', event);
+      succeededIds = (native.succeeded ?? []).map((b) =>
+        Buffer.from(b).toString('hex'),
+      );
 
-        succeeded.push(retirementIds[i]);
-      } catch (error: unknown) {
-        this.logger.error(
-          `Failed to persist retirement for credit ${dto.creditIds[i]}: ${(error as Error).message}`,
-        );
-        failed.push({
-          id: dto.creditIds[i],
-          reason: (error as Error).message,
-        });
-      }
+      const ERROR_CODE_MAP: Record<number, string> = {
+        110: 'CreditNotActive',
+        113: 'Unauthorized',
+        117: 'InvalidTonnes',
+        118: 'InvalidInput',
+      };
+
+      contractFailed = (native.failed ?? []).map((f) => ({
+        id: Buffer.from(f.credit_id).toString('hex'),
+        reason: ERROR_CODE_MAP[f.error_code] ?? `Error(${f.error_code})`,
+      }));
     }
 
-    return { succeeded, failed };
+    const now = Math.floor(Date.now() / 1000);
+
+    // The contract retires credits in input order and returns one retirement ID
+    // per success, skipping failed credits — so succeededIds is shorter than
+    // dto.creditIds whenever a credit fails. Indexing dto.creditIds by the
+    // position in succeededIds therefore misattributes records once anything
+    // fails. Rebuild the successful source list by removing the
+    // contract-reported failures in input order, then pair each retirement ID
+    // with its true source credit (and that credit's tonnes) by position.
+    const failedIdSet = new Set(contractFailed.map((f) => f.id));
+    const succeededSources = dto.creditIds
+      .map((id, idx) => ({ id, tonnes: dto.tonnes[idx] ?? '0' }))
+      .filter((src) => !failedIdSet.has(src.id));
+
+    if (succeededSources.length !== succeededIds.length) {
+      this.logger.warn(
+        `Batch retire: contract reported ${succeededIds.length} successes but ` +
+          `${succeededSources.length} source credits remain after removing ` +
+          `reported failures — retirement records may be misattributed.`,
+      );
+    }
+
+    const entities: RetirementEntity[] = succeededIds.map((retirementId, i) => {
+      const source = succeededSources[i];
+      const entity = new RetirementEntity();
+      entity.id = retirementId;
+      entity.creditId = source?.id ?? '';
+      entity.buyer = dto.buyerPublicKey;
+      entity.tonnesRetired = source?.tonnes ?? '0';
+      entity.reason = dto.reason;
+      entity.retiredAt = now;
+      entity.txHash = txHash;
+      return entity;
+    });
+
+    // Wrap all DB writes in a single transaction via saveAll().
+    // If the saveAll() call fails, no records are persisted and no events are emitted.
+    try {
+      await this.retirementRepo.saveAll(entities);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Batch DB transaction failed: ${(error as Error).message}. ` +
+          `On-chain transaction succeeded but ${entities.length} records were not persisted.`,
+      );
+      // Return all as failed — the on-chain state succeeded but off-chain state is inconsistent.
+      // Callers should reconcile by re-querying on-chain state.
+      return {
+        succeeded: [],
+        failed: [
+          ...contractFailed,
+          ...dto.creditIds.map((id) => ({
+            id,
+            reason: `DB transaction failed: ${(error as Error).message}`,
+          })),
+        ],
+      };
+    }
+
+    // Emit events only after all records are persisted successfully.
+    const succeeded: string[] = [];
+
+    // Mirror the single-retire status update: mark each successfully retired
+    // credit as Retired in the off-chain index. Failures here are logged but
+    // do not roll back the already-committed retirement records.
+    await Promise.all(
+      entities.map(async (entity) => {
+        try {
+          const credit = await this.creditRepo.findById(entity.creditId);
+          if (credit) {
+            credit.status = CreditStatus.Retired;
+            await this.creditRepo.save(credit);
+          }
+        } catch (statusErr: unknown) {
+          this.logger.warn(
+            `Failed to update status for credit ${entity.creditId} after batch retirement: ` +
+              `${(statusErr as Error).message}`,
+          );
+        }
+      }),
+    );
+
+    for (let i = 0; i < entities.length; i++) {
+      const event: CreditRetiredEvent = {
+        retirementId: entities[i].id,
+        creditId: entities[i].creditId,
+        buyer: entities[i].buyer,
+        tonnesRetired: entities[i].tonnesRetired,
+        retiredAt: entities[i].retiredAt,
+      };
+      this.eventEmitter.emit('CreditRetired', event);
+      succeeded.push(entities[i].id);
+    }
+
+    // Issue #495 — emit batch retirement metric event.
+    const successCount = succeeded.length;
+    if (successCount > 0) {
+      this.metricsEmitter?.emit(RETIREMENT_COMPLETED, {
+        type: 'batch',
+        count: successCount,
+      } satisfies RetirementCompletedEvent);
+    }
+
+    // Merge contract-reported failures with any additional context
+    return {
+      succeeded,
+      failed: contractFailed,
+    };
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {
@@ -356,6 +600,8 @@ export class RetirementService {
       reason: String(n.reason),
       retired_at: Number(n.retired_at),
       tx_hash: '',
+      // Issue #589 — vintage_year added to on-chain struct; undefined for legacy
+      ...(n.vintage_year ? { vintage_year: Number(n.vintage_year) } : {}),
     };
   }
 
@@ -405,6 +651,9 @@ export class RetirementService {
       reason: e.reason,
       retired_at: e.retiredAt,
       tx_hash: e.txHash,
+      certificate_ipfs_hash: e.certificateIpfsHash ?? '',
+      // Issue #589 — only include vintage_year when non-zero (0 = legacy record)
+      ...(e.vintageYear ? { vintage_year: e.vintageYear } : {}),
     };
   }
 
@@ -415,6 +664,69 @@ export class RetirementService {
       this.logger.log(`Verifying certificate: ${certificateId}`);
       const retirement = await this.getRetirement(certificateId);
 
+      // Issue #544: fetch the on-chain certificate_ipfs_hash so we can compare
+      // it against the content we actually issued.
+      let onChainIpfsHash: string | undefined;
+      try {
+        const retval = await this.stellarService.readContract(
+          this.retirementContractId,
+          'get_retirement',
+          [nativeToScVal(Buffer.from(certificateId, 'hex'), { type: 'bytes' })],
+        );
+        if (retval) {
+          const native = scValToNative(retval) as Record<string, unknown>;
+          onChainIpfsHash =
+            typeof native.certificate_ipfs_hash === 'string'
+              ? native.certificate_ipfs_hash
+              : '';
+        }
+      } catch (onChainErr) {
+        this.logger.warn(
+          `Could not fetch on-chain certificate hash for ${certificateId}: ` +
+            `${(onChainErr as Error).message}`,
+        );
+      }
+
+      const offChainIpfsHash = retirement.certificate_ipfs_hash ?? '';
+      const expectedHash = onChainIpfsHash || offChainIpfsHash;
+
+      // #764: a certificate is only verified when there is a committed hash AND
+      // the on-chain and off-chain pointers agree (tamper check on the pointer)
+      // AND the regenerated PDF content hashes to that same CID (tamper check
+      // on the document itself). `verified` is no longer hardcoded.
+      let verified = false;
+      if (expectedHash) {
+        const pointerMatches =
+          !onChainIpfsHash || !offChainIpfsHash
+            ? true
+            : onChainIpfsHash === offChainIpfsHash;
+
+        let contentMatches = false;
+        if (pointerMatches && this.certificateService) {
+          try {
+            const pdf = await this.certificateService.generatePdf({
+              retirementId: retirement.id,
+              creditId: retirement.credit_id,
+              buyer: retirement.buyer,
+              tonnes: retirement.tonnes_retired,
+              reason: retirement.reason,
+              timestamp: retirement.retired_at,
+              ...(retirement.vintage_year
+                ? { vintageYear: retirement.vintage_year }
+                : {}),
+            });
+            contentMatches = cidsMatch(computeFileCid(pdf), expectedHash);
+          } catch (genErr) {
+            this.logger.warn(
+              `Certificate PDF regeneration failed for ${certificateId}: ` +
+                `${(genErr as Error).message}`,
+            );
+          }
+        }
+
+        verified = pointerMatches && contentMatches;
+      }
+
       return {
         id: retirement.id,
         credit_id: retirement.credit_id,
@@ -423,7 +735,8 @@ export class RetirementService {
         reason: retirement.reason,
         retired_at: retirement.retired_at,
         tx_hash: retirement.tx_hash || '',
-        verified: true,
+        verified,
+        certificate_ipfs_hash: expectedHash,
       };
     } catch (error: unknown) {
       this.logger.error(

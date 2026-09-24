@@ -24,9 +24,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Run:  npx typeorm migration:run -d src/data-source.ts
  * Undo: npx typeorm migration:revert -d src/data-source.ts
  */
-export class AddProjectsUuidConstraint1753401600000
-  implements MigrationInterface
-{
+export class AddProjectsUuidConstraint1753401600000 implements MigrationInterface {
   name = 'AddProjectsUuidConstraint1753401600000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

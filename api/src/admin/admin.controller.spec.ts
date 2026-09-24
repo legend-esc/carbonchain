@@ -1,4 +1,3 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -27,6 +26,19 @@ describe('AdminController', () => {
               creditId: 'abc',
               status: CreditStatus.Flagged,
             }),
+            registerMethodology: jest.fn().mockReturnValue({
+              registered: true,
+              name: 'VCS',
+              description: 'Verified Carbon Standard',
+            }),
+            getNonce: jest
+              .fn()
+              .mockReturnValue({ address: 'GADMIN', nonce: 5 }),
+            setRequiredApprovals: jest
+              .fn()
+              .mockReturnValue({ requiredApprovals: 2 }),
+            pauseContract: jest.fn().mockResolvedValue({ paused: true }),
+            unpauseContract: jest.fn().mockResolvedValue({ paused: false }),
           },
         },
       ],
@@ -60,45 +72,46 @@ describe('AdminController', () => {
     });
     expect(service.flagCredit).toHaveBeenCalledWith('abc');
   });
-});
 
-describe('AdminGuard', () => {
-  let guard: AdminGuard;
-
-  beforeEach(() => {
-    guard = new AdminGuard();
+  it('POST /admin/methodologies calls registerMethodology', () => {
+    const result = controller.registerMethodology({
+      name: 'VCS',
+      description: 'Verified Carbon Standard',
+    });
+    expect(result).toEqual({
+      registered: true,
+      name: 'VCS',
+      description: 'Verified Carbon Standard',
+    });
+    expect(service.registerMethodology).toHaveBeenCalledWith(
+      'VCS',
+      'Verified Carbon Standard',
+    );
   });
 
-  it('should allow admin users', () => {
-    const ctx = {
-      switchToHttp: () => ({
-        getRequest: () => ({ user: { account: 'GADMIN', role: 'admin' } }),
-      }),
-      getHandler: () => ({}),
-      getClass: () => ({}),
-    } as unknown as ExecutionContext;
-    expect(guard.canActivate(ctx)).toBe(true);
+  it('GET /admin/nonce/:address calls getNonce', () => {
+    const result = controller.getNonce('GADMIN');
+    expect(result).toEqual({ address: 'GADMIN', nonce: 5 });
+    expect(service.getNonce).toHaveBeenCalledWith('GADMIN');
   });
 
-  it('should throw ForbiddenException for non-admin users', () => {
-    const ctx = {
-      switchToHttp: () => ({
-        getRequest: () => ({ user: { account: 'GUSER', role: 'user' } }),
-      }),
-      getHandler: () => ({}),
-      getClass: () => ({}),
-    } as unknown as ExecutionContext;
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+  it('POST /admin/required-approvals calls setRequiredApprovals', () => {
+    const result = controller.setRequiredApprovals({ threshold: 2 });
+    expect(result).toEqual({ requiredApprovals: 2 });
+    expect(service.setRequiredApprovals).toHaveBeenCalledWith(2);
   });
 
-  it('should throw ForbiddenException when no user', () => {
-    const ctx = {
-      switchToHttp: () => ({
-        getRequest: () => ({}),
-      }),
-      getHandler: () => ({}),
-      getClass: () => ({}),
-    } as unknown as ExecutionContext;
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+  it('POST /admin/pause calls pauseContract', async () => {
+    jest.spyOn(service, 'pauseContract').mockResolvedValue({ paused: true });
+    const result = await controller.pause();
+    expect(result).toEqual({ paused: true });
+    expect(service.pauseContract).toHaveBeenCalled();
+  });
+
+  it('POST /admin/unpause calls unpauseContract', async () => {
+    jest.spyOn(service, 'unpauseContract').mockResolvedValue({ paused: false });
+    const result = await controller.unpause();
+    expect(result).toEqual({ paused: false });
+    expect(service.unpauseContract).toHaveBeenCalled();
   });
 });

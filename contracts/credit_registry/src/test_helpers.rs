@@ -33,6 +33,23 @@ impl RegistryHelper {
         let _: () = self
             .env
             .invoke_contract(&self.id, &Symbol::new(&self.env, "initialize"), args);
+        // Issue #565: register_verifier now requires verifiers to hold at least
+        // the minimum stake. Test setups predate staking, so lower the minimum
+        // to zero so existing cross-contract tests keep working.
+        let nonce = self.get_nonce(admin);
+        self.set_min_stake(admin, 0, nonce);
+    }
+
+    pub fn set_min_stake(&self, admin: &Address, amount: i128, nonce: u64) {
+        let args = vec![
+            &self.env,
+            admin.into_val(&self.env),
+            amount.into_val(&self.env),
+            nonce.into_val(&self.env),
+        ];
+        let _: () =
+            self.env
+                .invoke_contract(&self.id, &Symbol::new(&self.env, "set_min_stake"), args);
     }
 
     pub fn get_nonce(&self, address: &Address) -> u64 {

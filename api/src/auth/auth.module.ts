@@ -21,7 +21,13 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       }),
     }),
   ],
-  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard],
+  providers: [
+    AuthService,
+    StellarAuthStrategy,
+    // JwtAuthGuard depends on AuthService (for blocklist check) — provide it
+    // explicitly so NestJS can inject AuthService via its constructor.
+    JwtAuthGuard,
+  ],
   controllers: [AuthController],
   exports: [AuthService, JwtAuthGuard],
 })

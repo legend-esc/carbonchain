@@ -14,6 +14,7 @@ import { CreditEntity } from './credit.entity';
 import type { ICreditRepository, PageResult } from './credit.repository';
 import { CREDIT_REPOSITORY } from './credit.repository';
 import { CacheService } from '../common/cache.service';
+import { NonceService } from '../common/nonce.service';
 import { IssueCreditDto } from './dto/issue-credit.dto';
 import { parseCreditId } from '../common/credit-id';
 
@@ -21,6 +22,15 @@ import { parseCreditId } from '../common/credit-id';
 const CREDIT_KEY = (id: string) => `credits:${id}`;
 const LIST_CREDITS_KEY = (filter: string) => `credits:list:${filter}`;
 const CREDIT_TTL = 120; // seconds
+
+// Cache tags — issue #540: targeted invalidation instead of `credits:*` KEYS scans.
+// Every individual credit is tagged with its own id so a single mutation only
+// touches that credit's key; every list query is tagged with the shared
+// CREDIT_LIST_TAG so all cached pages/filters can be dropped in one
+// O(members) sweep without ever scanning the wider `projects:*`/other
+// domains' keyspace.
+const CREDIT_TAG = (id: string) => `credit:${id}`;
+const CREDIT_LIST_TAG = 'credits:list';
 
 interface ListCreditsFilter {
   methodology?: string;
@@ -30,6 +40,18 @@ interface ListCreditsFilter {
   minTonnes?: string;
   maxTonnes?: string;
   page: number;
+  limit: number;
+}
+
+interface ListCreditsCursorFilter {
+  methodology?: string;
+  geography?: string;
+  vintageYear?: number;
+  status?: string;
+  minTonnes?: string;
+  maxTonnes?: string;
+  /** Opaque cursor from a previous response's next_cursor. */
+  cursor: string | undefined;
   limit: number;
 }
 
@@ -44,6 +66,7 @@ export class CreditsService {
     private keypairService: StellarKeypairService,
     @Inject(CREDIT_REPOSITORY) private readonly creditRepo: ICreditRepository,
     private readonly cache: CacheService,
+    private readonly nonceService?: NonceService,
   ) {
     this.contractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
@@ -51,6 +74,15 @@ export class CreditsService {
 
   async issueCredit(dto: IssueCreditDto): Promise<{ creditId: string }> {
     this.logger.log(`Issuing credit for project ${dto.projectId}`);
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    // Claim the nonce in Redis with atomic SET NX before sending the transaction
+    // on-chain.  A duplicate nonce within the Stellar ledger close window
+    // returns 409 Conflict before the transaction is ever submitted.
+    if (dto.nonce !== undefined && this.nonceService) {
+      await this.nonceService.consumeNonce(dto.issuerPublicKey, dto.nonce);
+    }
+
     const args = [
       nativeToScVal(dto.issuerPublicKey, { type: 'address' }),
       nativeToScVal(dto.projectId, { type: 'string' }),
@@ -109,7 +141,12 @@ export class CreditsService {
     const indexed = await this.creditRepo.findById(creditId);
     if (indexed) {
       const metadata = this.entityToMetadata(indexed);
-      await this.cache.set(CREDIT_KEY(creditId), metadata, CREDIT_TTL);
+      await this.cache.setTagged(
+        CREDIT_KEY(creditId),
+        metadata,
+        [CREDIT_TAG(creditId)],
+        CREDIT_TTL,
+      );
       return metadata;
     }
 
@@ -130,7 +167,12 @@ export class CreditsService {
         );
       const native = scValToNative(retval);
       const metadata = this.mapToCreditMetadata(creditId, native);
-      await this.cache.set(CREDIT_KEY(creditId), metadata, CREDIT_TTL);
+      await this.cache.setTagged(
+        CREDIT_KEY(creditId),
+        metadata,
+        [CREDIT_TAG(creditId)],
+        CREDIT_TTL,
+      );
       return metadata;
     } catch (error: unknown) {
       this.logger.error(
@@ -148,16 +190,36 @@ export class CreditsService {
       throw new BadRequestException('Maximum 100 credits per bulk request');
     }
 
-    this.logger.log(`Fetching ${creditIds.length} credits in bulk`);
-    const results: CreditMetadata[] = [];
+    // Every ID must be a 64-char hex string (BytesN<32> format). A malformed ID
+    // is a client error, so reject the whole request rather than silently
+    // dropping it and returning a partial array that masks the mistake.
+    const HEX_64 = /^[0-9a-f]{64}$/i;
+    const malformedIds = creditIds.filter((id) => !HEX_64.test(id));
+    if (malformedIds.length > 0) {
+      throw new BadRequestException(
+        `Malformed credit IDs (expected 64-char hex): ${malformedIds.join(', ')}`,
+      );
+    }
 
-    for (const creditId of creditIds) {
-      try {
-        const credit = await this.getCredit(creditId);
-        results.push(credit);
-      } catch (error: unknown) {
+    this.logger.log(`Fetching ${creditIds.length} credits in bulk (parallel)`);
+
+    // Issue #494: Parallelise fetches with Promise.allSettled so all IDs are
+    // resolved concurrently. Failed individual fetches are logged and omitted
+    // from the result (partial-result semantics) — they do NOT abort the batch.
+    // getCredit() already writes each fetched credit to the individual cache key
+    // so subsequent single-credit GET /credits/:id requests hit the cache.
+    const settled = await Promise.allSettled(
+      creditIds.map((creditId) => this.getCredit(creditId)),
+    );
+
+    const results: CreditMetadata[] = [];
+    for (let i = 0; i < settled.length; i++) {
+      const outcome = settled[i];
+      if (outcome.status === 'fulfilled') {
+        results.push(outcome.value);
+      } else {
         this.logger.warn(
-          `Failed to fetch credit ${creditId}: ${(error as Error).message}`,
+          `Bulk fetch: skipping credit ${creditIds[i]} — ${(outcome.reason as Error).message}`,
         );
       }
     }
@@ -191,14 +253,19 @@ export class CreditsService {
 
     // Push structured filters to the repository so it can apply them at the
     // storage layer rather than fetching every record into memory first.
+    // Tonnes range is included here so `total` reflects the fully-filtered set
+    // and pages are never short/empty while more matches exist.
     const repoFilter: import('./credit.repository').CreditFilter = {
       status: filter.status as CreditStatus | undefined,
       methodology: filter.methodology,
       geography: filter.geography,
       vintageYear: filter.vintageYear,
+      minTonnes: filter.minTonnes,
+      maxTonnes: filter.maxTonnes,
     };
 
     let repoResult: PageResult<CreditEntity>;
+    let repoFailed = false;
     try {
       repoResult = await this.creditRepo.findByFilter(
         repoFilter,
@@ -209,6 +276,7 @@ export class CreditsService {
       this.logger.warn(
         `Failed to fetch credits from repo: ${(err as Error).message}`,
       );
+      repoFailed = true;
       repoResult = {
         data: [],
         total: 0,
@@ -217,18 +285,7 @@ export class CreditsService {
       };
     }
 
-    // Apply tonnes range filters post-fetch (not yet part of CreditFilter interface).
-    let data = repoResult.data.map((e) => this.entityToMetadata(e));
-
-    if (filter.minTonnes) {
-      const minVal = BigInt(filter.minTonnes);
-      data = data.filter((c) => BigInt(c.tonnes) >= minVal);
-    }
-
-    if (filter.maxTonnes) {
-      const maxVal = BigInt(filter.maxTonnes);
-      data = data.filter((c) => BigInt(c.tonnes) <= maxVal);
-    }
+    const data = repoResult.data.map((e) => this.entityToMetadata(e));
 
     const result = {
       data,
@@ -236,8 +293,78 @@ export class CreditsService {
       page: filter.page,
       limit: filter.limit,
     };
-    await this.cache.set(cacheKey, result, CREDIT_TTL);
+    // Don't cache a failure as if it were a genuine empty page — a transient
+    // repo outage would otherwise serve stale "no results" to every caller
+    // for the remainder of the TTL.
+    if (!repoFailed) {
+      await this.cache.setTagged(
+        cacheKey,
+        result,
+        [CREDIT_LIST_TAG],
+        CREDIT_TTL,
+      );
+    }
     return result;
+  }
+
+  /**
+   * Cursor-based listing of credits — O(1) at any page depth.
+   *
+   * Orders by (issued_at ASC, id ASC) and uses an opaque base64url cursor to
+   * seek past already-seen records rather than using OFFSET.
+   *
+   * Backward compatibility: if no cursor is provided the first page is
+   * returned and a `Deprecation` warning is logged so callers know to adopt
+   * the cursor pattern.
+   */
+  async listCreditsCursor(filter: ListCreditsCursorFilter): Promise<{
+    data: CreditMetadata[];
+    next_cursor: string | null;
+    limit: number;
+    pagination_mode: 'cursor';
+  }> {
+    if (!filter.status) {
+      filter.status = CreditStatus.Active;
+    }
+
+    if (!filter.cursor) {
+      this.logger.warn(
+        'listCreditsCursor called without cursor — returning first page. ' +
+          'Offset pagination via ?page= is deprecated; use ?cursor= instead.',
+      );
+    }
+
+    const repoFilter: import('./credit.repository').CreditFilter = {
+      status: filter.status as CreditStatus | undefined,
+      methodology: filter.methodology,
+      geography: filter.geography,
+      vintageYear: filter.vintageYear,
+      minTonnes: filter.minTonnes,
+      maxTonnes: filter.maxTonnes,
+    };
+
+    let repoResult: import('./credit.repository').CursorPageResult<CreditEntity>;
+    try {
+      repoResult = await this.creditRepo.findByFilterCursor(
+        repoFilter,
+        filter.cursor,
+        filter.limit,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to fetch credits (cursor) from repo: ${(err as Error).message}`,
+      );
+      repoResult = { data: [], next_cursor: null, limit: filter.limit };
+    }
+
+    const data = repoResult.data.map((e) => this.entityToMetadata(e));
+
+    return {
+      data,
+      next_cursor: repoResult.next_cursor,
+      limit: repoResult.limit,
+      pagination_mode: 'cursor',
+    };
   }
 
   /**
@@ -391,10 +518,14 @@ export class CreditsService {
   /**
    * Invalidate all cached entries for a specific credit and the list cache.
    * Call this whenever a credit's status changes (approve, retire, flag).
+   *
+   * Issue #540: uses tag-based invalidation (O(members-of-tag)) instead of a
+   * `credits:*`/`credits:list:*` KEYS scan, so this stays fast regardless of
+   * how many unrelated keys (other domains, other credits) exist in Redis.
    */
   async invalidateCreditCache(creditId: string): Promise<void> {
     await this.cache.del(CREDIT_KEY(creditId));
-    await this.cache.delPattern('credits:list:*');
+    await this.cache.invalidateTag(CREDIT_LIST_TAG);
     this.logger.debug(`Cache invalidated for credit ${creditId}`);
   }
 
@@ -415,6 +546,69 @@ export class CreditsService {
         `Failed to list credits for project ${projectId}: ${(error as Error).message}`,
       );
       return [];
+    }
+  }
+
+  // ── Issue #541: contract-side count + pagination ──────────────────────────
+
+  /**
+   * Total number of credits ever issued, read directly from the contract's
+   * `TotalCredits` counter (O(1)) instead of fetching every credit ID and
+   * counting them in-process.
+   */
+  async getCreditCount(): Promise<number> {
+    try {
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_credit_count',
+        [],
+      );
+      if (!retval) return 0;
+      return Number(scValToNative(retval));
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to fetch credit count: ${(error as Error).message}`,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * One page of credit IDs owned by `owner`, fetched via the contract's
+   * `get_credits_by_owner_paginated`. Replaces the previous pattern of
+   * fetching an owner's full credit list and slicing it in-process.
+   */
+  async listCreditsByOwner(
+    owner: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ data: string[]; offset: number; limit: number }> {
+    try {
+      this.logger.log(
+        `Listing credits for owner ${owner} (offset=${offset}, limit=${limit})`,
+      );
+      const args = [
+        nativeToScVal(owner, { type: 'address' }),
+        nativeToScVal(offset, { type: 'u32' }),
+        nativeToScVal(limit, { type: 'u32' }),
+      ];
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_credits_by_owner_paginated',
+        args,
+      );
+      if (!retval) return { data: [], offset, limit };
+      const native = scValToNative(retval) as Buffer[];
+      return {
+        data: native.map((buf) => buf.toString('hex')),
+        offset,
+        limit,
+      };
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to list credits for owner ${owner}: ${(error as Error).message}`,
+      );
+      return { data: [], offset, limit };
     }
   }
 
@@ -449,6 +643,11 @@ export class CreditsService {
     const credit = await this.getCredit(creditId);
     if (credit.owner !== caller) {
       throw new BadRequestException('Caller does not own this credit');
+    }
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(caller, BigInt(nonce));
     }
 
     const args = [
@@ -489,6 +688,16 @@ export class CreditsService {
     const credit = await this.getCredit(creditId);
     if (credit.owner !== caller) {
       throw new BadRequestException('Caller does not own this credit');
+    }
+    if (BigInt(splitTonnes) >= BigInt(credit.tonnes)) {
+      throw new BadRequestException(
+        'splitTonnes must be less than the credit total tonnes',
+      );
+    }
+
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(caller, BigInt(nonce));
     }
 
     const args = [
@@ -763,6 +972,7 @@ export class CreditsService {
   async mergeCredits(
     callerPublicKey: string,
     creditIds: string[],
+    nonce: number,
   ): Promise<{ mergedCreditId: string; sourceCount: number }> {
     this.logger.log(
       `Merging ${creditIds.length} credits for caller ${callerPublicKey}`,
@@ -774,8 +984,10 @@ export class CreditsService {
       );
     }
 
-    // Issue #941 — validate all creditId formats before proceeding
-    creditIds = creditIds.map((id) => parseCreditId(id));
+    // ── #415: API-layer nonce deduplication ───────────────────────────────────
+    if (this.nonceService) {
+      await this.nonceService.consumeNonce(callerPublicKey, BigInt(nonce));
+    }
 
     // Build contract args: (caller: Address, credit_ids: Vec<BytesN<32>>)
     const cleanArgs = [
