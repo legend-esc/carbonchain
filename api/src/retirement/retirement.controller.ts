@@ -11,7 +11,7 @@ import {
   Response,
   NotFoundException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import type { Response as ExpressResponse } from 'express';
 import {
   RetirementService,
@@ -25,6 +25,10 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import {
+  ListRetirementsDto,
+  PaginatedRetirements,
+} from './dto/list-retirements.dto';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -57,16 +61,19 @@ export class RetirementController {
   }
 
   @ApiOperation({ summary: 'List retirements (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiQuery({ name: 'buyer', required: false, type: String })
+  @ApiQuery({ name: 'status', required: false, type: String })
   @ApiResponse({
     status: 200,
     description: 'Paginated list of retirement records',
   })
   @Get()
   listRetirements(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-  ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.listRetirements(page, limit);
+    @Query() dto: ListRetirementsDto,
+  ): Promise<PaginatedRetirements<RetirementRecord>> {
+    return this.retirementService.listRetirementsPaginated(dto);
   }
 
   @ApiOperation({ summary: 'Get retirement record by ID' })
@@ -78,6 +85,8 @@ export class RetirementController {
   }
 
   @ApiOperation({ summary: 'Get retirements by account address' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
   @ApiResponse({
     status: 200,
     description: 'Paginated retirements for account',
@@ -85,10 +94,13 @@ export class RetirementController {
   @Get('account/:address')
   getByAccount(
     @Param('address') address: string,
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-  ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.getRetirementsByAccount(address, page, limit);
+    @Query() dto: ListRetirementsDto,
+  ): Promise<PaginatedRetirements<RetirementRecord>> {
+    // Merge the path parameter into the DTO so filters + pagination work uniformly
+    return this.retirementService.listRetirementsPaginated({
+      ...dto,
+      buyer: address,
+    });
   }
 
   @ApiOperation({ summary: 'Download retirement certificate as PDF' })

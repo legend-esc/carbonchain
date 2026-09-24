@@ -8,10 +8,12 @@ import {
   Query,
   ParseIntPipe,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { MarketplaceService } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
+import { QuoteOfferDto, QuoteResult } from './dto/quote-offer.dto';
 import { Offer } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -83,5 +85,28 @@ export class MarketplaceController {
     @Body('buyerPublicKey') buyerPublicKey: string,
   ): Promise<void> {
     return this.marketplaceService.buyOffer(buyerPublicKey, id);
+  }
+
+  /**
+   * Issue #940 — Simulate a buy transaction and return a price quote.
+   *
+   * POST /marketplace/offers/:id/quote
+   *
+   * Returns the gross price, estimated Soroban resource fee, and net total for
+   * the given offer and buyer account — without committing any on-chain state.
+   * Results are cached per (offer, account) for 30 seconds.
+   */
+  @ApiOperation({
+    summary: 'Get a price quote for buying an offer (signing-free simulation)',
+  })
+  @ApiResponse({ status: 200, description: 'Quote returned successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid offer or account ID' })
+  @ApiResponse({ status: 404, description: 'Offer not found' })
+  @Post('offers/:id/quote')
+  quoteOffer(
+    @Param('id') id: string,
+    @Body() dto: QuoteOfferDto,
+  ): Promise<QuoteResult> {
+    return this.marketplaceService.quoteOffer(id, dto.accountId);
   }
 }

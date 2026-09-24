@@ -15,6 +15,7 @@ import type { ICreditRepository, PageResult } from './credit.repository';
 import { CREDIT_REPOSITORY } from './credit.repository';
 import { CacheService } from '../common/cache.service';
 import { IssueCreditDto } from './dto/issue-credit.dto';
+import { parseCreditId } from '../common/credit-id';
 
 // Cache key helpers
 const CREDIT_KEY = (id: string) => `credits:${id}`;
@@ -94,6 +95,9 @@ export class CreditsService {
   }
 
   async getCredit(creditId: string): Promise<CreditMetadata> {
+    // Issue #941 — validate creditId format before any downstream use
+    creditId = parseCreditId(creditId);
+
     // 1. Try Redis cache
     const cached = await this.cache.get<CreditMetadata>(CREDIT_KEY(creditId));
     if (cached) {
@@ -248,6 +252,8 @@ export class CreditsService {
       txHash: string;
     }>
   > {
+    // Issue #941 — validate creditId format
+    creditId = parseCreditId(creditId);
     this.logger.log(`Fetching provenance for credit ${creditId}`);
 
     try {
@@ -604,6 +610,8 @@ export class CreditsService {
     creditId: string,
     adminPublicKey: string,
   ): Promise<{ creditId: string; status: CreditStatus }> {
+    // Issue #941 — validate creditId format
+    creditId = parseCreditId(creditId);
     this.logger.log(`Expiring credit ${creditId} by admin ${adminPublicKey}`);
 
     const args = [
@@ -648,6 +656,8 @@ export class CreditsService {
     disputerPublicKey: string,
     evidenceIpfsHash: string,
   ): Promise<{ creditId: string; status: CreditStatus }> {
+    // Issue #941 — validate creditId format
+    creditId = parseCreditId(creditId);
     this.logger.log(
       `Disputing credit ${creditId} by ${disputerPublicKey} with evidence ${evidenceIpfsHash}`,
     );
@@ -697,6 +707,8 @@ export class CreditsService {
     adminPublicKey: string,
     outcome: number,
   ): Promise<{ creditId: string; status: CreditStatus; outcome: number }> {
+    // Issue #941 — validate creditId format
+    creditId = parseCreditId(creditId);
     this.logger.log(
       `Resolving dispute for credit ${creditId} with outcome ${outcome} by admin ${adminPublicKey}`,
     );
@@ -761,6 +773,9 @@ export class CreditsService {
         'merge_credits requires between 2 and 20 credit IDs',
       );
     }
+
+    // Issue #941 — validate all creditId formats before proceeding
+    creditIds = creditIds.map((id) => parseCreditId(id));
 
     // Build contract args: (caller: Address, credit_ids: Vec<BytesN<32>>)
     const cleanArgs = [

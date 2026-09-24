@@ -19,6 +19,11 @@ import type { ICreditRepository } from '../credits/credit.repository';
 import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
 import { RetireDto, FullRetireDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
+import { parseCreditId } from '../common/credit-id';
+import {
+  ListRetirementsDto,
+  PaginatedRetirements,
+} from './dto/list-retirements.dto';
 
 export const MAX_BATCH_SIZE = 10;
 
@@ -94,6 +99,9 @@ export class RetirementService {
     dto: RetireDto,
     buyerPublicKey: string,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    // Issue #941 — validate creditId format
+    creditId = parseCreditId(creditId);
+
     const credit = await this.creditRepo.findById(creditId);
     if (!credit) {
       throw new NotFoundException(`Credit ${creditId} not found`);
@@ -136,6 +144,9 @@ export class RetirementService {
   async retire(
     dto: FullRetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    // Issue #941 — validate creditId format
+    dto = { ...dto, creditId: parseCreditId(dto.creditId) };
+
     this.logger.log(
       `Retiring credit ${dto.creditId} for ${dto.buyerPublicKey}`,
     );
@@ -317,6 +328,9 @@ export class RetirementService {
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {
+    // Issue #941 — validate retirementId format (same 32-byte hex constraint)
+    retirementId = parseCreditId(retirementId);
+
     // Try off-chain index first
     const cached = await this.retirementRepo.findById(retirementId);
     if (cached) return this.entityToRecord(cached);
@@ -351,6 +365,26 @@ export class RetirementService {
   ): Promise<PageResult<RetirementRecord>> {
     const result = await this.retirementRepo.findAll(page, limit);
     return { ...result, data: result.data.map((e) => this.entityToRecord(e)) };
+  }
+
+  /**
+   * Issue #942 — Paginated retirement listing with DTO-based filters.
+   * Replaces the unbounded `listRetirements(page, limit)` path when the
+   * caller supplies a `ListRetirementsDto`.
+   */
+  async listRetirementsPaginated(
+    dto: ListRetirementsDto,
+  ): Promise<PaginatedRetirements<RetirementRecord>> {
+    const page = dto.page ?? 1;
+    const pageSize = dto.pageSize ?? 20;
+
+    const [entities, total] = await this.retirementRepo.findPaginated(dto);
+    const data = entities.map((e) => this.entityToRecord(e));
+
+    const nextCursor =
+      page * pageSize < total ? String(page + 1) : null;
+
+    return { data, total, page, pageSize, nextCursor };
   }
 
   async getRetirementsByAccount(
