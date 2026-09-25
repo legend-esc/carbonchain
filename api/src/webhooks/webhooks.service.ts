@@ -20,6 +20,8 @@ export interface WebhookDelivery {
   eventId: string;
   status: 'pending' | 'success' | 'failed';
   attempts: number;
+  /** #935 — timestamp when the delivery record was first created (for GC janitor). */
+  createdAt: Date;
   lastAttemptAt?: Date;
   nextRetryAt?: Date;
 }
@@ -152,6 +154,7 @@ export class WebhooksService implements OnModuleInit {
         eventId: eventData.id || 'unknown',
         status: 'pending',
         attempts: 0,
+        createdAt: new Date(),
         nextRetryAt: new Date(),
       };
 
@@ -254,6 +257,19 @@ export class WebhooksService implements OnModuleInit {
       deliveries = deliveries.filter((d) => d.webhookId === webhookId);
     }
     return deliveries;
+  }
+
+  /**
+   * #935 — Remove a single delivery record by ID.
+   * Used by the WebhookJanitorService to enforce the retention window.
+   * Returns true when the record existed and was removed.
+   */
+  deleteDelivery(deliveryId: string): boolean {
+    const deleted = this.deliveries.delete(deliveryId);
+    if (deleted) {
+      void this.persistDeliveries();
+    }
+    return deleted;
   }
 
   generateSignature(payload: string, secret: string): string {

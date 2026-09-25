@@ -22,6 +22,8 @@ import { CreateOfferDto } from './dto/create-offer.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
 
 import { extractContractErrorCode } from '../common/filters/structured-exception.filter';
+// #937 — use canonical stroop→XLM conversion instead of inline magic constants
+import { stroopsToXlm } from '../common/number-conversions';
 
 /**
  * Maximum number of offers fetched from the contract in a single read.
@@ -103,7 +105,9 @@ export class MarketplaceService {
       if (!retval) return 0;
       return Number(scValToNative(retval));
     } catch (error) {
-      this.logger.warn(`Failed to fetch nonce for ${address}: ${(error as Error).message}`);
+      this.logger.warn(
+        `Failed to fetch nonce for ${address}: ${(error as Error).message}`,
+      );
       return 0;
     }
   }
@@ -284,11 +288,14 @@ export class MarketplaceService {
   }
 
   private mapOffer(id: number, n: any): Offer {
+    // #937 — price_xlm is stored in stroops (i128); convert to a human-readable
+    // XLM string via the canonical util so there is a single source of truth.
+    const stroops = BigInt(n.price_xlm ?? 0);
     return {
       id: String(id),
       seller: String(n.seller),
       credit_id: Buffer.from(n.credit_id as Uint8Array).toString('hex'),
-      price_xlm: String(n.price_xlm),
+      price_xlm: stroopsToXlm(stroops),
       tonnes_available: String(n.tonnes),
       created_at: Number(n.created_at),
       status: n.active ? 'open' : 'cancelled',

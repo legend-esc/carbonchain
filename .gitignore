@@ -138,3 +138,14 @@ pids/
 # Soroban CLI local deploy artifacts
 .stellar/
 contract-ids.*.json
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor artefacts
+*.code-workspace
+.history/
+
