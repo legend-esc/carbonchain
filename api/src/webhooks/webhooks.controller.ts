@@ -6,9 +6,14 @@ import {
   Body,
   Param,
   UseGuards,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import type { Webhook } from './webhooks.service';
+import type {
+  Webhook,
+  WebhookDelivery,
+  WebhookRegistrationResult,
+} from './webhooks.service';
 import { WebhooksService } from './webhooks.service';
 import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
 
@@ -16,19 +21,37 @@ import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
 @Controller('webhooks')
 @UseGuards(WebhookIpAllowlistGuard)
 export class WebhooksController {
-  constructor(private webhooksService: WebhooksService) {}
+  constructor(private readonly webhooksService: WebhooksService) {}
 
+  /**
+   * Register a new webhook endpoint.
+   *
+   * #912 — URL is validated for SSRF (scheme + DNS) before the record is created.
+   * #913 — A per-webhook signing secret is generated and returned exactly once
+   *         in the `secret` field.  Callers must store it; it is not retrievable
+   *         via any subsequent GET endpoint.
+   */
   @ApiOperation({ summary: 'Register a new webhook' })
-  @ApiResponse({ status: 201, description: 'Webhook registered' })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Webhook registered. The `secret` field is returned only in this response.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or SSRF-blocked URL',
+  })
   @Post()
-  registerWebhook(@Body() body: { url: string; events: string[] }): Webhook {
+  async registerWebhook(
+    @Body() body: { url: string; events: string[] },
+  ): Promise<WebhookRegistrationResult> {
     return this.webhooksService.registerWebhook(body.url, body.events);
   }
 
   @ApiOperation({ summary: 'List all registered webhooks' })
   @ApiResponse({ status: 200, description: 'List of webhooks' })
   @Get()
-  getWebhooks(): Webhook[] {
+  async getWebhooks(): Promise<Webhook[]> {
     return this.webhooksService.getWebhooks();
   }
 
@@ -36,15 +59,26 @@ export class WebhooksController {
   @ApiResponse({ status: 200, description: 'Webhook details' })
   @ApiResponse({ status: 404, description: 'Webhook not found' })
   @Get(':id')
-  getWebhook(@Param('id') id: string): Webhook | undefined {
-    return this.webhooksService.getWebhook(id);
+  async getWebhook(@Param('id') id: string): Promise<Webhook> {
+    const webhook = await this.webhooksService.getWebhook(id);
+    if (!webhook) {
+      throw new NotFoundException(`Webhook ${id} not found`);
+    }
+    return webhook;
   }
 
   @ApiOperation({ summary: 'Delete a webhook' })
   @ApiResponse({ status: 200, description: 'Webhook deleted' })
   @Delete(':id')
-  deleteWebhook(@Param('id') id: string): { success: boolean } {
-    const success = this.webhooksService.deleteWebhook(id);
+  async deleteWebhook(@Param('id') id: string): Promise<{ success: boolean }> {
+    const success = await this.webhooksService.deleteWebhook(id);
     return { success };
+  }
+
+  @ApiOperation({ summary: 'List deliveries, optionally filtered by webhook' })
+  @ApiResponse({ status: 200, description: 'List of deliveries' })
+  @Get(':id/deliveries')
+  async getDeliveries(@Param('id') id: string): Promise<WebhookDelivery[]> {
+    return this.webhooksService.getDeliveries(id);
   }
 }

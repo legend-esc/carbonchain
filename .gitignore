@@ -46,6 +46,7 @@ logs/
 # Test artifacts — auto-generated, must not be committed
 coverage/
 __snapshots__/
+**/__snapshots__/
 *.snap
 junit.xml
 test-results/
@@ -74,6 +75,13 @@ playwright-report/
 cypress/screenshots/
 cypress/videos/
 cypress/downloads/
+# Kiro AI artifacts
+.kiro/
+# Codespace / devcontainer
+.devcontainer/
+# Local override files — not for source control
+*.local
+*.local.*
 
 # Build artifacts
 *.js.map
