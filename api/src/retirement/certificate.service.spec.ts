@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { CertificateService, CertificateData } from './certificate.service';
+import { computeFileCid } from '../common/ipfs-cid.util';
 
 const SAMPLE_DATA: CertificateData = {
   retirementId: 'abc123',
@@ -10,6 +11,8 @@ const SAMPLE_DATA: CertificateData = {
   reason: 'Scope 3 offset',
   timestamp: 1735689600,
 };
+
+const VALID_CID = computeFileCid(Buffer.from('certificate pdf bytes'));
 
 describe('CertificateService', () => {
   let service: CertificateService;
@@ -51,5 +54,78 @@ describe('CertificateService', () => {
     // Now await the PDF to confirm it still completes successfully.
     const buf = await pdfPromise;
     expect(buf.length).toBeGreaterThan(0);
+  });
+
+  // ── Issue #493: Pinata failure path ───────────────────────────────────────
+
+  it('generateAndPin returns null ipfsHash when Pinata is unreachable', async () => {
+    // Intercept the global fetch to simulate a network failure.
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+
+    try {
+      const result = await service.generateAndPin(SAMPLE_DATA);
+
+      // PDF was generated.
+      expect(result.pdfBuffer).toBeInstanceOf(Uint8Array);
+      expect(result.pdfBuffer.length).toBeGreaterThan(0);
+
+      // IPFS hash is null (Pinata unreachable — graceful degradation).
+      expect(result.ipfsHash).toBeNull();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('generateAndPin returns null ipfsHash when Pinata returns non-200', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Service Unavailable',
+    });
+
+    try {
+      const result = await service.generateAndPin(SAMPLE_DATA);
+
+      expect(result.pdfBuffer.length).toBeGreaterThan(0);
+      expect(result.ipfsHash).toBeNull();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('generateAndPin returns non-null ipfsHash when Pinata is reachable', async () => {
+    const expectedHash = VALID_CID;
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ IpfsHash: expectedHash }),
+    });
+
+    try {
+      const result = await service.generateAndPin(SAMPLE_DATA);
+
+      expect(result.pdfBuffer.length).toBeGreaterThan(0);
+      expect(result.ipfsHash).toBe(expectedHash);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('generateAndPin propagates DataCloneError from worker as structured 500', async () => {
+    // Build a data object with a non-cloneable property to trigger DataCloneError.
+    // worker_threads uses v8 serialization which tolerates circular references,
+    // but functions cannot be cloned — passing one as workerData throws synchronously.
+    const badData: any = {
+      ...SAMPLE_DATA,
+      callback: () => {},
+    };
+
+    await expect(service.generateAndPin(badData)).rejects.toMatchObject({
+      response: expect.objectContaining({
+        error: 'Certificate generation failed',
+      }),
+    });
   });
 });
