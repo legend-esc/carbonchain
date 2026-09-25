@@ -7,6 +7,7 @@ import { ProjectDetailComponent } from './projects/project-detail.component';
 import { ConnectWalletComponent } from './core/components/connect-wallet.component';
 import { AdminVerifiersComponent } from './admin/admin-verifiers.component';
 import { OfflineComponent } from './offline/offline.component';
+import { PortfolioComponent } from './portfolio/portfolio.component';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
 
@@ -15,6 +16,7 @@ export const routes: Routes = [
   { path: 'connect-wallet', component: ConnectWalletComponent },
   { path: 'offline', component: OfflineComponent },
   { path: 'dashboard', component: DashboardComponent, canActivate: [authGuard] },
+  { path: 'portfolio', component: PortfolioComponent, canActivate: [authGuard] },
   { path: 'marketplace', component: MarketplaceComponent, canActivate: [authGuard] },
   { path: 'retire', component: RetireComponent, canActivate: [authGuard] },
   { path: 'credits/:id', component: CreditDetailComponent, canActivate: [authGuard] },

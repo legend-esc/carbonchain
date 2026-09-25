@@ -11,9 +11,10 @@ import {
   Response,
   NotFoundException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import type { Response as ExpressResponse } from 'express';
-import { RetirementService, RetireDto, BatchRetireDto } from './retirement.service';
+import { RetirementService, BatchRetireDto } from './retirement.service';
+import { RetireDto } from './dto/retire.dto';
 import { RetirementRecord } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from '../credits/credit.repository';
@@ -39,7 +40,21 @@ export class RetirementController {
     private readonly certificateService: CertificateService,
   ) {}
 
-  /** POST /retirement — protected: requires JWT */
+  /**
+   * ## Canonical retire entrypoint
+   *
+   * `POST /retirement` is the **canonical** route for retiring a carbon credit.
+   * All retirement logic lives in `RetirementService.retire()`.
+   * `POST /credits/:id/retire` is a thin proxy that delegates here with an
+   * identical DTO and response shape.
+   *
+   * Response: `{ retirementId: string; certificateIpfsHash: string }`
+   */
+  @ApiOperation({
+    summary: '(Canonical) Retire a carbon credit',
+    description:
+      'Primary retirement entrypoint. POST /credits/:id/retire is a thin proxy that delegates to this route.',
+  })
   @UseGuards(JwtAuthGuard)
   @Post()
   retire(
@@ -64,13 +79,7 @@ export class RetirementController {
     return this.retirementService.listRetirements(page, limit);
   }
 
-  /** GET /retirement/:id — fetch a retirement record */
-  @Get(':id')
-  getRetirement(@Param('id') id: string): Promise<RetirementRecord> {
-    return this.retirementService.getRetirement(id);
-  }
-
-  /** GET /retirement/account/:address — paginated retirements for an account */
+  /** GET /retirement/account/:address — paginated retirements for an account (must precede /:id) */
   @Get('account/:address')
   getByAccount(
     @Param('address') address: string,
@@ -80,7 +89,7 @@ export class RetirementController {
     return this.retirementService.getRetirementsByAccount(address, page, limit);
   }
 
-  /** GET /certificates/:id/download — download retirement certificate as PDF (protected: requires JWT) */
+  /** GET /retirement/certificates/:id/download — download retirement certificate as PDF (protected: requires JWT) */
   @UseGuards(JwtAuthGuard)
   @Get('certificates/:id/download')
   async downloadCertificate(
@@ -114,11 +123,17 @@ export class RetirementController {
     res.send(pdfBuffer);
   }
 
-  /** GET /certificates/:id/verify — verify retirement certificate authenticity (public) */
+  /** GET /retirement/certificates/:id/verify — verify retirement certificate authenticity (public) */
   @Get('certificates/:id/verify')
   verifyCertificate(
     @Param('id') certificateId: string,
   ): Promise<CertificateVerification> {
     return this.retirementService.verifyCertificate(certificateId);
+  }
+
+  /** GET /retirement/:id — fetch a retirement record (must come after all static sub-paths) */
+  @Get(':id')
+  getRetirement(@Param('id') id: string): Promise<RetirementRecord> {
+    return this.retirementService.getRetirement(id);
   }
 }

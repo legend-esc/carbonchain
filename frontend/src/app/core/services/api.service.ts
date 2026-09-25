@@ -147,6 +147,31 @@ export class ApiService {
     return this.http.get<import('@shared').RetirementRecord>(`${this.baseUrl}/retirement/${id}`);
   }
 
+  /** POST /credits/:id/split */
+  splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Observable<{ childCredit1: string; childCredit2: string }> {
+    return this.http.post<{ childCredit1: string; childCredit2: string }>(
+      `${this.baseUrl}/credits/${creditId}/split`,
+      { splitTonnes },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /** POST /credits/merge */
+  mergeCredits(
+    creditIds: string[],
+    token: string,
+  ): Observable<{ mergedCreditId: string }> {
+    return this.http.post<{ mergedCreditId: string }>(
+      `${this.baseUrl}/credits/merge`,
+      { creditIds },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
   /** POST /marketplace/offer */
   createOffer(
     body: { sellerPublicKey: string; creditId: string; priceXlm: string; tonnes: string },

@@ -9,6 +9,8 @@ dist/
 .env
 .env.*
 !.env.example
+.env.local
+.env.*.local
 frontend/src/environments/environment.ts
 frontend/src/environments/environment.prod.ts
 
@@ -39,6 +41,7 @@ logs/
 # Test artifacts
 coverage/
 __snapshots__/
+**/__snapshots__/
 *.snap
 junit.xml
 test-results/

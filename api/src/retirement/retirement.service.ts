@@ -8,15 +8,11 @@ import { RetirementEntity } from './retirement.entity';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
 import { PageResult } from '../credits/credit.repository';
+// Import the validated DTO from the dto file so there is a single source of truth.
+// Re-exported below so existing imports of RetireDto from this module continue to work.
+export { RetireDto } from './dto/retire.dto';
 
 export const MAX_BATCH_SIZE = 20;
-
-export class RetireDto {
-  buyerPublicKey: string;
-  creditId: string;
-  tonnes: string;
-  reason: string;
-}
 
 export class BatchRetireDto {
   buyerPublicKey: string;

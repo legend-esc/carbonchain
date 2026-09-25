@@ -8,9 +8,10 @@ import {
   InMemoryCreditRepository,
   CREDIT_REPOSITORY,
 } from './credit.repository';
+import { RetirementModule } from '../retirement/retirement.module';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule],
+  imports: [ConfigModule, StellarModule, AuthModule, RetirementModule],
   controllers: [CreditsController],
   providers: [
     CreditsService,

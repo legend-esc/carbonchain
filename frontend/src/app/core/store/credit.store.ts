@@ -105,4 +105,77 @@ export class CreditStore {
     this._error.set(null);
     this._selectedId.set(null);
   }
+
+  /**
+   * Split a credit into two child credits.
+   * Calls POST /credits/:id/split.
+   * On success, removes the parent credit from the store and adds the two
+   * child credits (re-fetched individually).
+   *
+   * @param creditId  The parent credit ID to split.
+   * @param splitTonnes  Tonnes for the first child (as BigInt-compatible string).
+   * @param token  JWT for authentication.
+   * @returns IDs of both child credits.
+   */
+  async splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    this._loadingState.set('loading');
+    this._error.set(null);
+    try {
+      const result = await firstValueFrom(
+        this.api.splitCredit(creditId, splitTonnes, token),
+      );
+      // Remove the parent and load both children into the store.
+      this._credits.update((list) => list.filter((c) => c.id !== creditId));
+      const [child1, child2] = await Promise.all([
+        firstValueFrom(this.api.getCredit(result.childCredit1)),
+        firstValueFrom(this.api.getCredit(result.childCredit2)),
+      ]);
+      this._credits.update((list) => [...list, child1, child2]);
+      this._loadingState.set('loaded');
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : `Failed to split credit ${creditId}.`;
+      this._error.set(msg);
+      this._loadingState.set('error');
+      throw err;
+    }
+  }
+
+  /**
+   * Merge multiple credits into one.
+   * Calls POST /credits/merge.
+   * On success, removes the source credits from the store and adds the
+   * merged credit (re-fetched by ID).
+   *
+   * @param creditIds  IDs of credits to merge (must share methodology, vintage, issuer).
+   * @param token  JWT for authentication.
+   * @returns ID of the new merged credit.
+   */
+  async mergeCredits(
+    creditIds: string[],
+    token: string,
+  ): Promise<{ mergedCreditId: string }> {
+    this._loadingState.set('loading');
+    this._error.set(null);
+    try {
+      const result = await firstValueFrom(
+        this.api.mergeCredits(creditIds, token),
+      );
+      // Remove source credits and add the merged one.
+      this._credits.update((list) => list.filter((c) => !creditIds.includes(c.id)));
+      const merged = await firstValueFrom(this.api.getCredit(result.mergedCreditId));
+      this._credits.update((list) => [...list, merged]);
+      this._loadingState.set('loaded');
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to merge credits.';
+      this._error.set(msg);
+      this._loadingState.set('error');
+      throw err;
+    }
+  }
 }

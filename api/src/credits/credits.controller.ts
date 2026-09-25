@@ -15,11 +15,16 @@ import { CreditsService, IssueCreditDto } from './credits.service';
 import { CreditMetadata } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from './credit.repository';
+import { RetirementService } from '../retirement/retirement.service';
+import { RetireDto } from '../retirement/dto/retire.dto';
 
 @ApiTags('credits')
 @Controller('credits')
 export class CreditsController {
-  constructor(private readonly creditsService: CreditsService) {}
+  constructor(
+    private readonly creditsService: CreditsService,
+    private readonly retirementService: RetirementService,
+  ) {}
 
   /** POST /credits/issue — protected: requires JWT */
   @UseGuards(JwtAuthGuard)
@@ -116,5 +121,38 @@ export class CreditsController {
     @Request() req: any,
   ): Promise<{ childCredit1: string; childCredit2: string }> {
     return this.creditsService.splitCredit(creditId, dto.splitTonnes, req.user.account);
+  }
+
+  /**
+   * ## Thin proxy — retire via credit ID route
+   *
+   * `POST /credits/:id/retire` is a convenience route that delegates directly
+   * to the **canonical** `POST /retirement` entrypoint via
+   * `RetirementService.retire()`.  Both routes share the same DTO shape
+   * (`RetireDto`) and return an identical response:
+   * `{ retirementId: string; certificateIpfsHash: string }`.
+   *
+   * Do NOT add independent logic here — all retire business logic lives in
+   * `RetirementService.retire()`.
+   */
+  @ApiOperation({
+    summary: '(Proxy) Retire a credit — delegates to POST /retirement',
+    description:
+      'Thin proxy for POST /retirement. Uses the same RetireDto and returns the same response shape. The credit ID from the URL is used as the creditId field.',
+  })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/retire')
+  async retireCredit(
+    @Param('id') creditId: string,
+    @Body() body: { buyerPublicKey: string; tonnes: string; reason: string },
+    @Request() req: any,
+  ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    const dto: RetireDto = {
+      buyerPublicKey: body.buyerPublicKey ?? req.user.account,
+      creditId,
+      tonnes: body.tonnes,
+      reason: body.reason,
+    };
+    return this.retirementService.retire(dto);
   }
 }
