@@ -222,6 +222,13 @@ export class RetirementService {
 
     const txHash = (response as unknown as { hash?: string })?.hash ?? '';
 
+    // Issue #943 — capture the ledger sequence number from the Soroban RPC
+    // response so the retirement record carries a tamper-proof on-chain anchor.
+    // The `ledger` field is present on a SUCCESS response; it may be absent for
+    // error/not-found shapes so we default to 0 for legacy compatibility.
+    const ledgerSeq =
+      (response as unknown as { ledger?: number })?.ledger ?? 0;
+
     // ── Step 1: Persist to off-chain index ───────────────────────────────────
     // The record MUST be written before the CreditRetired event is emitted.
     // If this write throws, the event is never emitted and the caller receives
@@ -236,6 +243,8 @@ export class RetirementService {
     entity.txHash = txHash;
     // Issue #589 — persist vintage year for certificate provenance
     entity.vintageYear = dto.vintageYear ?? 0;
+    // Issue #943 — persist ledger anchor so GET /certificates/:id exposes it
+    entity.ledgerSeq = ledgerSeq;
     await this.retirementRepo.save(entity);
 
     // ── Step 2: Emit CreditRetired event ─────────────────────────────────────
@@ -625,6 +634,8 @@ export class RetirementService {
       certificate_ipfs_hash: e.certificateIpfsHash ?? '',
       // Issue #589 — only include vintage_year when non-zero (0 = legacy record)
       ...(e.vintageYear ? { vintage_year: e.vintageYear } : {}),
+      // Issue #943 — only include ledger_seq when non-zero (0 = legacy record)
+      ...(e.ledgerSeq ? { ledger_seq: e.ledgerSeq } : {}),
     };
   }
 

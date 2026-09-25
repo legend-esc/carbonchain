@@ -33,4 +33,14 @@ export class RetirementEntity {
    *  Zero for legacy retirements that pre-date this field. */
   @Column({ type: 'int', default: 0 })
   vintageYear: number;
+
+  /**
+   * Issue #943 — Stellar ledger sequence number at which this retirement was
+   * anchored on-chain.  Zero for legacy retirements that pre-date this field.
+   * The sequence is obtained from the Soroban RPC getTransaction response and
+   * stored as a tamper-proof on-chain reference so certificate verifiers can
+   * look up the exact ledger closure that recorded the retirement.
+   */
+  @Column({ type: 'int', default: 0, name: 'ledger_seq' })
+  ledgerSeq: number;
 }

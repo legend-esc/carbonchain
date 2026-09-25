@@ -33,6 +33,31 @@ export class MetricsService implements OnModuleInit {
   /** Gauge: current number of active (non-retired) credits on-chain. */
   carbonchainCreditsActiveTotal: client.Gauge<string>;
 
+  /**
+   * Issue #944 — Histogram of wall-clock duration of Soroban RPC calls
+   * (readContract and invokeContract), bucketed by method and outcome.
+   *
+   * Labels:
+   *   method  — the contract function name (e.g. "retire", "approve_and_mint")
+   *   outcome — "success" | "failure"
+   *
+   * Buckets are designed to cover the realistic Soroban response range:
+   *   fast simulation (50ms) → slow submission + polling (30s).
+   */
+  stellarRpcDurationSeconds: client.Histogram<string>;
+
+  /**
+   * Issue #944 — Counter of Soroban contract operations by key operation type.
+   * Tracks read vs write operations independently so dashboards can distinguish
+   * simulation-only calls from full submission flows.
+   *
+   * Labels:
+   *   op_type — "read" | "invoke"
+   *   method  — the contract function name
+   *   outcome — "success" | "failure"
+   */
+  stellarContractOpsTotal: client.Counter<string>;
+
   constructor() {
     this.register = new client.Registry();
     client.collectDefaultMetrics({ register: this.register });
@@ -101,6 +126,24 @@ export class MetricsService implements OnModuleInit {
     this.carbonchainCreditsActiveTotal = new client.Gauge({
       name: 'carbonchain_credits_active_total',
       help: 'Current number of active carbon credits on-chain',
+      registers: [this.register],
+    });
+
+    // ── Issue #944: Soroban RPC latency metrics ──────────────────────────────
+
+    this.stellarRpcDurationSeconds = new client.Histogram({
+      name: 'stellar_rpc_duration_seconds',
+      help: 'Wall-clock duration of Soroban RPC calls (readContract / invokeContract) in seconds',
+      labelNames: ['method', 'outcome'],
+      // Buckets span fast simulation (~50ms) to slow polling submission (~30s).
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+      registers: [this.register],
+    });
+
+    this.stellarContractOpsTotal = new client.Counter({
+      name: 'stellar_contract_ops_total',
+      help: 'Total number of Soroban contract operations by type (read vs invoke), method and outcome',
+      labelNames: ['op_type', 'method', 'outcome'],
       registers: [this.register],
     });
   }

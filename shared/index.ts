@@ -56,6 +56,13 @@ export interface RetirementRecord {
   certificate_ipfs_hash?: string;
   /** Issue #589 — vintage year of the credit (e.g. 2024). Absent for legacy records. */
   vintage_year?: number;
+  /**
+   * Issue #943 — Stellar ledger sequence number at which this retirement was
+   * anchored on-chain. Provides a tamper-proof reference to the specific ledger
+   * that closed the retirement transaction. Absent for legacy records that
+   * pre-date this field.
+   */
+  ledger_seq?: number;
 }
 
 export interface Offer {

@@ -134,16 +134,20 @@ function isInSkipList(ip: string, cidrs: CidrEntry[]): boolean {
 /**
  * Default trusted reverse-proxy CIDR ranges.
  *
- * `x-forwarded-for` is only honoured when the *direct* connection originates
- * from one of these ranges. We default to loopback plus the RFC1918 private
- * and link-local ranges because that is where a reverse proxy / load balancer
- * normally sits. Anything outside these ranges (i.e. a client connecting
- * directly from a public IP) is never trusted, so a spoofed
- * `x-forwarded-for` header from such a client is ignored and cannot be used
- * to dodge rate limits.
+ * These are ONLY used when `TRUST_PROXY=1` and `TRUSTED_PROXY_CIDRS` is not
+ * set.  When `TRUST_PROXY=0` (the default) the `x-forwarded-for` header is
+ * completely ignored regardless of the source IP.
  *
- * Override with the `THROTTLER_TRUSTED_PROXIES` env var (comma-separated
- * IPv4 CIDRs). Set it to an empty value to trust nothing.
+ * The defaults cover loopback + RFC1918 private and link-local ranges because
+ * that is where a reverse proxy / load balancer normally sits.  Anything outside
+ * these ranges (a client connecting directly from a public IP) is never
+ * trusted, so a spoofed `x-forwarded-for` cannot bypass rate limits.
+ *
+ * Override with `TRUSTED_PROXY_CIDRS` (comma-separated IPv4 CIDRs).
+ * Set to an empty string to trust nothing even when `TRUST_PROXY=1`.
+ *
+ * Issue #945: `TRUST_PROXY` and `TRUSTED_PROXY_CIDRS` are validated through
+ * env-validation.ts so their values are always well-formed at startup.
  */
 const DEFAULT_TRUSTED_PROXY_CIDRS = [
   '127.0.0.0/8',
@@ -212,17 +216,33 @@ function registerStore(store: Map<string, HitRecord>): void {
  *
  * In production the default is an empty list (no bypass).
  *
- * ## Trusted proxies (THROTTLER_TRUSTED_PROXIES)
- * The `x-forwarded-for` header is only trusted when the *direct* socket peer
- * is a configured trusted proxy. By default loopback and RFC1918 private /
- * link-local ranges are trusted (the usual position of a reverse proxy or
- * load balancer). Any client connecting directly from a public IP has its
- * `x-forwarded-for` ignored, so it cannot be spoofed to dodge limits.
+ * ## Trusted proxies (TRUST_PROXY + TRUSTED_PROXY_CIDRS) — issue #945
  *
- * Override with a comma-separated list of IPv4 CIDRs. Set to an empty string
- * to trust no proxy at all (every request is throttled by its socket IP).
+ * `TRUST_PROXY` (integer, 0 or 1, default 0)
+ *   Explicit toggle for reverse-proxy trust. When 0 (default), `x-forwarded-for`
+ *   is completely ignored and throttling is always based on the direct socket
+ *   peer IP. This is the safe default: a spoofed XFF header from an untrusted
+ *   client can never bypass rate limits.
  *
- *   THROTTLER_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+ *   Set to 1 when the API runs behind a trusted reverse proxy (e.g. the nginx
+ *   container in docker-compose) so that the guard correctly identifies the
+ *   real client IP from the XFF header.
+ *
+ * `TRUSTED_PROXY_CIDRS` (string, comma-separated IPv4 CIDRs)
+ *   Only meaningful when TRUST_PROXY=1. Defines which direct-connection source
+ *   IPs are trusted to set `x-forwarded-for`. Defaults to loopback + RFC1918
+ *   private/link-local ranges when not set. Set to an empty string to trust
+ *   no proxy even with TRUST_PROXY=1.
+ *
+ * Security guarantee:
+ *   - TRUST_PROXY=0: XFF is never read; socket IP always wins. Spoof-proof.
+ *   - TRUST_PROXY=1: XFF only honoured from IPs in TRUSTED_PROXY_CIDRS; the
+ *     rightmost untrusted hop in the XFF chain is taken as the client. A client
+ *     that adds its own XFF entries cannot advance past the first untrusted hop.
+ *
+ * ## Legacy env var (THROTTLER_TRUSTED_PROXIES)
+ * Kept for backward compatibility. Takes effect only when TRUST_PROXY is absent
+ * from the environment (pre-#945 deployments). Prefer TRUST_PROXY + TRUSTED_PROXY_CIDRS.
  */
 @Injectable()
 export class ThrottlerGuard implements CanActivate {
@@ -230,6 +250,8 @@ export class ThrottlerGuard implements CanActivate {
   private readonly store = new Map<string, HitRecord>();
   private readonly skipCidrs: CidrEntry[];
   private readonly trustedProxies: CidrEntry[];
+  /** Issue #945: when false, x-forwarded-for is completely ignored. */
+  private readonly trustProxy: boolean;
   private readonly logger = new Logger(ThrottlerGuard.name);
 
   constructor(
@@ -244,13 +266,40 @@ export class ThrottlerGuard implements CanActivate {
       .map(parseCidr)
       .filter((e): e is CidrEntry => e !== null);
 
-    const trustedRaw = process.env['THROTTLER_TRUSTED_PROXIES']?.trim();
-    const trustedSource = trustedRaw
-      ? trustedRaw
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : DEFAULT_TRUSTED_PROXY_CIDRS;
+    // Issue #945 — TRUST_PROXY is the canonical toggle.
+    // Fall back to the legacy THROTTLER_TRUSTED_PROXIES behaviour when
+    // TRUST_PROXY is not set, for backward compatibility.
+    const trustProxyEnv = process.env['TRUST_PROXY'];
+    if (trustProxyEnv !== undefined) {
+      // Explicit setting: 0 = never trust XFF, 1 = trust XFF from CIDR list.
+      this.trustProxy = trustProxyEnv.trim() === '1';
+    } else {
+      // Legacy mode: if THROTTLER_TRUSTED_PROXIES is set, trust is implicit.
+      this.trustProxy = true;
+    }
+
+    // Resolve the trusted CIDR list.
+    // Priority: TRUSTED_PROXY_CIDRS → THROTTLER_TRUSTED_PROXIES → defaults.
+    const trustedProxyCidrs = process.env['TRUSTED_PROXY_CIDRS'];
+    const legacyTrustedProxies = process.env['THROTTLER_TRUSTED_PROXIES'];
+    let trustedSource: string[];
+
+    if (trustedProxyCidrs !== undefined) {
+      // Explicit #945 setting (may be empty string = trust nothing).
+      trustedSource = trustedProxyCidrs
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (legacyTrustedProxies) {
+      // Legacy env var.
+      trustedSource = legacyTrustedProxies
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else {
+      trustedSource = DEFAULT_TRUSTED_PROXY_CIDRS;
+    }
+
     this.trustedProxies = trustedSource
       .map(parseCidr)
       .filter((e): e is CidrEntry => e !== null);
@@ -451,15 +500,23 @@ export class ThrottlerGuard implements CanActivate {
   /**
    * Determine the client IP to throttle by.
    *
-   * `x-forwarded-for` is only trusted when the *direct* socket peer is a
-   * configured trusted proxy (THROTTLER_TRUSTED_PROXIES, defaulting to
-   * loopback + RFC1918 ranges). When we do trust the proxy, we walk the
-   * header from right to left, skipping trusted proxy hops, and take the
-   * first untrusted hop as the real client. This prevents a client from
-   * spoofing `x-forwarded-for` to assume another identity and dodge limits.
+   * Issue #945 — TRUST_PROXY=0 (default): `x-forwarded-for` is completely
+   * ignored; the direct socket peer IP is always used. This is the safe
+   * default and prevents spoofed XFF headers from bypassing rate limits.
+   *
+   * TRUST_PROXY=1: `x-forwarded-for` is only trusted when the *direct*
+   * socket peer is in the TRUSTED_PROXY_CIDRS allowlist. We then walk the
+   * XFF chain right-to-left, skipping trusted proxy hops, and take the first
+   * untrusted hop as the real client IP. This prevents a client from injecting
+   * arbitrary leftmost hops to impersonate a different IP.
    */
   private extractIp(req: Request): string {
     const socketIp = req.socket?.remoteAddress ?? 'unknown';
+
+    // Issue #945 — when trust is disabled, always use the socket peer.
+    if (!this.trustProxy) {
+      return socketIp;
+    }
 
     const xffHeader = req.headers['x-forwarded-for'];
     const xff = Array.isArray(xffHeader) ? xffHeader[0] : xffHeader;

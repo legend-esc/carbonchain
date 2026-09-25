@@ -52,6 +52,39 @@ function makeGuardWithSkipIps(skipIps: string): ThrottlerGuard {
   return guard;
 }
 
+/**
+ * Issue #945 — Helper to create a guard with an explicit TRUST_PROXY and
+ * optional TRUSTED_PROXY_CIDRS value. Restores env vars after construction
+ * so tests don't bleed into each other.
+ */
+function makeGuardWithTrustProxy(
+  trustProxy: '0' | '1',
+  trustedCidrs?: string,
+): ThrottlerGuard {
+  const origTrustProxy = process.env['TRUST_PROXY'];
+  const origCidrs = process.env['TRUSTED_PROXY_CIDRS'];
+  process.env['TRUST_PROXY'] = trustProxy;
+  if (trustedCidrs !== undefined) {
+    process.env['TRUSTED_PROXY_CIDRS'] = trustedCidrs;
+  }
+  const reflector = new Reflector();
+  const guard = new ThrottlerGuard(reflector);
+  // Restore
+  if (origTrustProxy === undefined) {
+    delete process.env['TRUST_PROXY'];
+  } else {
+    process.env['TRUST_PROXY'] = origTrustProxy;
+  }
+  if (trustedCidrs !== undefined) {
+    if (origCidrs === undefined) {
+      delete process.env['TRUSTED_PROXY_CIDRS'];
+    } else {
+      process.env['TRUSTED_PROXY_CIDRS'] = origCidrs;
+    }
+  }
+  return guard;
+}
+
 describe('ThrottlerGuard', () => {
   let reflector: Reflector;
   let guard: ThrottlerGuard;
@@ -624,6 +657,199 @@ describe('ThrottlerGuard (per-account mode)', () => {
       await expect(skipGuard.canActivate(makeCtx('8.8.8.8'))).rejects.toThrow(
         HttpException,
       );
+    });
+  });
+});
+
+// ── Issue #945: TRUST_PROXY / TRUSTED_PROXY_CIDRS tests ───────────────────
+
+describe('ThrottlerGuard (issue #945 — TRUST_PROXY policy)', () => {
+  /**
+   * Helper that builds an ExecutionContext with a given socket IP, XFF header,
+   * and route throttle options, wiring up the guard's reflector.
+   */
+  function makeXffContext(
+    guard: ThrottlerGuard,
+    socketIp: string,
+    xff: string | undefined,
+    options: ThrottleOptions,
+  ): ExecutionContext {
+    jest
+      .spyOn(guard['reflector'], 'get')
+      .mockImplementation((key: unknown) =>
+        key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+      );
+
+    const headers: Record<string, string> = {};
+    if (xff !== undefined) headers['x-forwarded-for'] = xff;
+
+    const mockReq = {
+      headers,
+      socket: { remoteAddress: socketIp },
+      path: '/auth/challenge',
+      body: {},
+    };
+
+    return {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+  }
+
+  const opts: ThrottleOptions = { limit: 3, ttl: 60_000 };
+
+  describe('TRUST_PROXY=0 (default/untrusted mode)', () => {
+    let guard: ThrottlerGuard;
+
+    beforeEach(() => {
+      guard = makeGuardWithTrustProxy('0');
+    });
+
+    it('always uses the socket IP regardless of x-forwarded-for', async () => {
+      // An attacker behind a public IP sets XFF to spoof a "clean" address.
+      // With TRUST_PROXY=0 the socket IP is always used — spoof has no effect.
+      const ctx = makeXffContext(
+        guard,
+        '5.5.5.5',       // attacker's real socket IP
+        '1.2.3.4',       // spoofed VIP address in XFF
+        { limit: 1, ttl: 60_000 },
+      );
+
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      // Second request still throttled by socket IP 5.5.5.5, not spoofed 1.2.3.4.
+      await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    });
+
+    it('spoofed XFF cannot bypass limit — N requests from same socket all count', async () => {
+      // Attacker rotates XFF values trying to look like N different clients.
+      const socketIp = '203.0.113.99';
+      const limit = 3;
+      const limitOpts: ThrottleOptions = { limit, ttl: 60_000 };
+
+      jest
+        .spyOn(guard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : limitOpts,
+        );
+
+      for (let i = 0; i < limit; i++) {
+        const headers = { 'x-forwarded-for': `10.0.0.${i}` }; // rotating spoofed IPs
+        const req = {
+          headers,
+          socket: { remoteAddress: socketIp },
+          path: '/auth/challenge',
+          body: {},
+        };
+        const ctx = {
+          switchToHttp: () => ({
+            getRequest: () => req,
+            getResponse: () => ({ set: jest.fn() }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        } as unknown as ExecutionContext;
+
+        await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      }
+
+      // Request N+1 must be throttled even though XFF was rotated each time.
+      const headers = { 'x-forwarded-for': '10.0.0.100' };
+      const req = {
+        headers,
+        socket: { remoteAddress: socketIp },
+        path: '/auth/challenge',
+        body: {},
+      };
+      const ctx = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+          getResponse: () => ({ set: jest.fn() }),
+        }),
+        getHandler: () => ({}),
+        getClass: () => ({}),
+      } as unknown as ExecutionContext;
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(
+        new HttpException(
+          { message: 'Too Many Requests', retryAfter: expect.any(Number) },
+          HttpStatus.TOO_MANY_REQUESTS,
+        ),
+      );
+    });
+  });
+
+  describe('TRUST_PROXY=1 (trusted proxy mode)', () => {
+    let guard: ThrottlerGuard;
+
+    beforeEach(() => {
+      // Trust only the loopback range (127.0.0.0/8) to keep tests deterministic.
+      guard = makeGuardWithTrustProxy('1', '127.0.0.0/8');
+    });
+
+    it('uses the rightmost untrusted hop from XFF when connecting via trusted proxy', async () => {
+      // Socket is 127.0.0.1 (trusted proxy), XFF has client 203.0.113.5.
+      const ctx = makeXffContext(
+        guard,
+        '127.0.0.1',
+        '203.0.113.5, 127.0.0.1',
+        { limit: 1, ttl: 60_000 },
+      );
+
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      // Second request from same client (203.0.113.5) is throttled.
+      await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    });
+
+    it('ignores XFF when socket is NOT a trusted proxy even with TRUST_PROXY=1', async () => {
+      // Socket is a public IP, not in the trusted CIDR list.
+      const ctx = makeXffContext(
+        guard,
+        '8.8.8.8',             // not trusted
+        '10.0.0.1, 127.0.0.1', // spoofed XFF pretending to come via loopback
+        { limit: 1, ttl: 60_000 },
+      );
+
+      // Should throttle on socket IP 8.8.8.8, not on spoofed XFF.
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    });
+
+    it('different clients through the trusted proxy have independent counters', async () => {
+      const limitOpts: ThrottleOptions = { limit: 1, ttl: 60_000 };
+
+      const makeCtxForClient = (clientIp: string) => {
+        jest
+          .spyOn(guard['reflector'], 'get')
+          .mockImplementation((key: unknown) =>
+            key === ACCOUNT_THROTTLE_KEY ? undefined : limitOpts,
+          );
+        return {
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: { 'x-forwarded-for': clientIp },
+              socket: { remoteAddress: '127.0.0.1' },
+              path: '/auth/challenge',
+              body: {},
+            }),
+            getResponse: () => ({ set: jest.fn() }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        } as unknown as ExecutionContext;
+      };
+
+      // Client A gets their one allowed request.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.1'))).resolves.toBe(true);
+      // Client B gets their own independent counter.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.2'))).resolves.toBe(true);
+      // Client A is now throttled.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.1'))).rejects.toThrow(HttpException);
+      // Client B is also throttled on their second request.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.2'))).rejects.toThrow(HttpException);
     });
   });
 });

@@ -23,8 +23,12 @@ import { RequestContextStore } from '../common/request-context';
 import {
   METRICS_EVENT_EMITTER,
   CONTRACT_INVOCATION_COMPLETED,
+  CONTRACT_READ_COMPLETED,
 } from '../metrics/metrics-events';
-import type { ContractInvocationCompletedEvent } from '../metrics/metrics-events';
+import type {
+  ContractInvocationCompletedEvent,
+  ContractReadCompletedEvent,
+} from '../metrics/metrics-events';
 import type { EventEmitter } from 'events';
 
 /**
@@ -609,6 +613,38 @@ export class StellarService implements OnModuleInit {
   }
 
   async readContract(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[] = [],
+  ): Promise<xdr.ScVal | undefined> {
+    // Issue #944 — time the read (simulation-only) call so MetricsListener can
+    // record stellar_rpc_duration_seconds and stellar_contract_ops_total.
+    const startTime = Date.now();
+    try {
+      const result = await this.readContractImpl(contractId, method, args);
+      this.metricsEmitter?.emit(CONTRACT_READ_COMPLETED, {
+        contract: contractId,
+        method,
+        status: 'success',
+        durationMs: Date.now() - startTime,
+      } satisfies ContractReadCompletedEvent);
+      return result;
+    } catch (error: unknown) {
+      this.metricsEmitter?.emit(CONTRACT_READ_COMPLETED, {
+        contract: contractId,
+        method,
+        status: 'failure',
+        durationMs: Date.now() - startTime,
+      } satisfies ContractReadCompletedEvent);
+      throw error;
+    }
+  }
+
+  /**
+   * Core implementation of readContract, extracted so the public method can
+   * wrap it with timing/event emission without duplicating logic.
+   */
+  private async readContractImpl(
     contractId: string,
     method: string,
     args: xdr.ScVal[] = [],

@@ -4,10 +4,12 @@ import { MetricsService } from './metrics.service';
 import {
   METRICS_EVENT_EMITTER,
   CONTRACT_INVOCATION_COMPLETED,
+  CONTRACT_READ_COMPLETED,
   RETIREMENT_COMPLETED,
 } from './metrics-events';
 import type {
   ContractInvocationCompletedEvent,
+  ContractReadCompletedEvent,
   RetirementCompletedEvent,
 } from './metrics-events';
 
@@ -36,6 +38,13 @@ export class MetricsListener implements OnModuleDestroy {
       CONTRACT_INVOCATION_COMPLETED,
       (payload: ContractInvocationCompletedEvent) => {
         this.onContractInvocationCompleted(payload);
+      },
+    );
+
+    this.emitter.on(
+      CONTRACT_READ_COMPLETED,
+      (payload: ContractReadCompletedEvent) => {
+        this.onContractReadCompleted(payload);
       },
     );
 
@@ -74,6 +83,39 @@ export class MetricsListener implements OnModuleDestroy {
         ?.labels({ contract: payload.contract, method: payload.method })
         .observe(payload.feeStroops);
     }
+
+    // Issue #944 — also record on the per-method RPC latency histogram and
+    // the contract-ops counter so dashboards can see per-op distributions.
+    const outcome = payload.status === 'success' ? 'success' : 'failure';
+    this.metricsService.stellarRpcDurationSeconds?.observe(
+      { method: payload.method, outcome },
+      payload.durationMs / 1000,
+    );
+    this.metricsService.stellarContractOpsTotal?.inc({
+      op_type: 'invoke',
+      method: payload.method,
+      outcome,
+    });
+  }
+
+  /**
+   * Issue #944 — Handle completion of a simulation-only (read) contract call.
+   * Records latency on `stellar_rpc_duration_seconds` and increments
+   * `stellar_contract_ops_total{op_type="read"}`.
+   */
+  private onContractReadCompleted(
+    payload: ContractReadCompletedEvent,
+  ): void {
+    const outcome = payload.status === 'success' ? 'success' : 'failure';
+    this.metricsService.stellarRpcDurationSeconds?.observe(
+      { method: payload.method, outcome },
+      payload.durationMs / 1000,
+    );
+    this.metricsService.stellarContractOpsTotal?.inc({
+      op_type: 'read',
+      method: payload.method,
+      outcome,
+    });
   }
 
   private onRetirementCompleted(payload: RetirementCompletedEvent): void {
@@ -102,6 +144,7 @@ export class MetricsListener implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.emitter.removeAllListeners(CONTRACT_INVOCATION_COMPLETED);
+    this.emitter.removeAllListeners(CONTRACT_READ_COMPLETED);
     this.emitter.removeAllListeners(RETIREMENT_COMPLETED);
     this.emitter.removeAllListeners('error');
   }
