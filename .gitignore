@@ -46,7 +46,9 @@ logs/
 # Test artifacts
 coverage/
 __snapshots__/
+**/__snapshots__/
 *.snap
+*.test-snapshot
 junit.xml
 test-results/
 .nyc_output/
@@ -60,6 +62,12 @@ browser_test_results/
 # Vitest / Jest cache
 .vitest-cache/
 .jest-cache/
+# Playwright / Cypress test outputs
+playwright-report/
+cypress/screenshots/
+cypress/videos/
+# Storybook
+storybook-static/
 
 # Build artifacts
 *.js.map
