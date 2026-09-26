@@ -1,34 +1,12 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { AdminVerifiersComponent } from './admin-verifiers.component';
-import { AdminService, ExpireCreditResult, ResolveDisputeResult, SlashVerifierResult } from './admin.service';
+import { ApiService } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
-
-/** Map of contract error codes to user-friendly messages for admin actions. */
-const ADMIN_CONTRACT_ERRORS: Record<string, string> = {
-  '100': 'Credit not found.',
-  '101': 'Credit is already retired and cannot be expired.',
-  '102': 'Credit is already expired.',
-  '109': 'Insufficient admin privileges to perform this action.',
-  '110': 'Dispute not found.',
-  '111': 'Dispute is already resolved.',
-  '112': 'Verifier not found.',
-  '113': 'Verifier has insufficient stake to slash.',
-  '114': 'Slash amount exceeds verifier stake.',
-  '123': 'Contract is currently paused. Try again later.',
-};
-
-function mapAdminError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  for (const [code, friendly] of Object.entries(ADMIN_CONTRACT_ERRORS)) {
-    if (msg.includes(code)) return friendly;
-  }
-  return msg || 'An unexpected error occurred. Please try again.';
-}
-
-type AdminTab = 'verifiers' | 'expire' | 'dispute' | 'slash';
+import { ToastService } from '../core/services/toast.service';
+import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
 @Component({
   selector: 'app-admin',
@@ -36,680 +14,642 @@ type AdminTab = 'verifiers' | 'expire' | 'dispute' | 'slash';
   imports: [CommonModule, FormsModule, AdminVerifiersComponent],
   template: `
     <main class="admin-panel">
-      <h1>Admin Panel</h1>
+      <h1 class="panel-title">Admin Panel</h1>
 
-      <!-- Tab navigation -->
-      <nav class="tab-nav" role="tablist" aria-label="Admin sections">
-        <button
-          role="tab"
-          [attr.aria-selected]="activeTab() === 'verifiers'"
-          [class.tab--active]="activeTab() === 'verifiers'"
-          class="tab-btn"
-          (click)="setTab('verifiers')"
-        >
-          Verifiers
-        </button>
-        <button
-          role="tab"
-          [attr.aria-selected]="activeTab() === 'expire'"
-          [class.tab--active]="activeTab() === 'expire'"
-          class="tab-btn"
-          (click)="setTab('expire')"
-        >
-          Expire Credit
-        </button>
-        <button
-          role="tab"
-          [attr.aria-selected]="activeTab() === 'dispute'"
-          [class.tab--active]="activeTab() === 'dispute'"
-          class="tab-btn"
-          (click)="setTab('dispute')"
-        >
-          Resolve Dispute
-        </button>
-        <button
-          role="tab"
-          [attr.aria-selected]="activeTab() === 'slash'"
-          [class.tab--active]="activeTab() === 'slash'"
-          class="tab-btn"
-          (click)="setTab('slash')"
-        >
-          Slash Verifier
-        </button>
-      </nav>
-
-      <!-- Verifiers tab -->
-      @if (activeTab() === 'verifiers') {
+      <!-- ── Verifier Management ──────────────────────────────────────────── -->
+      <section class="panel-section">
         <app-admin-verifiers />
-      }
+      </section>
 
-      <!-- Expire Credit tab -->
-      @if (activeTab() === 'expire') {
-        <section class="admin-section" aria-label="Expire credit">
-          <h2>Expire Credit</h2>
-          <p class="help-text">
-            Force-expire a credit to prevent further transfers or retirements.
-            This action is irreversible and recorded on-chain.
-          </p>
+      <!-- ── Methodology Registration ────────────────────────────────────── -->
+      <section class="panel-section">
+        <h2 class="section-title">Methodology Registration</h2>
+        <p class="section-description">
+          Register a new carbon credit methodology. Credits submitted with this methodology name
+          will pass validation on the contract.
+        </p>
 
-          @if (expireError()) {
-            <p class="alert alert--error" role="alert">{{ expireError() }}</p>
-          }
-          @if (expireResult()) {
-            <div class="alert alert--success" role="status">
-              <strong>Credit expired successfully.</strong><br />
-              Credit ID: <span class="mono">{{ expireResult()!.creditId }}</span><br />
-              Transaction: <span class="mono">{{ expireResult()!.txHash || 'pending' }}</span>
-            </div>
-          }
+        @if (methodologyError()) {
+          <p class="alert alert--error" role="alert">{{ methodologyError() }}</p>
+        }
 
-          @if (!expireResult()) {
-            <form class="action-form" (ngSubmit)="confirmExpire()" #expireForm="ngForm">
-              <div class="field-group">
-                <label class="field-label" for="expire-credit-id">Credit ID</label>
-                <input
-                  id="expire-credit-id"
-                  class="text-input"
-                  type="text"
-                  placeholder="Hex-encoded credit ID"
-                  [(ngModel)]="expireCreditId"
-                  name="expireCreditId"
-                  required
-                  #expireCreditIdField="ngModel"
-                />
-                @if (expireCreditIdField.invalid && expireCreditIdField.touched) {
-                  <span class="field-error">Credit ID is required.</span>
-                }
-              </div>
-
-              <div class="field-group">
-                <label class="field-label" for="expire-reason">Reason</label>
-                <textarea
-                  id="expire-reason"
-                  class="text-input textarea"
-                  placeholder="Reason for expiry (stored on-chain)"
-                  [(ngModel)]="expireReason"
-                  name="expireReason"
-                  required
-                  rows="3"
-                  #expireReasonField="ngModel"
-                ></textarea>
-                @if (expireReasonField.invalid && expireReasonField.touched) {
-                  <span class="field-error">Reason is required.</span>
-                }
-              </div>
-
-              <div class="form-actions">
-                <button
-                  type="submit"
-                  class="btn btn-danger"
-                  [disabled]="expireLoading() || expireForm.invalid"
-                >
-                  {{ expireLoading() ? 'Processing…' : 'Expire Credit' }}
-                </button>
-              </div>
-            </form>
-          } @else {
-            <button class="btn btn-ghost" (click)="resetExpire()">Expire Another</button>
-          }
-        </section>
-      }
-
-      <!-- Resolve Dispute tab -->
-      @if (activeTab() === 'dispute') {
-        <section class="admin-section" aria-label="Resolve dispute">
-          <h2>Resolve Dispute</h2>
-          <p class="help-text">
-            Close an open on-chain dispute by providing a resolution.
-            The resolution text is permanently recorded on-chain.
-          </p>
-
-          @if (disputeError()) {
-            <p class="alert alert--error" role="alert">{{ disputeError() }}</p>
-          }
-          @if (disputeResult()) {
-            <div class="alert alert--success" role="status">
-              <strong>Dispute resolved successfully.</strong><br />
-              Dispute ID: <span class="mono">{{ disputeResult()!.disputeId }}</span><br />
-              Resolution: {{ disputeResult()!.resolution }}<br />
-              Transaction: <span class="mono">{{ disputeResult()!.txHash || 'pending' }}</span>
-            </div>
-          }
-
-          @if (!disputeResult()) {
-            <form class="action-form" (ngSubmit)="confirmDispute()" #disputeForm="ngForm">
-              <div class="field-group">
-                <label class="field-label" for="dispute-id">Dispute ID</label>
-                <input
-                  id="dispute-id"
-                  class="text-input"
-                  type="text"
-                  placeholder="On-chain dispute ID"
-                  [(ngModel)]="disputeId"
-                  name="disputeId"
-                  required
-                  #disputeIdField="ngModel"
-                />
-                @if (disputeIdField.invalid && disputeIdField.touched) {
-                  <span class="field-error">Dispute ID is required.</span>
-                }
-              </div>
-
-              <div class="field-group">
-                <label class="field-label" for="dispute-resolution">Resolution</label>
-                <textarea
-                  id="dispute-resolution"
-                  class="text-input textarea"
-                  placeholder="Resolution outcome (stored on-chain)"
-                  [(ngModel)]="disputeResolution"
-                  name="disputeResolution"
-                  required
-                  rows="4"
-                  #disputeResolutionField="ngModel"
-                ></textarea>
-                @if (disputeResolutionField.invalid && disputeResolutionField.touched) {
-                  <span class="field-error">Resolution text is required.</span>
-                }
-              </div>
-
-              <div class="field-group">
-                <label class="field-label">Evidence (read-only)</label>
-                <div class="evidence-display">
-                  @if (disputeEvidence()) {
-                    <pre class="evidence-text">{{ disputeEvidence() }}</pre>
-                  } @else {
-                    <p class="status">Enter a dispute ID above to load evidence.</p>
-                  }
-                </div>
-              </div>
-
-              <div class="form-actions">
-                <button
-                  type="submit"
-                  class="btn btn-primary"
-                  [disabled]="disputeLoading() || disputeForm.invalid"
-                >
-                  {{ disputeLoading() ? 'Processing…' : 'Resolve Dispute' }}
-                </button>
-              </div>
-            </form>
-          } @else {
-            <button class="btn btn-ghost" (click)="resetDispute()">Resolve Another</button>
-          }
-        </section>
-      }
-
-      <!-- Slash Verifier tab -->
-      @if (activeTab() === 'slash') {
-        <section class="admin-section" aria-label="Slash verifier">
-          <h2>Slash Verifier</h2>
-          <p class="help-text">
-            Penalise a misbehaving verifier by slashing part of their staked balance.
-            Slashed funds enter an unbonding period before being redistributed.
-          </p>
-
-          <div class="alert alert--warning" role="note">
-            ⚠️ <strong>This action initiates an unbonding period</strong> during which
-            the verifier cannot participate in approvals. Ensure you have reviewed the
-            evidence before proceeding.
+        <div class="form-row">
+          <div class="form-field">
+            <label class="field-label" for="method-name">Methodology Name</label>
+            <input
+              id="method-name"
+              class="text-input"
+              type="text"
+              placeholder="e.g. VCS, Gold Standard, CDM"
+              [(ngModel)]="methodologyName"
+              [disabled]="isRegisteringMethodology()"
+            />
           </div>
-
-          @if (slashError()) {
-            <p class="alert alert--error" role="alert">{{ slashError() }}</p>
-          }
-          @if (slashResult()) {
-            <div class="alert alert--success" role="status">
-              <strong>Verifier slashed successfully.</strong><br />
-              Verifier: <span class="mono">{{ slashResult()!.verifierAddress }}</span><br />
-              Amount slashed: {{ slashResult()!.amount }} stroops<br />
-              Unbonding period: {{ slashResult()!.unbondingPeriodDays }} days<br />
-              Transaction: <span class="mono">{{ slashResult()!.txHash || 'pending' }}</span>
-            </div>
-          }
-
-          @if (!slashResult()) {
-            <form class="action-form" (ngSubmit)="confirmSlash()" #slashForm="ngForm">
-              <div class="field-group">
-                <label class="field-label" for="slash-address">Verifier Address</label>
-                <input
-                  id="slash-address"
-                  class="text-input"
-                  type="text"
-                  placeholder="G… Stellar public key"
-                  [(ngModel)]="slashVerifierAddress"
-                  name="slashVerifierAddress"
-                  required
-                  #slashAddressField="ngModel"
-                />
-                @if (slashAddressField.invalid && slashAddressField.touched) {
-                  <span class="field-error">Verifier address is required.</span>
-                }
-              </div>
-
-              <div class="field-group">
-                <label class="field-label" for="slash-amount">
-                  Slash Amount (stroops — 1 XLM = 10,000,000 stroops)
-                </label>
-                <input
-                  id="slash-amount"
-                  class="text-input"
-                  type="number"
-                  min="1"
-                  placeholder="e.g. 10000000"
-                  [(ngModel)]="slashAmount"
-                  name="slashAmount"
-                  required
-                  #slashAmountField="ngModel"
-                />
-                @if (slashAmountField.invalid && slashAmountField.touched) {
-                  <span class="field-error">Slash amount must be a positive integer.</span>
-                }
-              </div>
-
-              <div class="field-group">
-                <label class="field-label">Unbonding Notice</label>
-                <p class="unbonding-notice">
-                  The verifier will enter a <strong>30-day unbonding period</strong> following the
-                  slash. During this period they cannot approve credits or process MRV data.
-                  After unbonding, slashed funds are redistributed to the protocol treasury.
-                </p>
-              </div>
-
-              <div class="form-actions">
-                <button
-                  type="submit"
-                  class="btn btn-danger"
-                  [disabled]="slashLoading() || slashForm.invalid"
-                >
-                  {{ slashLoading() ? 'Processing…' : 'Slash Verifier' }}
-                </button>
-              </div>
-            </form>
-          } @else {
-            <button class="btn btn-ghost" (click)="resetSlash()">Slash Another</button>
-          }
-        </section>
-      }
-
-      <!-- Confirm Dialog overlay -->
-      @if (showConfirmDialog()) {
-        <div class="modal-backdrop" (click)="cancelConfirm()" role="presentation">
-          <div
-            class="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="confirm-title"
-            aria-describedby="confirm-desc"
-            (click)="$event.stopPropagation()"
+          <div class="form-field form-field--grow">
+            <label class="field-label" for="method-desc">Description</label>
+            <input
+              id="method-desc"
+              class="text-input"
+              type="text"
+              placeholder="Short description of the methodology"
+              [(ngModel)]="methodologyDescription"
+              [disabled]="isRegisteringMethodology()"
+            />
+          </div>
+          <button
+            class="btn btn-primary btn-self-end"
+            (click)="submitMethodology()"
+            [disabled]="
+              isRegisteringMethodology() ||
+              !methodologyName.trim() ||
+              !methodologyDescription.trim()
+            "
           >
-            <h2 id="confirm-title" class="modal-title">Confirm Action</h2>
-            <p id="confirm-desc" class="modal-desc">{{ confirmMessage() }}</p>
-            <div class="modal-actions">
-              <button class="btn btn-danger" (click)="executeConfirmedAction()">
-                {{ confirmLoading() ? 'Processing…' : 'Confirm' }}
-              </button>
-              <button class="btn btn-ghost" (click)="cancelConfirm()">Cancel</button>
-            </div>
+            {{ isRegisteringMethodology() ? 'Registering…' : 'Register' }}
+          </button>
+        </div>
+
+        @if (registeredMethodologies().length > 0) {
+          <ul class="method-list" aria-label="Registered methodologies">
+            @for (m of registeredMethodologies(); track m.name) {
+              <li class="method-item">
+                <strong>{{ m.name }}</strong
+                >: {{ m.description }}
+              </li>
+            }
+          </ul>
+        }
+      </section>
+
+      <!-- ── Required Approvals ───────────────────────────────────────────── -->
+      <section class="panel-section">
+        <h2 class="section-title">Required Approvals</h2>
+        <p class="section-description">
+          Set the minimum number of verifier approvals needed to mint a credit. Valid range: 1 –
+          {{ maxApprovals() }}.
+        </p>
+
+        @if (approvalsError()) {
+          <p class="alert alert--error" role="alert">{{ approvalsError() }}</p>
+        }
+
+        <div class="slider-row">
+          <label class="field-label" for="approvals-slider">
+            Required approvals: <strong>{{ requiredApprovals() }}</strong>
+          </label>
+          <input
+            id="approvals-slider"
+            class="slider"
+            type="range"
+            [min]="1"
+            [max]="maxApprovals()"
+            [value]="requiredApprovals()"
+            (input)="onSliderChange($event)"
+            [disabled]="isSavingApprovals()"
+            aria-label="Required approvals slider"
+          />
+          <button
+            class="btn btn-primary"
+            (click)="saveRequiredApprovals()"
+            [disabled]="isSavingApprovals()"
+          >
+            {{ isSavingApprovals() ? 'Saving…' : 'Save' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Staking Management ──────────────────────────────────────────── -->
+      <section class="panel-section">
+        <h2 class="section-title">Verifier Staking</h2>
+        <p class="section-description">
+          Configure the minimum stake required to register a verifier, look up locked balances, and
+          slash verifiers who approved fraudulent credits.
+        </p>
+
+        <!-- Current minimum stake display -->
+        <div class="stake-info">
+          <span class="field-label">Current minimum stake:</span>
+          @if (minStakeLoading()) {
+            <span class="status-loading" aria-live="polite">Loading…</span>
+          } @else {
+            <strong aria-label="Minimum stake: {{ formatStroops(minStake()) }} XLM">
+              {{ formatStroops(minStake()) }} XLM
+            </strong>
+            <span class="stake-sub">({{ minStake() }} stroops)</span>
+          }
+        </div>
+
+        <!-- Set minimum stake -->
+        @if (stakeError()) {
+          <p class="alert alert--error" role="alert">{{ stakeError() }}</p>
+        }
+
+        <div class="form-row">
+          <div class="form-field">
+            <label class="field-label" for="min-stake-input">New minimum stake (XLM)</label>
+            <input
+              id="min-stake-input"
+              class="text-input"
+              type="number"
+              min="0"
+              step="100"
+              placeholder="e.g. 1000"
+              [(ngModel)]="newMinStakeXlm"
+              [disabled]="isSavingMinStake()"
+              aria-label="New minimum stake in XLM"
+            />
+          </div>
+          <button
+            class="btn btn-primary btn-self-end"
+            (click)="saveMinStake()"
+            [disabled]="isSavingMinStake() || newMinStakeXlm === null"
+          >
+            {{ isSavingMinStake() ? 'Saving…' : 'Update Min Stake' }}
+          </button>
+        </div>
+
+        <!-- Check verifier stake balance -->
+        <div class="form-row" style="margin-top: 1.5rem;">
+          <div class="form-field form-field--grow">
+            <label class="field-label" for="stake-check-address">Verifier address</label>
+            <input
+              id="stake-check-address"
+              class="text-input"
+              type="text"
+              placeholder="G…"
+              [(ngModel)]="stakeCheckAddress"
+              [disabled]="isCheckingStake()"
+              aria-label="Verifier address to check stake balance"
+            />
+          </div>
+          <button
+            class="btn btn-ghost btn-self-end"
+            (click)="checkVerifierStake()"
+            [disabled]="isCheckingStake() || !stakeCheckAddress.trim()"
+          >
+            {{ isCheckingStake() ? 'Checking…' : 'Check Stake' }}
+          </button>
+        </div>
+
+        @if (verifierStakeResult()) {
+          <div class="stake-result" role="region" aria-label="Stake check result">
+            <span class="field-label">Locked stake:</span>
+            <strong>{{ formatStroops(verifierStakeResult()!.stake) }} XLM</strong>
+            <span class="stake-sub">({{ verifierStakeResult()!.stake }} stroops)</span>
+            @if (BigInt(verifierStakeResult()!.stake) < BigInt(minStake())) {
+              <span
+                class="badge badge--warn"
+                title="Below minimum — this verifier cannot be registered until they deposit more stake"
+              >
+                ⚠ Below minimum
+              </span>
+            } @else {
+              <span class="badge badge--ok">✔ Meets minimum</span>
+            }
+          </div>
+        }
+
+        <!-- Slash verifier -->
+        <h3 class="subsection-title">Slash Verifier Stake</h3>
+        <p class="section-description section-description--sm">
+          Apply a 10% penalty to a verifier's locked stake when they approved a credit that was
+          later found to be fraudulent. This action is irreversible.
+        </p>
+
+        @if (slashError()) {
+          <p class="alert alert--error" role="alert">{{ slashError() }}</p>
+        }
+
+        <div class="form-row">
+          <div class="form-field form-field--grow">
+            <label class="field-label" for="slash-address">Verifier address</label>
+            <input
+              id="slash-address"
+              class="text-input"
+              type="text"
+              placeholder="G…"
+              [(ngModel)]="slashAddress"
+              [disabled]="isSlashing()"
+              aria-label="Verifier address to slash"
+            />
+          </div>
+          <div class="form-field form-field--grow">
+            <label class="field-label" for="slash-credit-id">Credit ID (hex)</label>
+            <input
+              id="slash-credit-id"
+              class="text-input"
+              type="text"
+              placeholder="64-character hex credit ID"
+              [(ngModel)]="slashCreditId"
+              [disabled]="isSlashing()"
+              aria-label="Credit ID that triggered the slash"
+            />
+          </div>
+          <button
+            class="btn btn-danger btn-self-end"
+            (click)="openSlashConfirm()"
+            [disabled]="isSlashing() || !slashAddress.trim() || !slashCreditId.trim()"
+          >
+            {{ isSlashing() ? 'Slashing…' : 'Slash 10%' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Contract Pause / Unpause ──────────────────────────────────────── -->
+      <section class="panel-section panel-section--danger">
+        <h2 class="section-title section-title--danger">Contract Pause</h2>
+        <p class="section-description">
+          Pause or resume all contract operations. When paused, no credits can be issued, retired,
+          or traded.
+        </p>
+
+        @if (pauseError()) {
+          <p class="alert alert--error" role="alert">{{ pauseError() }}</p>
+        }
+
+        <button class="btn btn-danger" (click)="openPauseConfirm()" [disabled]="isPausing()">
+          {{ contractPaused() ? 'Unpause Contract' : 'Pause Contract' }}
+        </button>
+      </section>
+    </main>
+
+    <!-- ── Pause confirmation modal ─────────────────────────────────────── -->
+    @if (showPauseConfirm()) {
+      <div class="modal-backdrop" (click)="closePauseConfirm()">
+        <div
+          class="modal modal--danger"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pause-title"
+          (click)="$event.stopPropagation()"
+        >
+          <h2 id="pause-title">
+            {{ contractPaused() ? 'Unpause Contract?' : 'Pause Contract?' }}
+          </h2>
+          <p class="pause-warning">
+            I understand that
+            {{ contractPaused() ? 'resuming' : 'pausing' }} the contract
+            <strong>{{ contractPaused() ? 'will restore' : 'will stop' }}</strong>
+            all operations — credit issuance, retirement, and trading will be
+            {{ contractPaused() ? 'enabled' : 'disabled' }} immediately.
+          </p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" (click)="closePauseConfirm()" [disabled]="isPausing()">
+              Cancel
+            </button>
+            <button class="btn btn-danger" (click)="confirmPause()" [disabled]="isPausing()">
+              {{ isPausing() ? 'Processing…' : 'I understand, proceed' }}
+            </button>
           </div>
         </div>
-      }
-    </main>
+      </div>
+    }
+
+    <!-- ── Slash confirmation modal ──────────────────────────────────────── -->
+    @if (showSlashConfirm()) {
+      <div class="modal-backdrop" (click)="closeSlashConfirm()">
+        <div
+          class="modal modal--danger"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="slash-title"
+          (click)="$event.stopPropagation()"
+        >
+          <h2 id="slash-title">Slash Verifier Stake?</h2>
+          <p class="pause-warning">
+            This will permanently slash <strong>10%</strong> of verifier
+            <span class="monospace">{{ slashAddress | slice: 0 : 8 }}…</span>'s locked stake as a
+            penalty for approving fraudulent credit
+            <span class="monospace">{{ slashCreditId | slice: 0 : 12 }}…</span>. The slashed funds
+            are forfeited and cannot be recovered.
+          </p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" (click)="closeSlashConfirm()" [disabled]="isSlashing()">
+              Cancel
+            </button>
+            <button class="btn btn-danger" (click)="confirmSlash()" [disabled]="isSlashing()">
+              {{ isSlashing() ? 'Slashing…' : 'I understand, slash 10%' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    }
   `,
-  styles: [`
-    .admin-panel {
-      padding: 2rem;
-      max-width: 860px;
-      margin: 0 auto;
-    }
-    h1 {
-      margin: 0 0 1.5rem;
-    }
-    .tab-nav {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 1.5rem;
-      border-bottom: 2px solid #e0e0e0;
-      padding-bottom: 0;
-    }
-    .tab-btn {
-      padding: 0.5rem 1.25rem;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      font-size: 0.9rem;
-      color: #555;
-      border-bottom: 3px solid transparent;
-      margin-bottom: -2px;
-      border-radius: 4px 4px 0 0;
-      transition: color 0.15s, border-color 0.15s;
-    }
-    .tab-btn:hover {
-      color: #1976d2;
-    }
-    .tab-btn.tab--active {
-      color: #1976d2;
-      border-bottom-color: #1976d2;
-      font-weight: 600;
-    }
-    .admin-section {
-      background: #fff;
-      border: 1px solid #e0e0e0;
-      border-radius: 8px;
-      padding: 1.5rem;
-    }
-    h2 {
-      margin: 0 0 0.5rem;
-      font-size: 1.1rem;
-    }
-    .help-text {
-      font-size: 0.875rem;
-      color: #555;
-      margin-bottom: 1.25rem;
-    }
-    .action-form {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-    .field-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3rem;
-    }
-    .field-label {
-      font-size: 0.875rem;
-      font-weight: 600;
-      color: #444;
-    }
-    .text-input {
-      padding: 0.5rem 0.75rem;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      width: 100%;
-      box-sizing: border-box;
-      font-family: inherit;
-    }
-    .text-input:focus {
-      outline: 2px solid #1976d2;
-      border-color: transparent;
-    }
-    .textarea {
-      resize: vertical;
-      min-height: 80px;
-    }
-    .field-error {
-      color: #c62828;
-      font-size: 0.8rem;
-    }
-    .form-actions {
-      display: flex;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-    }
-    .btn {
-      padding: 0.5rem 1.25rem;
-      border-radius: 6px;
-      cursor: pointer;
-      border: none;
-      font-size: 0.9rem;
-    }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    .btn-primary { background: #1976d2; color: #fff; }
-    .btn-danger { background: #e53935; color: #fff; }
-    .btn-ghost { background: transparent; color: #666; border: 1px solid #ccc; }
-    .alert {
-      padding: 0.75rem 1rem;
-      border-radius: 6px;
-      font-size: 0.875rem;
-      margin-bottom: 1rem;
-    }
-    .alert--error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
-    .alert--success { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; line-height: 1.8; }
-    .alert--warning { background: #fff8e1; color: #e65100; border: 1px solid #ffcc02; margin-bottom: 1.25rem; }
-    .mono { font-family: monospace; word-break: break-all; }
-    .status { color: #888; font-size: 0.875rem; }
-    .evidence-display {
-      background: #f5f5f5;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      padding: 0.75rem;
-      min-height: 60px;
-    }
-    .evidence-text {
-      margin: 0;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-    .unbonding-notice {
-      margin: 0;
-      font-size: 0.875rem;
-      color: #555;
-      background: #fff8e1;
-      border: 1px solid #ffcc02;
-      padding: 0.75rem;
-      border-radius: 4px;
-    }
-    /* Modal */
-    .modal-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    }
-    .modal {
-      background: #fff;
-      border-radius: 8px;
-      padding: 2rem;
-      max-width: 480px;
-      width: 90%;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-    }
-    .modal-title {
-      margin: 0 0 1rem;
-      font-size: 1.1rem;
-    }
-    .modal-desc {
-      font-size: 0.9rem;
-      color: #444;
-      margin-bottom: 1.5rem;
-      line-height: 1.6;
-    }
-    .modal-actions {
-      display: flex;
-      gap: 0.75rem;
-    }
-  `],
+  styles: [
+    `
+      .admin-panel {
+        padding: 2rem;
+      }
+      .stake-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        font-size: 0.95rem;
+      }
+      .stake-sub {
+        color: #888;
+        font-size: 0.8rem;
+      }
+      .stake-result {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        background: #f5f5f5;
+        border-radius: 6px;
+        font-size: 0.9rem;
+      }
+      .badge--warn {
+        background: #fff3cd;
+        color: #856404;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+      }
+      .badge--ok {
+        background: #d1e7dd;
+        color: #0f5132;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+      }
+      .subsection-title {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-top: 1.5rem;
+        margin-bottom: 0.25rem;
+        color: #333;
+      }
+      .section-description--sm {
+        font-size: 0.85rem;
+      }
+      .status-loading {
+        color: #888;
+        font-style: italic;
+      }
+      .monospace {
+        font-family: monospace;
+        font-size: 0.85em;
+      }
+    `,
+  ],
 })
-export class AdminComponent {
-  private readonly adminService = inject(AdminService);
-  protected readonly auth = inject(AuthService);
+export class AdminComponent implements OnInit {
+  private readonly api = inject(ApiService);
+  private readonly auth = inject(AuthService);
+  private readonly wallet = inject(StellarWalletService);
+  private readonly toast = inject(ToastService);
 
-  readonly activeTab = signal<AdminTab>('verifiers');
+  // Expose BigInt to template (used in stake comparison)
+  protected readonly BigInt = BigInt;
 
-  setTab(tab: AdminTab): void {
-    this.activeTab.set(tab);
+  // ── Methodology registration state ──────────────────────────────────────
+  protected methodologyName = '';
+  protected methodologyDescription = '';
+  protected readonly isRegisteringMethodology = signal(false);
+  protected readonly methodologyError = signal<string | null>(null);
+  protected readonly registeredMethodologies = signal<{ name: string; description: string }[]>([]);
+
+  // ── Required approvals state ─────────────────────────────────────────────
+  protected readonly requiredApprovals = signal(1);
+  protected readonly maxApprovals = signal(10);
+  protected readonly isSavingApprovals = signal(false);
+  protected readonly approvalsError = signal<string | null>(null);
+
+  // ── Staking state ────────────────────────────────────────────────────────
+  /** Current on-chain minimum stake (stroops as string). */
+  protected readonly minStake = signal('0');
+  protected readonly minStakeLoading = signal(true);
+  /** New minimum stake the admin wants to set, expressed in XLM (not stroops). */
+  protected newMinStakeXlm: number | null = null;
+  protected readonly isSavingMinStake = signal(false);
+  protected readonly stakeError = signal<string | null>(null);
+
+  /** Address to check current stake balance for. */
+  protected stakeCheckAddress = '';
+  protected readonly isCheckingStake = signal(false);
+  protected readonly verifierStakeResult = signal<{ address: string; stake: string } | null>(null);
+
+  /** Fields for slash confirmation. */
+  protected slashAddress = '';
+  protected slashCreditId = '';
+  protected readonly isSlashing = signal(false);
+  protected readonly slashError = signal<string | null>(null);
+  protected readonly showSlashConfirm = signal(false);
+
+  // ── Pause state ──────────────────────────────────────────────────────────
+  protected readonly contractPaused = signal(false);
+  protected readonly showPauseConfirm = signal(false);
+  protected readonly isPausing = signal(false);
+  protected readonly pauseError = signal<string | null>(null);
+
+  ngOnInit(): void {
+    void this.loadStats();
+    void this.loadMinStake();
   }
 
-  // ── Confirm Dialog State ───────────────────────────────────────────────────
-
-  readonly showConfirmDialog = signal(false);
-  readonly confirmMessage = signal('');
-  readonly confirmLoading = signal(false);
-  private pendingAction: (() => Promise<void>) | null = null;
-
-  private openConfirm(message: string, action: () => Promise<void>): void {
-    this.confirmMessage.set(message);
-    this.pendingAction = action;
-    this.showConfirmDialog.set(true);
-  }
-
-  async executeConfirmedAction(): Promise<void> {
-    if (!this.pendingAction) return;
-    this.confirmLoading.set(true);
+  private async loadStats(): Promise<void> {
     try {
-      await this.pendingAction();
+      const token = this.auth.token()!;
+      const stats = await firstValueFrom(this.api.getAdminStats(token));
+      this.maxApprovals.set(Math.max(stats.activeVerifiers, 1));
+      this.contractPaused.set(stats.paused);
+    } catch {
+      // Non-fatal — defaults suffice
+    }
+  }
+
+  private async loadMinStake(): Promise<void> {
+    this.minStakeLoading.set(true);
+    try {
+      const result = await firstValueFrom(this.api.getMinStake());
+      this.minStake.set(result.minStake);
+    } catch {
+      // Non-fatal — show 0
     } finally {
-      this.confirmLoading.set(false);
-      this.showConfirmDialog.set(false);
-      this.pendingAction = null;
+      this.minStakeLoading.set(false);
     }
   }
 
-  cancelConfirm(): void {
-    this.showConfirmDialog.set(false);
-    this.pendingAction = null;
-    this.confirmLoading.set(false);
-  }
-
-  // ── Expire Credit ──────────────────────────────────────────────────────────
-
-  expireCreditId = '';
-  expireReason = '';
-  readonly expireLoading = signal(false);
-  readonly expireError = signal<string | null>(null);
-  readonly expireResult = signal<ExpireCreditResult | null>(null);
-
-  confirmExpire(): void {
-    this.openConfirm(
-      `You are about to expire credit "${this.expireCreditId}". ` +
-        `Reason: "${this.expireReason}". ` +
-        `This action is irreversible and recorded on-chain. Proceed?`,
-      () => this.doExpire(),
-    );
-  }
-
-  private async doExpire(): Promise<void> {
-    const token = this.auth.token();
-    if (!token) {
-      this.expireError.set('You must be logged in as admin.');
-      return;
-    }
-    this.expireLoading.set(true);
-    this.expireError.set(null);
+  /** Format a stroops string as an XLM value (7 decimal places). */
+  protected formatStroops(stroops: string): string {
     try {
-      // Build → sign → submit (service handles Soroban transaction construction)
-      const result = await firstValueFrom(
-        this.adminService.expireCredit(this.expireCreditId, this.expireReason, token),
-      );
-      this.expireResult.set(result);
+      const xlm = Number(BigInt(stroops)) / 10_000_000;
+      return xlm.toLocaleString(undefined, { maximumFractionDigits: 7 });
+    } catch {
+      return '0';
+    }
+  }
+
+  // ── Methodology ───────────────────────────────────────────────────────────
+
+  async submitMethodology(): Promise<void> {
+    const name = this.methodologyName.trim();
+    const description = this.methodologyDescription.trim();
+    if (!name || !description) return;
+
+    this.isRegisteringMethodology.set(true);
+    this.methodologyError.set(null);
+    try {
+      const token = this.auth.token()!;
+      await firstValueFrom(this.api.registerMethodology(name, description, token));
+      this.registeredMethodologies.update((list) => [...list, { name, description }]);
+      this.methodologyName = '';
+      this.methodologyDescription = '';
+      this.toast.show(`Methodology "${name}" registered.`, 'success');
     } catch (err) {
-      this.expireError.set(mapAdminError(err));
-    } finally {
-      this.expireLoading.set(false);
-    }
-  }
-
-  resetExpire(): void {
-    this.expireCreditId = '';
-    this.expireReason = '';
-    this.expireError.set(null);
-    this.expireResult.set(null);
-  }
-
-  // ── Resolve Dispute ────────────────────────────────────────────────────────
-
-  disputeId = '';
-  disputeResolution = '';
-  readonly disputeLoading = signal(false);
-  readonly disputeError = signal<string | null>(null);
-  readonly disputeResult = signal<ResolveDisputeResult | null>(null);
-  readonly disputeEvidence = signal<string | null>(null);
-
-  confirmDispute(): void {
-    this.openConfirm(
-      `You are about to resolve dispute "${this.disputeId}" with resolution: ` +
-        `"${this.disputeResolution}". This outcome is permanently recorded on-chain. Proceed?`,
-      () => this.doResolveDispute(),
-    );
-  }
-
-  private async doResolveDispute(): Promise<void> {
-    const token = this.auth.token();
-    if (!token) {
-      this.disputeError.set('You must be logged in as admin.');
-      return;
-    }
-    this.disputeLoading.set(true);
-    this.disputeError.set(null);
-    try {
-      // Build → sign → submit (service handles Soroban transaction construction)
-      const result = await firstValueFrom(
-        this.adminService.resolveDispute(this.disputeId, this.disputeResolution, token),
+      this.methodologyError.set(
+        err instanceof Error ? err.message : 'Failed to register methodology.',
       );
-      this.disputeResult.set(result);
-    } catch (err) {
-      this.disputeError.set(mapAdminError(err));
     } finally {
-      this.disputeLoading.set(false);
+      this.isRegisteringMethodology.set(false);
     }
   }
 
-  resetDispute(): void {
-    this.disputeId = '';
-    this.disputeResolution = '';
-    this.disputeEvidence.set(null);
-    this.disputeError.set(null);
-    this.disputeResult.set(null);
+  // ── Required approvals ───────────────────────────────────────────────────
+
+  onSliderChange(event: Event): void {
+    const value = parseInt((event.target as HTMLInputElement).value, 10);
+    if (!isNaN(value)) {
+      this.requiredApprovals.set(value);
+    }
   }
 
-  // ── Slash Verifier ─────────────────────────────────────────────────────────
-
-  slashVerifierAddress = '';
-  slashAmount: number | null = null;
-  readonly slashLoading = signal(false);
-  readonly slashError = signal<string | null>(null);
-  readonly slashResult = signal<SlashVerifierResult | null>(null);
-
-  confirmSlash(): void {
-    this.openConfirm(
-      `You are about to slash verifier "${this.slashVerifierAddress}" for ` +
-        `${this.slashAmount?.toLocaleString()} stroops. ` +
-        `This will trigger a 30-day unbonding period. This action cannot be undone. Proceed?`,
-      () => this.doSlash(),
-    );
+  async saveRequiredApprovals(): Promise<void> {
+    this.isSavingApprovals.set(true);
+    this.approvalsError.set(null);
+    try {
+      const token = this.auth.token()!;
+      await firstValueFrom(this.api.setRequiredApprovals(this.requiredApprovals(), token));
+      this.toast.show(`Required approvals set to ${this.requiredApprovals()}.`, 'success');
+    } catch (err) {
+      this.approvalsError.set(
+        err instanceof Error ? err.message : 'Failed to save approvals threshold.',
+      );
+    } finally {
+      this.isSavingApprovals.set(false);
+    }
   }
 
-  private async doSlash(): Promise<void> {
-    const token = this.auth.token();
-    if (!token) {
-      this.slashError.set('You must be logged in as admin.');
-      return;
+  // ── Staking ───────────────────────────────────────────────────────────────
+
+  async saveMinStake(): Promise<void> {
+    if (this.newMinStakeXlm === null) return;
+    this.isSavingMinStake.set(true);
+    this.stakeError.set(null);
+    try {
+      const token = this.auth.token()!;
+      const address = this.wallet.publicKey();
+      if (!address) throw new Error('Not authenticated');
+
+      // Fetch the admin's current nonce before building the transaction.
+      const nonceResp = await firstValueFrom(this.api.getAdminNonce(address, token));
+      const amountStroops = Math.round(this.newMinStakeXlm * 10_000_000).toString();
+
+      await firstValueFrom(this.api.setMinStake(amountStroops, nonceResp.nonce.toString(), token));
+      this.minStake.set(amountStroops);
+      this.newMinStakeXlm = null;
+      this.toast.show(
+        `Minimum stake updated to ${this.formatStroops(amountStroops)} XLM.`,
+        'success',
+      );
+    } catch (err) {
+      this.stakeError.set(err instanceof Error ? err.message : 'Failed to update minimum stake.');
+    } finally {
+      this.isSavingMinStake.set(false);
     }
-    if (this.slashAmount === null || this.slashAmount <= 0) {
-      this.slashError.set('Slash amount must be a positive integer.');
-      return;
+  }
+
+  async checkVerifierStake(): Promise<void> {
+    const address = this.stakeCheckAddress.trim();
+    if (!address) return;
+    this.isCheckingStake.set(true);
+    this.verifierStakeResult.set(null);
+    try {
+      const result = await firstValueFrom(this.api.getVerifierStake(address));
+      this.verifierStakeResult.set(result);
+    } catch (err) {
+      this.stakeError.set(err instanceof Error ? err.message : 'Failed to fetch verifier stake.');
+    } finally {
+      this.isCheckingStake.set(false);
     }
-    this.slashLoading.set(true);
+  }
+
+  openSlashConfirm(): void {
+    this.slashError.set(null);
+    this.showSlashConfirm.set(true);
+  }
+
+  closeSlashConfirm(): void {
+    this.showSlashConfirm.set(false);
+  }
+
+  async confirmSlash(): Promise<void> {
+    this.isSlashing.set(true);
     this.slashError.set(null);
     try {
-      // Build → sign → submit (service handles Soroban transaction construction)
-      const result = await firstValueFrom(
-        this.adminService.slashVerifier(
-          this.slashVerifierAddress,
-          String(this.slashAmount),
+      const token = this.auth.token()!;
+      const address = this.wallet.publicKey();
+      if (!address) throw new Error('Not authenticated');
+
+      // Fetch the admin's current nonce before the slash transaction.
+      const nonceResp = await firstValueFrom(this.api.getAdminNonce(address, token));
+      await firstValueFrom(
+        this.api.slashVerifier(
+          this.slashAddress.trim(),
+          this.slashCreditId.trim(),
+          nonceResp.nonce.toString(),
           token,
         ),
       );
-      this.slashResult.set(result);
+      this.toast.show(
+        `Slashed 10% of verifier ${this.slashAddress.slice(0, 8)}…'s stake.`,
+        'success',
+      );
+      this.slashAddress = '';
+      this.slashCreditId = '';
+      this.showSlashConfirm.set(false);
     } catch (err) {
-      this.slashError.set(mapAdminError(err));
+      this.slashError.set(err instanceof Error ? err.message : 'Failed to slash verifier.');
     } finally {
-      this.slashLoading.set(false);
+      this.isSlashing.set(false);
     }
   }
 
-  resetSlash(): void {
-    this.slashVerifierAddress = '';
-    this.slashAmount = null;
-    this.slashError.set(null);
-    this.slashResult.set(null);
+  // ── Pause / Unpause ───────────────────────────────────────────────────────
+
+  openPauseConfirm(): void {
+    this.pauseError.set(null);
+    this.showPauseConfirm.set(true);
+  }
+
+  closePauseConfirm(): void {
+    this.showPauseConfirm.set(false);
+  }
+
+  async confirmPause(): Promise<void> {
+    this.isPausing.set(true);
+    this.pauseError.set(null);
+    try {
+      const token = this.auth.token()!;
+      const currentlyPaused = this.contractPaused();
+      const result = currentlyPaused
+        ? await firstValueFrom(this.api.unpauseContract(token))
+        : await firstValueFrom(this.api.pauseContract(token));
+      this.contractPaused.set(result.paused);
+      this.toast.show(
+        result.paused
+          ? 'Contract paused. All operations stopped.'
+          : 'Contract unpaused. Operations resumed.',
+        'success',
+      );
+      this.showPauseConfirm.set(false);
+    } catch (err) {
+      this.pauseError.set(err instanceof Error ? err.message : 'Failed to toggle contract pause.');
+    } finally {
+      this.isPausing.set(false);
+    }
   }
 }

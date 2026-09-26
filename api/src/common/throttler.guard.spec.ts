@@ -1,35 +1,88 @@
 import { ExecutionContext, HttpException, HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ThrottlerGuard, ThrottleOptions } from './throttler.guard';
+import {
+  ThrottlerGuard,
+  ThrottleOptions,
+  ACCOUNT_THROTTLE_KEY,
+  AccountThrottleOptions,
+} from './throttler.guard';
 
-function makeContext(
+function makeIpContext(
   ip: string,
   path: string,
   options?: ThrottleOptions,
 ): ExecutionContext {
   const reflector = new Reflector();
-  const guard = new ThrottlerGuard(reflector);
-
   const mockReq = {
     headers: {},
     socket: { remoteAddress: ip },
     path,
+    body: {},
   };
 
+  jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+    if (key === ACCOUNT_THROTTLE_KEY) return undefined;
+    return options;
+  });
+
   const ctx = {
-    switchToHttp: () => ({ getRequest: () => mockReq }),
+    switchToHttp: () => ({
+      getRequest: () => mockReq,
+      getResponse: () => ({ set: jest.fn() }),
+    }),
     getHandler: () => ({}),
     getClass: () => ({}),
   } as unknown as ExecutionContext;
 
-  // Inject options directly onto the handler mock
-  if (options) {
-    jest.spyOn(reflector, 'get').mockReturnValue(options);
-  } else {
-    jest.spyOn(reflector, 'get').mockReturnValue(undefined);
-  }
-
   return ctx;
+}
+
+/** Helper: create a guard with a specific THROTTLER_SKIP_IPS value. */
+function makeGuardWithSkipIps(skipIps: string): ThrottlerGuard {
+  const original = process.env['THROTTLER_SKIP_IPS'];
+  process.env['THROTTLER_SKIP_IPS'] = skipIps;
+  const reflector = new Reflector();
+  const guard = new ThrottlerGuard(reflector);
+  // Restore the env var so tests don't bleed into each other.
+  if (original === undefined) {
+    delete process.env['THROTTLER_SKIP_IPS'];
+  } else {
+    process.env['THROTTLER_SKIP_IPS'] = original;
+  }
+  return guard;
+}
+
+/**
+ * Issue #945 — Helper to create a guard with an explicit TRUST_PROXY and
+ * optional TRUSTED_PROXY_CIDRS value. Restores env vars after construction
+ * so tests don't bleed into each other.
+ */
+function makeGuardWithTrustProxy(
+  trustProxy: '0' | '1',
+  trustedCidrs?: string,
+): ThrottlerGuard {
+  const origTrustProxy = process.env['TRUST_PROXY'];
+  const origCidrs = process.env['TRUSTED_PROXY_CIDRS'];
+  process.env['TRUST_PROXY'] = trustProxy;
+  if (trustedCidrs !== undefined) {
+    process.env['TRUSTED_PROXY_CIDRS'] = trustedCidrs;
+  }
+  const reflector = new Reflector();
+  const guard = new ThrottlerGuard(reflector);
+  // Restore
+  if (origTrustProxy === undefined) {
+    delete process.env['TRUST_PROXY'];
+  } else {
+    process.env['TRUST_PROXY'] = origTrustProxy;
+  }
+  if (trustedCidrs !== undefined) {
+    if (origCidrs === undefined) {
+      delete process.env['TRUSTED_PROXY_CIDRS'];
+    } else {
+      process.env['TRUSTED_PROXY_CIDRS'] = origCidrs;
+    }
+  }
+  return guard;
 }
 
 describe('ThrottlerGuard', () => {
@@ -37,11 +90,17 @@ describe('ThrottlerGuard', () => {
   let guard: ThrottlerGuard;
 
   beforeEach(() => {
+    // Ensure THROTTLER_SKIP_IPS is unset for the default guard instances.
+    delete process.env['THROTTLER_SKIP_IPS'];
     reflector = new Reflector();
     guard = new ThrottlerGuard(reflector);
   });
 
-  it('allows requests when no throttle options are set', () => {
+  afterEach(() => {
+    delete process.env['THROTTLER_SKIP_IPS'];
+  });
+
+  it('allows requests when no throttle options are set', async () => {
     jest.spyOn(reflector, 'get').mockReturnValue(undefined);
     const ctx = {
       switchToHttp: () => ({
@@ -49,103 +108,748 @@ describe('ThrottlerGuard', () => {
           headers: {},
           socket: { remoteAddress: '1.2.3.4' },
           path: '/test',
+          body: {},
         }),
+        getResponse: () => ({ set: jest.fn() }),
       }),
       getHandler: () => ({}),
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  it('allows requests within the limit', () => {
+  it('allows requests within the limit', async () => {
     const options: ThrottleOptions = { limit: 3, ttl: 60_000 };
-    jest.spyOn(reflector, 'get').mockReturnValue(options);
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return undefined;
+      return options;
+    });
+
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: '1.2.3.4' },
+      path: '/auth/challenge',
+      body: {},
+    };
 
     const ctx = {
       switchToHttp: () => ({
-        getRequest: () => ({
-          headers: {},
-          socket: { remoteAddress: '1.2.3.4' },
-          path: '/auth/challenge',
-        }),
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
       }),
       getHandler: () => ({}),
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  it('blocks requests exceeding the limit', () => {
+  it('blocks requests exceeding the limit', async () => {
     const options: ThrottleOptions = { limit: 2, ttl: 60_000 };
-    jest.spyOn(reflector, 'get').mockReturnValue(options);
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return undefined;
+      return options;
+    });
+
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: '5.6.7.8' },
+      path: '/credits/issue',
+      body: {},
+    };
 
     const ctx = {
       switchToHttp: () => ({
-        getRequest: () => ({
-          headers: {},
-          socket: { remoteAddress: '5.6.7.8' },
-          path: '/credits/issue',
-        }),
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
       }),
       getHandler: () => ({}),
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    guard.canActivate(ctx);
-    guard.canActivate(ctx);
+    await guard.canActivate(ctx);
+    await guard.canActivate(ctx);
 
-    expect(() => guard.canActivate(ctx)).toThrow(
-      new HttpException('Too Many Requests', HttpStatus.TOO_MANY_REQUESTS),
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
+      new HttpException(
+        { message: 'Too Many Requests', retryAfter: expect.any(Number) },
+        HttpStatus.TOO_MANY_REQUESTS,
+      ),
     );
   });
 
-  it('resets count after TTL expires', () => {
+  it('resets count after TTL expires', async () => {
     jest.useFakeTimers();
     const options: ThrottleOptions = { limit: 1, ttl: 1_000 };
-    jest.spyOn(reflector, 'get').mockReturnValue(options);
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return undefined;
+      return options;
+    });
+
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: '9.9.9.9' },
+      path: '/auth/challenge',
+      body: {},
+    };
 
     const ctx = {
       switchToHttp: () => ({
-        getRequest: () => ({
-          headers: {},
-          socket: { remoteAddress: '9.9.9.9' },
-          path: '/auth/challenge',
-        }),
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
       }),
       getHandler: () => ({}),
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(() => guard.canActivate(ctx)).toThrow(HttpException);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
 
     jest.advanceTimersByTime(1_001);
-    expect(guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
 
     jest.useRealTimers();
   });
 
-  it('uses x-forwarded-for header when present', () => {
+  it('uses x-forwarded-for header when present', async () => {
     const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
-    jest.spyOn(reflector, 'get').mockReturnValue(options);
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return undefined;
+      return options;
+    });
+
+    const mockReq = {
+      headers: { 'x-forwarded-for': '10.0.0.1, 192.168.1.1' },
+      socket: { remoteAddress: '127.0.0.1' },
+      path: '/auth/challenge',
+      body: {},
+    };
 
     const ctx = {
       switchToHttp: () => ({
-        getRequest: () => ({
-          headers: { 'x-forwarded-for': '10.0.0.1, 192.168.1.1' },
-          socket: { remoteAddress: '127.0.0.1' },
-          path: '/auth/challenge',
-        }),
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
       }),
       getHandler: () => ({}),
       getClass: () => ({}),
     } as unknown as ExecutionContext;
 
-    expect(guard.canActivate(ctx)).toBe(true);
-    expect(() => guard.canActivate(ctx)).toThrow(HttpException);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+  });
+
+  it('ignores a spoofed x-forwarded-for from an untrusted client IP', async () => {
+    const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+    jest
+      .spyOn(reflector, 'get')
+      .mockImplementation((key: unknown) =>
+        key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+      );
+
+    const mockReq = {
+      headers: { 'x-forwarded-for': '203.0.113.9, 198.51.100.5' },
+      socket: { remoteAddress: '5.6.7.8' }, // public, untrusted peer
+      path: '/auth/challenge',
+      body: {},
+    };
+
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    // XFF is ignored, so the second request is throttled by the real socket IP.
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+  });
+
+  it('honours x-forwarded-for only behind a trusted proxy', async () => {
+    const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+    jest
+      .spyOn(reflector, 'get')
+      .mockImplementation((key: unknown) =>
+        key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+      );
+
+    const mockReq = {
+      headers: { 'x-forwarded-for': '203.0.113.9, 198.51.100.5' },
+      socket: { remoteAddress: '127.0.0.1' }, // trusted loopback proxy
+      path: '/auth/challenge',
+      body: {},
+    };
+
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+
+    // Behind a trusted proxy the client is the rightmost untrusted hop (198.51.100.5).
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    // A different client through the same proxy is allowed.
+    mockReq.headers['x-forwarded-for'] = '203.0.113.9, 192.0.2.7';
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    // The original client (198.51.100.5) again exceeds the limit.
+    mockReq.headers['x-forwarded-for'] = '203.0.113.9, 198.51.100.5';
+    await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+  });
+});
+
+describe('ThrottlerGuard (per-account mode)', () => {
+  let reflector: Reflector;
+  let guard: ThrottlerGuard;
+
+  beforeEach(() => {
+    reflector = new Reflector();
+    // No CacheService injected — exercises in-memory fallback path
+    guard = new ThrottlerGuard(reflector);
+  });
+
+  function makeAccountCtx(
+    ip: string,
+    account: string | null,
+    opts: AccountThrottleOptions,
+  ): ExecutionContext {
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return opts;
+      return undefined;
+    });
+
+    const body: Record<string, string> = {};
+    if (account) body['account'] = account;
+
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: ip },
+      path: '/auth/verify',
+      body,
+    };
+
+    return {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+  }
+
+  it('allows requests within the account limit', async () => {
+    const opts: AccountThrottleOptions = {
+      accountLimit: 10,
+      ipLimit: 50,
+      ttl: 300_000,
+    };
+
+    for (let i = 0; i < 10; i++) {
+      const ctx = makeAccountCtx('1.2.3.4', 'GABC123', opts);
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    }
+  });
+
+  it('blocks after account limit exceeded and sets Retry-After', async () => {
+    const opts: AccountThrottleOptions = {
+      accountLimit: 2,
+      ipLimit: 50,
+      ttl: 300_000,
+    };
+
+    const retryAfterSpy = jest.fn();
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return opts;
+      return undefined;
+    });
+
+    const body = { account: 'GDEF456' };
+    const mockRes = { set: retryAfterSpy };
+    const mockReq = {
+      headers: {},
+      socket: { remoteAddress: '5.6.7.8' },
+      path: '/auth/verify',
+      body,
+    };
+
+    const makeCtx = () =>
+      ({
+        switchToHttp: () => ({
+          getRequest: () => mockReq,
+          getResponse: () => mockRes,
+        }),
+        getHandler: () => ({}),
+        getClass: () => ({}),
+      }) as unknown as ExecutionContext;
+
+    await guard.canActivate(makeCtx());
+    await guard.canActivate(makeCtx());
+
+    await expect(guard.canActivate(makeCtx())).rejects.toThrow(
+      new HttpException(
+        { message: 'Too Many Requests', retryAfter: expect.any(Number) },
+        HttpStatus.TOO_MANY_REQUESTS,
+      ),
+    );
+    expect(retryAfterSpy).toHaveBeenCalledWith(
+      'Retry-After',
+      expect.any(String),
+    );
+  });
+
+  it('different accounts have independent limits', async () => {
+    const opts: AccountThrottleOptions = {
+      accountLimit: 1,
+      ipLimit: 50,
+      ttl: 300_000,
+    };
+
+    const ctx1 = makeAccountCtx('1.1.1.1', 'GACCOUNT1', opts);
+    const ctx2 = makeAccountCtx('2.2.2.2', 'GACCOUNT2', opts);
+
+    await expect(guard.canActivate(ctx1)).resolves.toBe(true);
+    await expect(guard.canActivate(ctx2)).resolves.toBe(true);
+  });
+
+  it('applies IP limit independently of account limit', async () => {
+    const opts: AccountThrottleOptions = {
+      accountLimit: 100,
+      ipLimit: 2,
+      ttl: 300_000,
+    };
+
+    jest.spyOn(reflector, 'get').mockImplementation((key: unknown) => {
+      if (key === ACCOUNT_THROTTLE_KEY) return opts;
+      return undefined;
+    });
+
+    const makeCtxWithIp = (ip: string, i: number) => {
+      const body = { account: `GACCOUNT${i}` }; // different account each time
+      const mockReq = {
+        headers: {},
+        socket: { remoteAddress: ip },
+        path: '/auth/verify',
+        body,
+      };
+      return {
+        switchToHttp: () => ({
+          getRequest: () => mockReq,
+          getResponse: () => ({ set: jest.fn() }),
+        }),
+        getHandler: () => ({}),
+        getClass: () => ({}),
+      } as unknown as ExecutionContext;
+    };
+
+    await expect(guard.canActivate(makeCtxWithIp('9.9.9.9', 1))).resolves.toBe(
+      true,
+    );
+    await expect(guard.canActivate(makeCtxWithIp('9.9.9.9', 2))).resolves.toBe(
+      true,
+    );
+    await expect(
+      guard.canActivate(makeCtxWithIp('9.9.9.9', 3)),
+    ).rejects.toThrow(HttpException);
+  });
+
+  // ── THROTTLER_SKIP_IPS (skip-list) tests ────────────────────────────────
+
+  describe('skip list (THROTTLER_SKIP_IPS)', () => {
+    it('bypasses throttling for an IP in the skip list (exact host /32)', async () => {
+      const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+      const skipGuard = makeGuardWithSkipIps('203.0.113.42/32');
+      jest
+        .spyOn(skipGuard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+        );
+
+      const makeCtx = () =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: {},
+              socket: { remoteAddress: '203.0.113.42' },
+              path: '/auth/challenge',
+            }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        }) as unknown as ExecutionContext;
+
+      // Both calls succeed despite limit=1 because the IP is skipped.
+      await expect(skipGuard.canActivate(makeCtx())).resolves.toBe(true);
+      await expect(skipGuard.canActivate(makeCtx())).resolves.toBe(true);
+    });
+
+    it('bypasses throttling for an IP matched by a CIDR range', async () => {
+      const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+      // 127.0.0.1/8 covers the entire 127.x.x.x loopback block.
+      const skipGuard = makeGuardWithSkipIps('127.0.0.1/8,10.0.0.0/8');
+      jest
+        .spyOn(skipGuard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+        );
+
+      const makeCtx = (ip: string) =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: {},
+              socket: { remoteAddress: ip },
+              path: '/auth/verify',
+            }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        }) as unknown as ExecutionContext;
+
+      // Loopback
+      await expect(skipGuard.canActivate(makeCtx('127.0.0.1'))).resolves.toBe(
+        true,
+      );
+      await expect(skipGuard.canActivate(makeCtx('127.0.0.1'))).resolves.toBe(
+        true,
+      );
+
+      // Private 10.x.x.x
+      await expect(skipGuard.canActivate(makeCtx('10.20.30.40'))).resolves.toBe(
+        true,
+      );
+      await expect(skipGuard.canActivate(makeCtx('10.20.30.40'))).resolves.toBe(
+        true,
+      );
+    });
+
+    it('does NOT bypass throttling for an IP outside the skip list', async () => {
+      const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+      const skipGuard = makeGuardWithSkipIps('127.0.0.1/8');
+      jest
+        .spyOn(skipGuard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+        );
+
+      const makeCtx = () =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: {},
+              socket: { remoteAddress: '203.0.113.1' }, // not in 127/8
+              path: '/auth/challenge',
+            }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        }) as unknown as ExecutionContext;
+
+      await expect(skipGuard.canActivate(makeCtx())).resolves.toBe(true);
+      // Second call must be throttled because 203.0.113.1 is not skipped.
+      await expect(skipGuard.canActivate(makeCtx())).rejects.toThrow(
+        new HttpException(
+          { message: 'Too Many Requests', retryAfter: expect.any(Number) },
+          HttpStatus.TOO_MANY_REQUESTS,
+        ),
+      );
+    });
+
+    it('does not add bypass headers for skipped IPs', async () => {
+      const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+      const skipGuard = makeGuardWithSkipIps('10.0.0.0/8');
+      jest
+        .spyOn(skipGuard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+        );
+
+      const mockSetHeader = jest.fn();
+      const ctx = {
+        switchToHttp: () => ({
+          getRequest: () => ({
+            headers: {},
+            socket: { remoteAddress: '10.0.0.1' },
+            path: '/auth/challenge',
+          }),
+          getResponse: () => ({ setHeader: mockSetHeader }),
+        }),
+        getHandler: () => ({}),
+        getClass: () => ({}),
+      } as unknown as ExecutionContext;
+
+      await skipGuard.canActivate(ctx);
+
+      // No X-RateLimit-Bypass or similar header must be set.
+      expect(mockSetHeader).not.toHaveBeenCalled();
+    });
+
+    it('handles empty THROTTLER_SKIP_IPS gracefully (default behaviour unchanged)', async () => {
+      const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+      const skipGuard = makeGuardWithSkipIps('');
+      jest
+        .spyOn(skipGuard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+        );
+
+      const makeCtx = () =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: {},
+              socket: { remoteAddress: '1.2.3.4' },
+              path: '/auth/challenge',
+            }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        }) as unknown as ExecutionContext;
+
+      await expect(skipGuard.canActivate(makeCtx())).resolves.toBe(true);
+      await expect(skipGuard.canActivate(makeCtx())).rejects.toThrow(
+        HttpException,
+      );
+    });
+
+    it('ignores malformed CIDR entries without crashing', async () => {
+      const options: ThrottleOptions = { limit: 1, ttl: 60_000 };
+      // "bad-cidr" is not valid — should be silently discarded.
+      const skipGuard = makeGuardWithSkipIps('bad-cidr,127.0.0.0/8');
+      jest
+        .spyOn(skipGuard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+        );
+
+      const makeCtx = (ip: string) =>
+        ({
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: {},
+              socket: { remoteAddress: ip },
+              path: '/auth/challenge',
+            }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        }) as unknown as ExecutionContext;
+
+      // Valid entry still works.
+      await expect(skipGuard.canActivate(makeCtx('127.0.0.1'))).resolves.toBe(
+        true,
+      );
+      await expect(skipGuard.canActivate(makeCtx('127.0.0.1'))).resolves.toBe(
+        true,
+      );
+
+      // A non-skipped IP is still throttled.
+      await expect(skipGuard.canActivate(makeCtx('8.8.8.8'))).resolves.toBe(
+        true,
+      );
+      await expect(skipGuard.canActivate(makeCtx('8.8.8.8'))).rejects.toThrow(
+        HttpException,
+      );
+    });
+  });
+});
+
+// ── Issue #945: TRUST_PROXY / TRUSTED_PROXY_CIDRS tests ───────────────────
+
+describe('ThrottlerGuard (issue #945 — TRUST_PROXY policy)', () => {
+  /**
+   * Helper that builds an ExecutionContext with a given socket IP, XFF header,
+   * and route throttle options, wiring up the guard's reflector.
+   */
+  function makeXffContext(
+    guard: ThrottlerGuard,
+    socketIp: string,
+    xff: string | undefined,
+    options: ThrottleOptions,
+  ): ExecutionContext {
+    jest
+      .spyOn(guard['reflector'], 'get')
+      .mockImplementation((key: unknown) =>
+        key === ACCOUNT_THROTTLE_KEY ? undefined : options,
+      );
+
+    const headers: Record<string, string> = {};
+    if (xff !== undefined) headers['x-forwarded-for'] = xff;
+
+    const mockReq = {
+      headers,
+      socket: { remoteAddress: socketIp },
+      path: '/auth/challenge',
+      body: {},
+    };
+
+    return {
+      switchToHttp: () => ({
+        getRequest: () => mockReq,
+        getResponse: () => ({ set: jest.fn() }),
+      }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
+    } as unknown as ExecutionContext;
+  }
+
+  const opts: ThrottleOptions = { limit: 3, ttl: 60_000 };
+
+  describe('TRUST_PROXY=0 (default/untrusted mode)', () => {
+    let guard: ThrottlerGuard;
+
+    beforeEach(() => {
+      guard = makeGuardWithTrustProxy('0');
+    });
+
+    it('always uses the socket IP regardless of x-forwarded-for', async () => {
+      // An attacker behind a public IP sets XFF to spoof a "clean" address.
+      // With TRUST_PROXY=0 the socket IP is always used — spoof has no effect.
+      const ctx = makeXffContext(
+        guard,
+        '5.5.5.5',       // attacker's real socket IP
+        '1.2.3.4',       // spoofed VIP address in XFF
+        { limit: 1, ttl: 60_000 },
+      );
+
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      // Second request still throttled by socket IP 5.5.5.5, not spoofed 1.2.3.4.
+      await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    });
+
+    it('spoofed XFF cannot bypass limit — N requests from same socket all count', async () => {
+      // Attacker rotates XFF values trying to look like N different clients.
+      const socketIp = '203.0.113.99';
+      const limit = 3;
+      const limitOpts: ThrottleOptions = { limit, ttl: 60_000 };
+
+      jest
+        .spyOn(guard['reflector'], 'get')
+        .mockImplementation((key: unknown) =>
+          key === ACCOUNT_THROTTLE_KEY ? undefined : limitOpts,
+        );
+
+      for (let i = 0; i < limit; i++) {
+        const headers = { 'x-forwarded-for': `10.0.0.${i}` }; // rotating spoofed IPs
+        const req = {
+          headers,
+          socket: { remoteAddress: socketIp },
+          path: '/auth/challenge',
+          body: {},
+        };
+        const ctx = {
+          switchToHttp: () => ({
+            getRequest: () => req,
+            getResponse: () => ({ set: jest.fn() }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        } as unknown as ExecutionContext;
+
+        await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      }
+
+      // Request N+1 must be throttled even though XFF was rotated each time.
+      const headers = { 'x-forwarded-for': '10.0.0.100' };
+      const req = {
+        headers,
+        socket: { remoteAddress: socketIp },
+        path: '/auth/challenge',
+        body: {},
+      };
+      const ctx = {
+        switchToHttp: () => ({
+          getRequest: () => req,
+          getResponse: () => ({ set: jest.fn() }),
+        }),
+        getHandler: () => ({}),
+        getClass: () => ({}),
+      } as unknown as ExecutionContext;
+
+      await expect(guard.canActivate(ctx)).rejects.toThrow(
+        new HttpException(
+          { message: 'Too Many Requests', retryAfter: expect.any(Number) },
+          HttpStatus.TOO_MANY_REQUESTS,
+        ),
+      );
+    });
+  });
+
+  describe('TRUST_PROXY=1 (trusted proxy mode)', () => {
+    let guard: ThrottlerGuard;
+
+    beforeEach(() => {
+      // Trust only the loopback range (127.0.0.0/8) to keep tests deterministic.
+      guard = makeGuardWithTrustProxy('1', '127.0.0.0/8');
+    });
+
+    it('uses the rightmost untrusted hop from XFF when connecting via trusted proxy', async () => {
+      // Socket is 127.0.0.1 (trusted proxy), XFF has client 203.0.113.5.
+      const ctx = makeXffContext(
+        guard,
+        '127.0.0.1',
+        '203.0.113.5, 127.0.0.1',
+        { limit: 1, ttl: 60_000 },
+      );
+
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      // Second request from same client (203.0.113.5) is throttled.
+      await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    });
+
+    it('ignores XFF when socket is NOT a trusted proxy even with TRUST_PROXY=1', async () => {
+      // Socket is a public IP, not in the trusted CIDR list.
+      const ctx = makeXffContext(
+        guard,
+        '8.8.8.8',             // not trusted
+        '10.0.0.1, 127.0.0.1', // spoofed XFF pretending to come via loopback
+        { limit: 1, ttl: 60_000 },
+      );
+
+      // Should throttle on socket IP 8.8.8.8, not on spoofed XFF.
+      await expect(guard.canActivate(ctx)).resolves.toBe(true);
+      await expect(guard.canActivate(ctx)).rejects.toThrow(HttpException);
+    });
+
+    it('different clients through the trusted proxy have independent counters', async () => {
+      const limitOpts: ThrottleOptions = { limit: 1, ttl: 60_000 };
+
+      const makeCtxForClient = (clientIp: string) => {
+        jest
+          .spyOn(guard['reflector'], 'get')
+          .mockImplementation((key: unknown) =>
+            key === ACCOUNT_THROTTLE_KEY ? undefined : limitOpts,
+          );
+        return {
+          switchToHttp: () => ({
+            getRequest: () => ({
+              headers: { 'x-forwarded-for': clientIp },
+              socket: { remoteAddress: '127.0.0.1' },
+              path: '/auth/challenge',
+              body: {},
+            }),
+            getResponse: () => ({ set: jest.fn() }),
+          }),
+          getHandler: () => ({}),
+          getClass: () => ({}),
+        } as unknown as ExecutionContext;
+      };
+
+      // Client A gets their one allowed request.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.1'))).resolves.toBe(true);
+      // Client B gets their own independent counter.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.2'))).resolves.toBe(true);
+      // Client A is now throttled.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.1'))).rejects.toThrow(HttpException);
+      // Client B is also throttled on their second request.
+      await expect(guard.canActivate(makeCtxForClient('203.0.113.2'))).rejects.toThrow(HttpException);
+    });
   });
 });

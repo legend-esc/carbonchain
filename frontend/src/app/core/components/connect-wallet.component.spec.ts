@@ -2,7 +2,23 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ConnectWalletComponent } from './connect-wallet.component';
 import { StellarWalletService } from '../services/stellar-wallet.service';
 import { AuthService } from '../services/auth.service';
+import { TranslationService } from '../services/translation.service';
 import { signal } from '@angular/core';
+
+const translationStub: Partial<TranslationService> = {
+  t: (key: string) =>
+    ({
+      'wallet.install': 'Install Freighter',
+      'wallet.connect': 'Connect Wallet',
+      'wallet.connecting': 'Connecting…',
+      'wallet.disconnect': 'Disconnect',
+      'wallet.pageTitle': 'Connect your wallet',
+      'wallet.pageDescription': 'Connect your Freighter wallet.',
+      'wallet.step1': 'Step 1',
+      'wallet.step2': 'Step 2',
+      'wallet.step3': 'Step 3',
+    })[key] ?? key,
+};
 
 function createMocks(freighterInstalled: boolean) {
   const walletStub = {
@@ -11,6 +27,7 @@ function createMocks(freighterInstalled: boolean) {
     isConnected: signal(false),
     connect: vi.fn(),
     disconnect: vi.fn(),
+    stopBalancePolling: vi.fn(),
   } as unknown as StellarWalletService;
 
   const authStub = {
@@ -36,6 +53,7 @@ describe('ConnectWalletComponent', () => {
         providers: [
           { provide: StellarWalletService, useValue: walletStub },
           { provide: AuthService, useValue: authStub },
+          { provide: TranslationService, useValue: translationStub },
         ],
       }).compileComponents();
 
@@ -65,6 +83,7 @@ describe('ConnectWalletComponent', () => {
         providers: [
           { provide: StellarWalletService, useValue: walletStub },
           { provide: AuthService, useValue: authStub },
+          { provide: TranslationService, useValue: translationStub },
         ],
       }).compileComponents();
 

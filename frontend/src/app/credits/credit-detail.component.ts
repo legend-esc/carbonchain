@@ -7,34 +7,12 @@ import { CreditMetadata, CreditStatus } from '@shared';
 import { ApiService, ProvenanceEvent } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
-import { CreditStore } from '../core/store/credit.store';
-
-/** Map of contract error codes to user-friendly messages. */
-const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
-  '100': 'Credit not found.',
-  '101': 'Credit is already retired.',
-  '102': 'Credit is not active and cannot be modified.',
-  '103': 'Insufficient credit balance for this operation.',
-  '104': 'Split amount must be less than total credit tonnes.',
-  '105': 'Split amount must be greater than zero.',
-  '106': 'Credits must share the same methodology to be merged.',
-  '107': 'Credits must share the same vintage year to be merged.',
-  '108': 'Credits must share the same issuer to be merged.',
-  '109': 'You do not have permission to perform this action.',
-};
-
-function mapContractError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  for (const [code, friendly] of Object.entries(CONTRACT_ERROR_MESSAGES)) {
-    if (msg.includes(code)) return friendly;
-  }
-  return msg || 'An unexpected error occurred. Please try again.';
-}
+import { ProvenanceTimelineComponent } from './provenance-timeline.component';
 
 @Component({
   selector: 'app-credit-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule, FormsModule],
+  imports: [CommonModule, RouterModule, ProvenanceTimelineComponent],
   template: `
     <div class="credit-detail">
       @if (loading()) {
@@ -83,16 +61,15 @@ function mapContractError(err: unknown): string {
 
         <section class="card">
           <h2>Provenance Chain</h2>
-          <ol class="provenance">
-            <li>
-              Issued by <span class="mono">{{ credit()!.issuer | slice: 0 : 12 }}…</span> on
-              {{ credit()!.issued_at | date: 'mediumDate' }}
-            </li>
-            <li>Methodology: {{ credit()!.methodology }} — Geography: {{ credit()!.geography }}</li>
-            @if (credit()!.status === 'Retired') {
-              <li class="retired">Retired ✓</li>
-            }
-          </ol>
+          @if (provenanceLoading()) {
+            <p class="status">Loading provenance…</p>
+          } @else if (provenanceError()) {
+            <p class="error">{{ provenanceError() }}</p>
+          } @else if (provenance().length > 0) {
+            <app-provenance-timeline [events]="provenance()" />
+          } @else {
+            <p class="status">No provenance data available.</p>
+          }
         </section>
 
         <section class="card">
@@ -345,15 +322,6 @@ function mapContractError(err: unknown): string {
         font-family: monospace;
         word-break: break-all;
       }
-      .provenance {
-        padding-left: 1.25rem;
-        font-size: 0.9rem;
-        line-height: 1.8;
-      }
-      .retired {
-        color: #2e7d32;
-        font-weight: 600;
-      }
       .mrv-table {
         width: 100%;
         border-collapse: collapse;
@@ -537,7 +505,7 @@ export class CreditDetailComponent implements OnInit {
   readonly isOwner = () => {
     const c = this.credit();
     const pk = this.wallet.publicKey();
-    return !!c && !!pk && c.issuer === pk;
+    return !!c && !!pk && c.owner === pk;
   };
 
   // ── Split state ────────────────────────────────────────────────────────────
