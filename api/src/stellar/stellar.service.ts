@@ -6,6 +6,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { withRetry, rpcBreaker, CircuitState } from './rpc-resilience';
 import {
   Account,
   Horizon,
@@ -628,36 +629,49 @@ export class StellarService implements OnModuleInit {
     method: string,
     args: xdr.ScVal[] = [],
   ): Promise<xdr.ScVal | undefined> {
-    const tx = new TransactionBuilder(
-      new Account(
-        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-        '0',
-      ),
-      {
-        fee: '100',
-        networkPassphrase: this.networkPassphrase,
-      },
-    )
-      .addOperation(
-        Operation.invokeHostFunction({
-          func: xdr.HostFunction.hostFunctionTypeInvokeContract(
-            new xdr.InvokeContractArgs({
-              contractAddress: Address.fromString(contractId).toScAddress(),
-              functionName: method,
-              args: args,
-            }),
+    // Issue #939: wrap with circuit breaker + jittered exponential retry
+    return rpcBreaker.call(() =>
+      withRetry(async () => {
+        const tx = new TransactionBuilder(
+          new Account(
+            'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            '0',
           ),
-          auth: [],
-        }),
-      )
-      .setTimeout(30)
-      .build();
+          {
+            fee: '100',
+            networkPassphrase: this.networkPassphrase,
+          },
+        )
+          .addOperation(
+            Operation.invokeHostFunction({
+              func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                new xdr.InvokeContractArgs({
+                  contractAddress: Address.fromString(contractId).toScAddress(),
+                  functionName: method,
+                  args: args,
+                }),
+              ),
+              auth: [],
+            }),
+          )
+          .setTimeout(30)
+          .build();
 
-    const simulation = await this.simulateTransaction(tx);
-    if (rpc.Api.isSimulationSuccess(simulation) && simulation.result) {
-      return simulation.result.retval;
-    }
-    return undefined;
+        const simulation = await this.simulateTransaction(tx);
+        if (rpc.Api.isSimulationSuccess(simulation) && simulation.result) {
+          return simulation.result.retval;
+        }
+        return undefined;
+      }),
+    );
+  }
+
+  /**
+   * Expose the RPC circuit-breaker status for health/metrics endpoints.
+   * Issue #939.
+   */
+  getRpcStatus(): { status: CircuitState; metric: string } {
+    return { status: rpcBreaker.state, metric: 'stellar.rpc.degraded' };
   }
 
   /**

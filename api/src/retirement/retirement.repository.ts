@@ -15,12 +15,8 @@ export interface IRetirementRepository {
     limit: number,
   ): Promise<PageResult<RetirementEntity>>;
   findAll(page: number, limit: number): Promise<PageResult<RetirementEntity>>;
-  /**
-   * #921 — Returns retirements whose cert hash has not yet been written
-   * on-chain (certHashStatus is 'none' or 'pending') and still have retries
-   * remaining.  Used by CertHashReconciler for the daily reconciliation scan.
-   */
-  findPendingCertHash(limit: number): Promise<RetirementEntity[]>;
+  /** Issue #942 — Paginated query with optional buyer/status filters. */
+  findPaginated(dto: ListRetirementsDto): Promise<[RetirementEntity[], number]>;
 }
 
 export const RETIREMENT_REPOSITORY = 'RETIREMENT_REPOSITORY';
@@ -68,18 +64,32 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
   }
 
   /**
-   * #921 — Returns up to `limit` records that still need a cert hash
-   * on-chain write (certHashStatus 'none' or 'pending', retries not exhausted).
+   * Issue #942 — Paginated query compatible with the ListRetirementsDto shape.
+   * Applies optional buyer/status filters, sorts by retiredAt DESC, and
+   * returns a [data, total] tuple matching the TypeORM findAndCount signature.
    */
-  async findPendingCertHash(limit: number): Promise<RetirementEntity[]> {
-    const CERT_HASH_MAX_RETRIES = 5;
-    return Array.from(this.store.values())
-      .filter(
-        (r) =>
-          (r.certHashStatus === 'none' || r.certHashStatus === 'pending') &&
-          r.certHashRetries < CERT_HASH_MAX_RETRIES,
-      )
-      .slice(0, limit);
+  async findPaginated(
+    dto: ListRetirementsDto,
+  ): Promise<[RetirementEntity[], number]> {
+    const page = dto.page ?? 1;
+    const pageSize = dto.pageSize ?? 20;
+
+    let all = Array.from(this.store.values());
+
+    if (dto.buyer) {
+      all = all.filter((r) => r.buyer === dto.buyer);
+    }
+    // RetirementEntity does not yet have a `status` column; filter is a no-op
+    // until the entity is extended. This keeps the interface consistent.
+
+    // Sort by retiredAt DESC (most recent first)
+    all.sort((a, b) => b.retiredAt - a.retiredAt);
+
+    const total = all.length;
+    const skip = (page - 1) * pageSize;
+    const data = all.slice(skip, skip + pageSize);
+
+    return [data, total];
   }
 
   private paginate(
