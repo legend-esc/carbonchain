@@ -4,6 +4,12 @@ import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
 import { CreditStatus } from '../../../shared';
 
+const mockReq = {
+  user: { account: 'GADMINPUBLICKEY' },
+  headers: { 'x-request-id': 'req-1', 'user-agent': 'jest' },
+  ip: '127.0.0.1',
+};
+
 describe('AdminController', () => {
   let controller: AdminController;
   let service: jest.Mocked<AdminService>;
@@ -19,6 +25,7 @@ describe('AdminController', () => {
               totalCredits: 0,
               totalRetirements: 0,
               activeVerifiers: 3,
+              paused: false,
             }),
             suspendVerifier: jest.fn().mockResolvedValue({ suspended: true }),
             flagCredit: jest.fn().mockResolvedValue({
@@ -33,12 +40,27 @@ describe('AdminController', () => {
             }),
             getNonce: jest
               .fn()
-              .mockReturnValue({ address: 'GADMIN', nonce: 5 }),
+              .mockResolvedValue({ address: 'GADMIN', nonce: 5 }),
             setRequiredApprovals: jest
               .fn()
-              .mockReturnValue({ requiredApprovals: 2 }),
+              .mockResolvedValue({ requiredApprovals: 2 }),
             pauseContract: jest.fn().mockResolvedValue({ paused: true }),
             unpauseContract: jest.fn().mockResolvedValue({ paused: false }),
+            setMinStake: jest.fn().mockResolvedValue({ minStake: '5000000' }),
+            slashVerifier: jest.fn().mockResolvedValue({
+              slashed: true,
+              verifier: 'GVER1',
+              creditId: 'cid1',
+            }),
+            registerVerifier: jest
+              .fn()
+              .mockResolvedValue({ registered: true, address: 'GVER1' }),
+            configureVerifier: jest
+              .fn()
+              .mockResolvedValue({ configured: true, verifierId: 'GVER1' }),
+            getAuditLog: jest
+              .fn()
+              .mockResolvedValue({ rows: [], total: 0 }),
           },
         },
       ],
@@ -57,27 +79,60 @@ describe('AdminController', () => {
     expect(service.getStats).toHaveBeenCalled();
   });
 
-  it('POST /admin/verifiers/:id/suspend calls suspendVerifier', async () => {
-    const result = await controller.suspendVerifier('GVER1');
-    expect(result).toEqual({ suspended: true });
-    expect(service.suspendVerifier).toHaveBeenCalledWith('GVER1');
+  it('GET /admin/audit calls getAuditLog with parsed options', async () => {
+    const result = await controller.getAuditLog(
+      'GADMIN',
+      'pause_contract',
+      '2024-01-01',
+      '2024-12-31',
+      '10',
+      '0',
+    );
+    expect(result).toEqual({ rows: [], total: 0 });
+    expect(service.getAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: 'GADMIN',
+        action: 'pause_contract',
+        limit: 10,
+        offset: 0,
+      }),
+    );
   });
 
-  it('POST /admin/credits/:id/flag calls flagCredit', async () => {
-    const result = await controller.flagCredit('abc');
+  it('GET /admin/audit with no filters calls getAuditLog with empty opts', async () => {
+    await controller.getAuditLog();
+    expect(service.getAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: undefined, action: undefined }),
+    );
+  });
+
+  it('POST /admin/verifiers/:id/suspend calls suspendVerifier with audit ctx', async () => {
+    const result = await controller.suspendVerifier('GVER1', mockReq);
+    expect(result).toEqual({ suspended: true });
+    expect(service.suspendVerifier).toHaveBeenCalledWith(
+      'GVER1',
+      expect.objectContaining({ actor: 'GADMINPUBLICKEY' }),
+    );
+  });
+
+  it('POST /admin/credits/:id/flag calls flagCredit with audit ctx', async () => {
+    const result = await controller.flagCredit('abc', mockReq);
     expect(result).toEqual({
       flagged: true,
       creditId: 'abc',
       status: CreditStatus.Flagged,
     });
-    expect(service.flagCredit).toHaveBeenCalledWith('abc');
+    expect(service.flagCredit).toHaveBeenCalledWith(
+      'abc',
+      expect.objectContaining({ actor: 'GADMINPUBLICKEY' }),
+    );
   });
 
-  it('POST /admin/methodologies calls registerMethodology', () => {
-    const result = controller.registerMethodology({
-      name: 'VCS',
-      description: 'Verified Carbon Standard',
-    });
+  it('POST /admin/methodologies calls registerMethodology with audit ctx', () => {
+    const result = controller.registerMethodology(
+      { name: 'VCS', description: 'Verified Carbon Standard' },
+      mockReq,
+    );
     expect(result).toEqual({
       registered: true,
       name: 'VCS',
@@ -86,32 +141,38 @@ describe('AdminController', () => {
     expect(service.registerMethodology).toHaveBeenCalledWith(
       'VCS',
       'Verified Carbon Standard',
+      expect.objectContaining({ actor: 'GADMINPUBLICKEY' }),
     );
   });
 
-  it('GET /admin/nonce/:address calls getNonce', () => {
-    const result = controller.getNonce('GADMIN');
+  it('GET /admin/nonce/:address calls getNonce', async () => {
+    const result = await controller.getNonce('GADMIN');
     expect(result).toEqual({ address: 'GADMIN', nonce: 5 });
     expect(service.getNonce).toHaveBeenCalledWith('GADMIN');
   });
 
-  it('POST /admin/required-approvals calls setRequiredApprovals', () => {
-    const result = controller.setRequiredApprovals({ threshold: 2 });
+  it('POST /admin/required-approvals calls setRequiredApprovals with audit ctx', async () => {
+    const result = await controller.setRequiredApprovals({ threshold: 2 }, mockReq);
     expect(result).toEqual({ requiredApprovals: 2 });
-    expect(service.setRequiredApprovals).toHaveBeenCalledWith(2);
+    expect(service.setRequiredApprovals).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ actor: 'GADMINPUBLICKEY' }),
+    );
   });
 
-  it('POST /admin/pause calls pauseContract', async () => {
-    jest.spyOn(service, 'pauseContract').mockResolvedValue({ paused: true });
-    const result = await controller.pause();
+  it('POST /admin/pause calls pauseContract with audit ctx', async () => {
+    const result = await controller.pause(mockReq);
     expect(result).toEqual({ paused: true });
-    expect(service.pauseContract).toHaveBeenCalled();
+    expect(service.pauseContract).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: 'GADMINPUBLICKEY' }),
+    );
   });
 
-  it('POST /admin/unpause calls unpauseContract', async () => {
-    jest.spyOn(service, 'unpauseContract').mockResolvedValue({ paused: false });
-    const result = await controller.unpause();
+  it('POST /admin/unpause calls unpauseContract with audit ctx', async () => {
+    const result = await controller.unpause(mockReq);
     expect(result).toEqual({ paused: false });
-    expect(service.unpauseContract).toHaveBeenCalled();
+    expect(service.unpauseContract).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: 'GADMINPUBLICKEY' }),
+    );
   });
 });

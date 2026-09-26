@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { EventsService, SorobanEvent } from './events.service';
 
 @ApiTags('events')
@@ -7,20 +7,64 @@ import { EventsService, SorobanEvent } from './events.service';
 export class EventsController {
   constructor(private eventsService: EventsService) {}
 
-  @ApiOperation({ summary: 'List contract events with filters' })
-  @ApiResponse({ status: 200, description: 'List of events' })
+  /**
+   * GET /events — list contract events with optional filters.
+   *
+   * Issue #931 — keyset/cursor pagination.
+   *
+   * Keyset mode (recommended):
+   *   Pass `beforeCursor` (the `nextCursor` value from a previous response)
+   *   to page forward without duplicates under concurrent writes.
+   *   Response includes `nextCursor` (null = last page).
+   *
+   * Deprecated offset mode (backward-compatible):
+   *   Pass `skip` + `take` as before; cursor params take precedence.
+   */
+  @ApiOperation({ summary: 'List contract events — keyset cursor pagination (Issue #931)' })
+  @ApiResponse({ status: 200, description: 'Paginated list of events' })
+  @ApiQuery({ name: 'contractId', required: false })
+  @ApiQuery({ name: 'eventType', required: false })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Page size (max 200, default 50)',
+  })
+  @ApiQuery({
+    name: 'beforeCursor',
+    required: false,
+    description:
+      'Opaque cursor (event id) from a previous response — enables stable keyset pagination',
+  })
+  @ApiQuery({
+    name: 'take',
+    required: false,
+    type: Number,
+    description: '[Deprecated] use limit instead',
+  })
+  @ApiQuery({
+    name: 'skip',
+    required: false,
+    type: Number,
+    description: '[Deprecated] use cursor pagination instead',
+  })
   @Get()
   async getEvents(
     @Query('contractId') contractId?: string,
     @Query('eventType') eventType?: string,
-    @Query('take') take = 50,
-    @Query('skip') skip = 0,
-  ): Promise<SorobanEvent[]> {
+    @Query('limit') limit?: string,
+    @Query('take') take?: string,
+    @Query('skip') skip?: string,
+    @Query('beforeCursor') beforeCursor?: string,
+  ): Promise<{ events: SorobanEvent[]; nextCursor: string | null }> {
+    // `limit` takes precedence over deprecated `take`
+    const pageSize = limit ?? take ?? '50';
     return this.eventsService.getEvents(
       contractId,
       eventType,
-      Number(take),
-      Number(skip),
+      Number(pageSize),
+      Number(skip ?? 0),
+      beforeCursor,
     );
   }
 
