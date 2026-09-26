@@ -1,5 +1,6 @@
 import {
   Column,
+  CreateDateColumn,
   Entity,
   Index,
   ManyToOne,
@@ -33,6 +34,15 @@ export class WebhookDeliveryEntity {
 
   @Column({ default: 0 })
   attempts: number;
+
+  /**
+   * #935 — creation timestamp used by the GC janitor to enforce the
+   * retention window.  Indexed so the purge query can do a range scan
+   * without a sequential table scan.
+   */
+  @Index()
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true })
   lastAttemptAt?: Date;

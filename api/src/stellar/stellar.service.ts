@@ -6,6 +6,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { withRetry, rpcBreaker, CircuitState } from './rpc-resilience';
 import {
   Account,
   Horizon,
@@ -19,15 +20,16 @@ import {
   rpc,
 } from '@stellar/stellar-sdk';
 import { SequenceNumberManager } from './sequence-number-manager.service';
+import { RedisSequenceNumberManager } from './redis-sequence-number-manager.service';
 import { RequestContextStore } from '../common/request-context';
 import {
   METRICS_EVENT_EMITTER,
   CONTRACT_INVOCATION_COMPLETED,
-  CONTRACT_READ_COMPLETED,
+  TX_BAD_SEQ,
 } from '../metrics/metrics-events';
 import type {
   ContractInvocationCompletedEvent,
-  ContractReadCompletedEvent,
+  TxBadSeqEvent,
 } from '../metrics/metrics-events';
 import type { EventEmitter } from 'events';
 
@@ -44,8 +46,29 @@ const FALLBACK_BASE_FEE = 100; // stroops
 /** TTL for the Horizon base fee cache (ms). */
 const BASE_FEE_CACHE_TTL_MS = 60_000;
 
-/** Mandatory delay before re-fetching sequence number after tx_bad_seq (ms). */
-const BAD_SEQ_RETRY_DELAY_MS = 200;
+/**
+ * Issue #916 — Initial delay (ms) before the first tx_bad_seq retry.
+ * Subsequent retries use exponential backoff: delay * 2^attempt.
+ */
+const BAD_SEQ_INITIAL_RETRY_DELAY_MS = 200;
+
+/** Maximum number of tx_bad_seq retries per submission. */
+const BAD_SEQ_MAX_RETRIES = 3;
+
+/**
+ * Result returned by confirmTransaction (#918).
+ *
+ * status  — final ledger status: SUCCESS | FAILED | TIMEOUT
+ * hash    — the transaction hash that was polled
+ * latencyMs — time in ms from first poll call to resolution (confirm latency metric)
+ * errorMessage — present when status === FAILED; contains the on-chain error
+ */
+export interface TransactionConfirmation {
+  status: 'SUCCESS' | 'FAILED' | 'TIMEOUT';
+  hash: string;
+  latencyMs: number;
+  errorMessage?: string;
+}
 
 @Injectable()
 export class StellarService implements OnModuleInit {
@@ -73,7 +96,16 @@ export class StellarService implements OnModuleInit {
 
   constructor(
     private configService: ConfigService,
-    private seqNoManager: SequenceNumberManager,
+    /**
+     * Issue #914 — Primary sequence manager: Redis-backed for multi-replica
+     * coordination. Falls back to in-memory when Redis is unavailable.
+     */
+    private seqNoManager: RedisSequenceNumberManager,
+    /**
+     * Issue #914 — In-memory fallback, kept as a named dependency so it can
+     * be used directly in unit tests that do not wire Redis.
+     */
+    @Optional() private inMemorySeqManager?: SequenceNumberManager,
     @Optional()
     @Inject(METRICS_EVENT_EMITTER)
     private readonly metricsEmitter?: EventEmitter,
@@ -136,8 +168,8 @@ export class StellarService implements OnModuleInit {
   }
 
   private async getNextSequenceNumber(publicKey: string): Promise<number> {
-    // Issue #510: use the per-account promise queue so concurrent callers for
-    // the same account never receive the same sequence number.
+    // Issue #914: use the Redis-backed manager for distributed sequence coordination
+    // across replicas. Falls back to in-memory automatically when Redis is down.
     return this.seqNoManager.getNextSequenceNumberAtomic(
       publicKey,
       async () => {
@@ -213,8 +245,8 @@ export class StellarService implements OnModuleInit {
     method: string,
     args: xdr.ScVal[] = [],
     signerKeypair: Keypair,
-    retries = 1,
-  ): Promise<rpc.Api.GetTransactionResponse> {
+    retries = BAD_SEQ_MAX_RETRIES,
+  ): Promise<rpc.Api.GetTransactionResponse & { estimatedFeeStroops?: number }> {
     const startTime = Date.now();
 
     try {
@@ -243,15 +275,19 @@ export class StellarService implements OnModuleInit {
    * Core implementation of invokeContract, extracted so the public method
    * can wrap it with timing and failure-event emission without interfering
    * with the recursive bad-seq retry path.
+   *
+   * Issue #917 — returns the response enriched with `estimatedFeeStroops` so
+   * callers (and DTOs) can surface the actual fee derived from simulation.
    */
   private async invokeContractImpl(
     contractId: string,
     method: string,
     args: xdr.ScVal[] = [],
     signerKeypair: Keypair,
-    retries = 1,
+    retries = BAD_SEQ_MAX_RETRIES,
     startTime: number,
-  ): Promise<rpc.Api.GetTransactionResponse> {
+    badSeqAttempt = 0,
+  ): Promise<rpc.Api.GetTransactionResponse & { estimatedFeeStroops?: number }> {
     const pk = signerKeypair.publicKey();
     const seq = await this.getNextSequenceNumber(pk);
     const account = new Account(pk, seq.toString());
@@ -341,7 +377,9 @@ export class StellarService implements OnModuleInit {
               `[issue#546] Contract call fee paid: method=${method} fee_stroops=${currentFee}`,
             );
 
-            return result;
+            // Issue #917 — attach the actual simulated fee so callers and
+            // DTOs can surface a non-constant estimatedFeeStroops value.
+            return Object.assign(result, { estimatedFeeStroops: currentFee });
           }
           throw new Error(`Transaction failed with status: ${response.status}`);
         } catch (error: unknown) {
@@ -394,13 +432,28 @@ export class StellarService implements OnModuleInit {
               'tx_bad_seq';
 
           if (isBadSeq && retries > 0) {
+            // Issue #916 — exponential backoff on tx_bad_seq retries.
+            // delay = BAD_SEQ_INITIAL_RETRY_DELAY_MS * 2^badSeqAttempt
+            const delay =
+              BAD_SEQ_INITIAL_RETRY_DELAY_MS * Math.pow(2, badSeqAttempt);
+
             this.logger.warn(
-              `tx_bad_seq for ${pk} (sig:${method}), waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
+              `[#916] tx_bad_seq for ${pk} (method=${method}), attempt ${badSeqAttempt + 1}/${BAD_SEQ_MAX_RETRIES}, ` +
+                `invalidating cache and retrying in ${delay}ms`,
             );
-            this.seqNoManager.reset(pk);
-            await new Promise((resolve) =>
-              setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
-            );
+
+            // Issue #916 — emit tx_bad_seq metric so operators can track frequency.
+            this.metricsEmitter?.emit(TX_BAD_SEQ, {
+              publicKey: pk,
+              method,
+              attempt: badSeqAttempt + 1,
+            } satisfies TxBadSeqEvent);
+
+            // Invalidate both Redis and in-memory caches so the next attempt
+            // re-fetches the current sequence from Horizon.
+            await this.seqNoManager.reset(pk);
+            await new Promise<void>((resolve) => setTimeout(resolve, delay));
+
             return this.invokeContractImpl(
               contractId,
               method,
@@ -408,6 +461,7 @@ export class StellarService implements OnModuleInit {
               signerKeypair,
               retries - 1,
               startTime,
+              badSeqAttempt + 1,
             );
           }
           throw error;
@@ -433,7 +487,8 @@ export class StellarService implements OnModuleInit {
   async buildAndSubmit(
     operations: Operation[],
     signerKeypair: Keypair,
-    retries = 1,
+    retries = BAD_SEQ_MAX_RETRIES,
+    badSeqAttempt = 0,
   ): Promise<Horizon.HorizonApi.SubmitTransactionResponse> {
     const pk = signerKeypair.publicKey();
     const seq = await this.getNextSequenceNumber(pk);
@@ -477,15 +532,31 @@ export class StellarService implements OnModuleInit {
         )?.response?.data?.extras?.result_codes?.transaction === 'tx_bad_seq';
 
       if (isBadSeq && retries > 0) {
+        // Issue #916 — exponential backoff on tx_bad_seq retries.
+        const delay =
+          BAD_SEQ_INITIAL_RETRY_DELAY_MS * Math.pow(2, badSeqAttempt);
+
         this.logger.warn(
-          `tx_bad_seq for ${pk}, waiting ${BAD_SEQ_RETRY_DELAY_MS}ms then resetting cache and retrying`,
+          `[#916] tx_bad_seq for ${pk} (Horizon), attempt ${badSeqAttempt + 1}/${BAD_SEQ_MAX_RETRIES}, ` +
+            `invalidating cache and retrying in ${delay}ms`,
         );
-        this.seqNoManager.reset(pk);
-        // Issue #473: mandatory delay before re-fetching to allow Horizon to catch up.
-        await new Promise((resolve) =>
-          setTimeout(resolve, BAD_SEQ_RETRY_DELAY_MS),
+
+        // Issue #916 — emit tx_bad_seq metric counter.
+        this.metricsEmitter?.emit(TX_BAD_SEQ, {
+          publicKey: pk,
+          method: 'buildAndSubmit',
+          attempt: badSeqAttempt + 1,
+        } satisfies TxBadSeqEvent);
+
+        // Invalidate both Redis and in-memory caches.
+        await this.seqNoManager.reset(pk);
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        return this.buildAndSubmit(
+          operations,
+          signerKeypair,
+          retries - 1,
+          badSeqAttempt + 1,
         );
-        return this.buildAndSubmit(operations, signerKeypair, retries - 1);
       }
       throw error;
     }
@@ -617,68 +688,49 @@ export class StellarService implements OnModuleInit {
     method: string,
     args: xdr.ScVal[] = [],
   ): Promise<xdr.ScVal | undefined> {
-    // Issue #944 — time the read (simulation-only) call so MetricsListener can
-    // record stellar_rpc_duration_seconds and stellar_contract_ops_total.
-    const startTime = Date.now();
-    try {
-      const result = await this.readContractImpl(contractId, method, args);
-      this.metricsEmitter?.emit(CONTRACT_READ_COMPLETED, {
-        contract: contractId,
-        method,
-        status: 'success',
-        durationMs: Date.now() - startTime,
-      } satisfies ContractReadCompletedEvent);
-      return result;
-    } catch (error: unknown) {
-      this.metricsEmitter?.emit(CONTRACT_READ_COMPLETED, {
-        contract: contractId,
-        method,
-        status: 'failure',
-        durationMs: Date.now() - startTime,
-      } satisfies ContractReadCompletedEvent);
-      throw error;
-    }
+    // Issue #939: wrap with circuit breaker + jittered exponential retry
+    return rpcBreaker.call(() =>
+      withRetry(async () => {
+        const tx = new TransactionBuilder(
+          new Account(
+            'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            '0',
+          ),
+          {
+            fee: '100',
+            networkPassphrase: this.networkPassphrase,
+          },
+        )
+          .addOperation(
+            Operation.invokeHostFunction({
+              func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                new xdr.InvokeContractArgs({
+                  contractAddress: Address.fromString(contractId).toScAddress(),
+                  functionName: method,
+                  args: args,
+                }),
+              ),
+              auth: [],
+            }),
+          )
+          .setTimeout(30)
+          .build();
+
+        const simulation = await this.simulateTransaction(tx);
+        if (rpc.Api.isSimulationSuccess(simulation) && simulation.result) {
+          return simulation.result.retval;
+        }
+        return undefined;
+      }),
+    );
   }
 
   /**
-   * Core implementation of readContract, extracted so the public method can
-   * wrap it with timing/event emission without duplicating logic.
+   * Expose the RPC circuit-breaker status for health/metrics endpoints.
+   * Issue #939.
    */
-  private async readContractImpl(
-    contractId: string,
-    method: string,
-    args: xdr.ScVal[] = [],
-  ): Promise<xdr.ScVal | undefined> {
-    const tx = new TransactionBuilder(
-      new Account(
-        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-        '0',
-      ),
-      {
-        fee: '100',
-        networkPassphrase: this.networkPassphrase,
-      },
-    )
-      .addOperation(
-        Operation.invokeHostFunction({
-          func: xdr.HostFunction.hostFunctionTypeInvokeContract(
-            new xdr.InvokeContractArgs({
-              contractAddress: Address.fromString(contractId).toScAddress(),
-              functionName: method,
-              args: args,
-            }),
-          ),
-          auth: [],
-        }),
-      )
-      .setTimeout(30)
-      .build();
-
-    const simulation = await this.simulateTransaction(tx);
-    if (rpc.Api.isSimulationSuccess(simulation) && simulation.result) {
-      return simulation.result.retval;
-    }
-    return undefined;
+  getRpcStatus(): { status: CircuitState; metric: string } {
+    return { status: rpcBreaker.state, metric: 'stellar.rpc.degraded' };
   }
 
   /**
@@ -721,6 +773,125 @@ export class StellarService implements OnModuleInit {
 
   getNetworkPassphrase(): string {
     return this.networkPassphrase;
+  }
+
+  /**
+   * #918 — Confirm-on-finality
+   *
+   * Polls `getTransaction` until the transaction reaches a terminal state
+   * (SUCCESS or FAILED) or until `maxPolls` × `pollIntervalMs` elapses.
+   *
+   * - On SUCCESS  → returns { status: 'SUCCESS', hash, latencyMs }
+   * - On FAILED   → returns { status: 'FAILED',  hash, latencyMs, errorMessage }
+   * - On timeout  → returns { status: 'TIMEOUT', hash, latencyMs }
+   *
+   * Callers are responsible for rolling back optimistic DB state on FAILED/TIMEOUT.
+   */
+  async confirmTransaction(
+    hash: string,
+    maxPolls = 20,
+    pollIntervalMs = 2_000,
+  ): Promise<TransactionConfirmation> {
+    const start = Date.now();
+
+    for (let i = 0; i < maxPolls; i++) {
+      const response = await this.sorobanRpcServer.getTransaction(hash);
+
+      if (response.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        const latencyMs = Date.now() - start;
+        this.logger.log(
+          `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] ` +
+            `TX confirmed SUCCESS hash=${hash.slice(0, 16)}... latency=${latencyMs}ms`,
+        );
+        return { status: 'SUCCESS', hash, latencyMs };
+      }
+
+      if (response.status === rpc.Api.GetTransactionStatus.FAILED) {
+        const latencyMs = Date.now() - start;
+        const errorMessage = this.extractTxErrorMessage(response);
+        this.logger.warn(
+          `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] ` +
+            `TX FAILED hash=${hash.slice(0, 16)}... latency=${latencyMs}ms error=${errorMessage}`,
+        );
+        return { status: 'FAILED', hash, latencyMs, errorMessage };
+      }
+
+      // NOT_FOUND or still pending — wait before next poll
+      if (i < maxPolls - 1) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+    }
+
+    const latencyMs = Date.now() - start;
+    this.logger.warn(
+      `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] ` +
+        `TX polling TIMEOUT hash=${hash.slice(0, 16)}... after ${latencyMs}ms`,
+    );
+    return { status: 'TIMEOUT', hash, latencyMs };
+  }
+
+  /** Extract a human-readable error string from a FAILED transaction response. */
+  private extractTxErrorMessage(
+    response: rpc.Api.GetTransactionResponse,
+  ): string {
+    try {
+      // resultXdr is present on FAILED responses
+      const resultXdr = (response as unknown as Record<string, unknown>)
+        .resultXdr;
+      if (resultXdr && typeof resultXdr === 'string') {
+        const result = xdr.TransactionResult.fromXDR(resultXdr, 'base64');
+        return result.result().switch().name ?? 'FAILED';
+      }
+    } catch {
+      // ignore parse failures — we'll return the raw status
+    }
+    return 'FAILED';
+  }
+
+  /**
+   * #920 — On-chain pre-check simulation
+   *
+   * Builds and simulates a contract call without signing or submitting it.
+   * Use this to probe on-chain state (e.g. current credit status/owner) before
+   * issuing the real invoke, so failures are caught fast with no fee burned.
+   *
+   * Returns the simulation result; callers inspect `rpc.Api.isSimulationSuccess`
+   * and `simulation.result.retval` for the response value.
+   *
+   * The dummy source account (all-zeroes) is valid for simulation-only calls
+   * because the RPC node does not enforce account existence during simulation.
+   */
+  async simulateContractCall(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[] = [],
+  ): Promise<rpc.Api.SimulateTransactionResponse> {
+    const tx = new TransactionBuilder(
+      new Account(
+        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        '0',
+      ),
+      {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      },
+    )
+      .addOperation(
+        Operation.invokeHostFunction({
+          func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+            new xdr.InvokeContractArgs({
+              contractAddress: Address.fromString(contractId).toScAddress(),
+              functionName: method,
+              args,
+            }),
+          ),
+          auth: [],
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    return this.sorobanRpcServer.simulateTransaction(tx);
   }
 
   async getContractEvents(

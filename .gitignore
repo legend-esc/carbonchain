@@ -31,6 +31,12 @@ Cargo.lock
 # ── Test Artifacts ────────────────────────────────────────────────────────────
 # Coverage reports
 coverage/
+__snapshots__/
+**/__snapshots__/
+*.snap
+*.test-snapshot
+junit.xml
+test-results/
 .nyc_output/
 lcov.info
 *.lcov
@@ -53,6 +59,13 @@ playwright-report/
 cypress/screenshots/
 cypress/videos/
 cypress/downloads/
+# Kiro AI artifacts
+.kiro/
+# Codespace / devcontainer
+.devcontainer/
+# Local override files — not for source control
+*.local
+*.local.*
 
 # Cache directories used by test runners
 .vitest-cache/
@@ -102,8 +115,17 @@ pids/
 *.heapsnapshot
 *.cpuprofile
 
-# ── Kiro CLI ──────────────────────────────────────────────────────────────────
-.kiro/
+# Soroban CLI local deploy artifacts
+.stellar/
+contract-ids.*.json
 
-# ── Temporary files ───────────────────────────────────────────────────────────
-*.tmp
+# OS artefacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor artefacts
+*.code-workspace
+.history/
+

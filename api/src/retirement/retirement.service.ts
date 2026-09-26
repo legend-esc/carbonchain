@@ -2,7 +2,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
   BadRequestException,
   ConflictException,
   InternalServerErrorException,
@@ -12,7 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
-import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
+import { nativeToScVal, scValToNative, rpc } from '@stellar/stellar-sdk';
 import { CreditStatus, RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
 import { CertificateService } from './certificate.service';
@@ -82,6 +81,8 @@ export class RetirementService {
     private readonly stellarService: StellarService,
     private readonly keypairService: StellarKeypairService,
     private readonly configService: ConfigService,
+    private readonly certificateService: CertificateService,
+    private readonly certHashReconciler: CertHashReconciler,
     @Inject(RETIREMENT_REPOSITORY)
     private readonly retirementRepo: IRetirementRepository,
     @Inject(CREDIT_REPOSITORY)
@@ -105,13 +106,19 @@ export class RetirementService {
 
   /**
    * Retire a credit via POST /credits/:id/retire.
-   * Validates off-chain index state before submitting the on-chain transaction.
+   *
+   * #919 — uses ContractErrorMapper (no magic strings)
+   * #920 — performs an on-chain simulation pre-check before invoking
+   * #918 — credit status set to pending; rolled back on FAILED/TIMEOUT
    */
   async retireCredit(
     creditId: string,
     dto: RetireDto,
     buyerPublicKey: string,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    // Issue #941 — validate creditId format
+    creditId = parseCreditId(creditId);
+
     const credit = await this.creditRepo.findById(creditId);
     if (!credit) {
       throw new NotFoundException(`Credit ${creditId} not found`);
@@ -151,23 +158,113 @@ export class RetirementService {
   }
 
   /**
-   * Retire a carbon credit on-chain and persist the retirement record
-   * to the off-chain index.
+   * #920 — On-chain pre-check using simulateContractCall.
+   *
+   * Simulates `get_credit` against the registry contract.  If simulation fails
+   * or the on-chain status/owner no longer matches expectations, throws a 409
+   * with a hint telling the caller to refresh and retry.
+   *
+   * This check is intentionally signing-free: the dummy source key used inside
+   * simulateContractCall means no auth is required, and no fee is consumed.
+   */
+  private async runOnChainPreCheck(
+    creditId: string,
+    buyerPublicKey: string,
+  ): Promise<void> {
+    try {
+      const args = [
+        nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+      ];
+
+      const simulation = await this.stellarService.simulateContractCall(
+        this.registryContractId,
+        'get_credit',
+        args,
+      );
+
+      if (!rpc.Api.isSimulationSuccess(simulation) || !simulation.result) {
+        // Simulation itself failed — likely the credit no longer exists on-chain
+        // or the contract errored.  Extract code and surface via mapper.
+        const errMsg =
+          (simulation as unknown as { error?: string }).error ??
+          'Simulation failed';
+        const code = extractContractErrorCode(errMsg);
+        if (code !== undefined) {
+          const descriptor = lookupError(code, 'credit_registry');
+          if (descriptor) {
+            throw new ConflictException({
+              error: `On-chain pre-check failed: ${descriptor.message}`,
+              code,
+              hint: 'Refresh the credit status and retry.',
+            });
+          }
+        }
+        throw new ConflictException({
+          error: 'On-chain pre-check failed; credit state could not be read.',
+          hint: 'Refresh the credit status and retry.',
+        });
+      }
+
+      // Decode the on-chain credit record
+      const onChain = scValToNative(simulation.result.retval) as {
+        status?: unknown;
+        owner?: unknown;
+      };
+
+      // Check status — must be Active (numeric 1 in the contract enum)
+      const onChainStatus = onChain.status;
+      const isOnChainActive =
+        onChainStatus === 1 ||
+        String(onChainStatus).toLowerCase() === 'active';
+
+      if (!isOnChainActive) {
+        throw new ConflictException({
+          error:
+            'Credit is not active on-chain; it may have been retired or transferred since the last DB sync.',
+          hint: 'Refresh the credit status and retry.',
+          onChainStatus,
+        });
+      }
+
+      // Check owner — must match the buyer (the one submitting the retire call)
+      const onChainOwner = String(onChain.owner ?? '');
+      if (onChainOwner && onChainOwner !== buyerPublicKey) {
+        throw new ConflictException({
+          error:
+            'Credit owner on-chain does not match. The credit may have been transferred since the last sync.',
+          hint: 'Refresh the credit and retry as the current owner.',
+        });
+      }
+    } catch (err) {
+      // Re-throw ConflictExceptions we raised ourselves
+      if ((err as { status?: number })?.status === 409) throw err;
+
+      // Anything else from the simulation layer — log and allow through.
+      // We don't block a legitimate retire because the pre-check RPC failed.
+      this.logger.warn(
+        `On-chain pre-check for credit ${creditId} failed with non-fatal error: ${(err as Error).message}. Proceeding with retire.`,
+      );
+    }
+  }
+
+  /**
+   * Retire a carbon credit on-chain and persist the retirement record.
+   *
+   * #919 — contract errors mapped via ContractErrorMapper (no magic strings)
+   * #918 — record saved with txStatus=pending; rolled back on FAILED/TIMEOUT;
+   *         confirm latency logged as a metric
+   * #921 — certificate generated and hash write queued via CertHashReconciler
    *
    * ## Event ordering guarantee
-   * The `CreditRetired` application event is emitted **only after** the
-   * retirement record has been successfully written to the repository.
-   * This prevents off-chain indexers from recording a retirement that does
-   * not yet exist in storage if the write were to fail.
-   *
-   * Sequence:
-   *   1. Invoke the on-chain `retire` contract function.
-   *   2. Persist the `RetirementEntity` to the repository.
-   *   3. Emit the `CreditRetired` application event.
+   * `CreditRetired` is emitted only after a successful DB write AND finality
+   * confirmation.  FAILED/TIMEOUT transactions never emit the event.
    */
   async retire(
     dto: FullRetireDto,
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    // Issue #941 — validate creditId format
+    dto = { ...dto, creditId: parseCreditId(dto.creditId) };
+
     this.logger.log(
       `Retiring credit ${dto.creditId} for ${dto.buyerPublicKey}`,
     );
@@ -192,7 +289,9 @@ export class RetirementService {
     ];
 
     const signer = this.keypairService.getAdminKeypair();
-    let response;
+    let response: rpc.Api.GetTransactionResponse;
+    let txHash = '';
+
     try {
       response = await this.stellarService.invokeContract(
         this.retirementContractId,
@@ -200,18 +299,15 @@ export class RetirementService {
         args,
         signer,
       );
+      // invokeContract returns the final GetTransactionResponse; extract hash
+      txHash =
+        (response as unknown as Record<string, unknown>).hash as string ?? '';
     } catch (error: unknown) {
-      // Handle contract paused error (error code 123)
-      const errorMessage = (error as Error).message || '';
-      if (errorMessage.includes('123') || errorMessage.includes('paused')) {
-        throw new ServiceUnavailableException({
-          error: 'Contract is currently paused',
-        });
-      }
-      throw error;
+      // #919 — map contract errors via ContractErrorMapper; no magic strings
+      mapContractError(error, 'retirement');
     }
 
-    const rv = (response as unknown as Record<string, unknown>).returnValue;
+    const rv = (response! as unknown as Record<string, unknown>).returnValue;
     const retirementId = rv
       ? Buffer.from(
           scValToNative(
@@ -247,9 +343,65 @@ export class RetirementService {
     entity.ledgerSeq = ledgerSeq;
     await this.retirementRepo.save(entity);
 
-    // ── Step 2: Emit CreditRetired event ─────────────────────────────────────
-    // Only reached after a successful save, so the record is guaranteed to
-    // exist in storage when any listener handles this event.
+    // ── #918 Step 2: Confirm finality ─────────────────────────────────────────
+    if (txHash) {
+      const confirmation = await this.stellarService.confirmTransaction(txHash);
+
+      if (confirmation.status === 'SUCCESS') {
+        entity.txStatus = 'success';
+        await this.retirementRepo.save(entity);
+      } else {
+        // FAILED or TIMEOUT — roll back the optimistic record
+        entity.txStatus =
+          confirmation.status === 'FAILED' ? 'failed' : 'timeout';
+        await this.retirementRepo.save(entity);
+
+        this.logger.error(
+          `Retirement tx ${txHash.slice(0, 16)}... closed as ${confirmation.status} ` +
+            `for credit ${dto.creditId}. DB record marked ${entity.txStatus}.`,
+        );
+
+        const msg =
+          confirmation.status === 'FAILED'
+            ? `Retirement transaction failed on-chain: ${confirmation.errorMessage ?? 'FAILED'}`
+            : 'Retirement transaction timed out waiting for ledger closure.';
+
+        throw new ConflictException({ error: msg, txHash, retirementId });
+      }
+    } else {
+      // No hash available — treat as success (invokeContract already polled)
+      entity.txStatus = 'success';
+      await this.retirementRepo.save(entity);
+    }
+
+    // ── #921 Step 3: Generate certificate and queue hash write ────────────────
+    // Run best-effort: a failure here must not roll back a valid retirement.
+    let certificateIpfsHash = '';
+    try {
+      certificateIpfsHash = await this.certificateService.generateAndPin({
+        retirementId,
+        creditId: dto.creditId,
+        buyer: dto.buyerPublicKey,
+        tonnes: dto.tonnes,
+        reason: dto.reason,
+        timestamp: entity.retiredAt,
+      });
+
+      // Queue the on-chain hash write via CertHashReconciler (with bounded retry)
+      await this.certHashReconciler.writeCertificateHash(
+        retirementId,
+        certificateIpfsHash,
+      );
+    } catch (certErr: unknown) {
+      // Log failure but do NOT re-throw — the retirement itself succeeded.
+      // The reconciler will retry the hash write on its next scan.
+      this.logger.error(
+        `Certificate generation/hash write failed for retirement ${retirementId}: ` +
+          `${(certErr as Error).message}. Will be reconciled by CertHashReconciler.`,
+      );
+    }
+
+    // ── Step 4: Emit CreditRetired event ─────────────────────────────────────
     const event: CreditRetiredEvent = {
       retirementId,
       creditId: dto.creditId,
@@ -350,7 +502,15 @@ export class RetirementService {
       count: 1,
     } satisfies RetirementCompletedEvent);
 
-    return { retirementId, certificateIpfsHash: certificateIpfsHash ?? '' };
+    // Issue #917 — surface the simulated fee so the caller and DTOs can show
+    // an accurate, non-constant fee estimate driven by minResourceFee × multiplier.
+    const estimatedFeeStroops = (response as unknown as { estimatedFeeStroops?: number }).estimatedFeeStroops;
+
+    return {
+      retirementId,
+      certificateIpfsHash: certificateIpfsHash ?? '',
+      ...(estimatedFeeStroops !== undefined ? { estimatedFeeStroops } : {}),
+    };
   }
 
   /**
@@ -404,7 +564,9 @@ export class RetirementService {
     ];
 
     const signer = this.keypairService.getAdminKeypair();
-    let response;
+    let response: rpc.Api.GetTransactionResponse;
+    let txHash = '';
+
     try {
       response = await this.stellarService.invokeContract(
         this.retirementContractId,
@@ -412,12 +574,22 @@ export class RetirementService {
         args,
         signer,
       );
+      txHash =
+        (response as unknown as Record<string, unknown>).hash as string ?? '';
     } catch (error: unknown) {
-      const msg = (error as Error).message || '';
-      if (msg.includes('123') || msg.includes('paused')) {
-        throw new ServiceUnavailableException({
-          error: 'Contract is currently paused',
-        });
+      // #919 — map contract errors via ContractErrorMapper
+      mapContractError(error, 'retirement');
+    }
+
+    // #918 — confirm finality before persisting success records
+    let finalityOk = true;
+    if (txHash) {
+      const confirmation = await this.stellarService.confirmTransaction(txHash);
+      if (confirmation.status !== 'SUCCESS') {
+        this.logger.error(
+          `Batch retire tx ${txHash.slice(0, 16)}... closed as ${confirmation.status}.`,
+        );
+        finalityOk = false;
       }
       // The whole batch reverted on-chain — no DB writes and no events.
       // Surface every credit as failed so callers can reconcile.
@@ -575,6 +747,9 @@ export class RetirementService {
   }
 
   async getRetirement(retirementId: string): Promise<RetirementRecord> {
+    // Issue #941 — validate retirementId format (same 32-byte hex constraint)
+    retirementId = parseCreditId(retirementId);
+
     // Try off-chain index first
     const cached = await this.retirementRepo.findById(retirementId);
     if (cached) return this.entityToRecord(cached);
@@ -613,6 +788,26 @@ export class RetirementService {
     return { ...result, data: result.data.map((e) => this.entityToRecord(e)) };
   }
 
+  /**
+   * Issue #942 — Paginated retirement listing with DTO-based filters.
+   * Replaces the unbounded `listRetirements(page, limit)` path when the
+   * caller supplies a `ListRetirementsDto`.
+   */
+  async listRetirementsPaginated(
+    dto: ListRetirementsDto,
+  ): Promise<PaginatedRetirements<RetirementRecord>> {
+    const page = dto.page ?? 1;
+    const pageSize = dto.pageSize ?? 20;
+
+    const [entities, total] = await this.retirementRepo.findPaginated(dto);
+    const data = entities.map((e) => this.entityToRecord(e));
+
+    const nextCursor =
+      page * pageSize < total ? String(page + 1) : null;
+
+    return { data, total, page, pageSize, nextCursor };
+  }
+
   async getRetirementsByAccount(
     account: string,
     page = 1,
@@ -644,7 +839,22 @@ export class RetirementService {
   ): Promise<CertificateVerification> {
     try {
       this.logger.log(`Verifying certificate: ${certificateId}`);
-      const retirement = await this.getRetirement(certificateId);
+      const entity = await this.retirementRepo.findById(certificateId);
+      if (entity) {
+        // #921 — include certHashStatus; #918 — include txStatus
+        return {
+          id: entity.id,
+          credit_id: entity.creditId,
+          buyer: entity.buyer,
+          tonnes_retired: entity.tonnesRetired,
+          reason: entity.reason,
+          retired_at: entity.retiredAt,
+          tx_hash: entity.txHash || '',
+          verified: entity.txStatus === 'success',
+          certHashStatus: entity.certHashStatus,
+          txStatus: entity.txStatus,
+        };
+      }
 
       // Issue #544: fetch the on-chain certificate_ipfs_hash so we can compare
       // it against the content we actually issued.

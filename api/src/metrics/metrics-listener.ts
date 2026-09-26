@@ -6,11 +6,13 @@ import {
   CONTRACT_INVOCATION_COMPLETED,
   CONTRACT_READ_COMPLETED,
   RETIREMENT_COMPLETED,
+  TX_BAD_SEQ,
 } from './metrics-events';
 import type {
   ContractInvocationCompletedEvent,
   ContractReadCompletedEvent,
   RetirementCompletedEvent,
+  TxBadSeqEvent,
 } from './metrics-events';
 
 /**
@@ -54,6 +56,11 @@ export class MetricsListener implements OnModuleDestroy {
         this.onRetirementCompleted(payload);
       },
     );
+
+    // Issue #916 — subscribe to tx_bad_seq events for the Prometheus counter.
+    this.emitter.on(TX_BAD_SEQ, (payload: TxBadSeqEvent) => {
+      this.onTxBadSeq(payload);
+    });
 
     // Log unhandled error events to avoid crashing the process.
     this.emitter.on('error', (err: Error) => {
@@ -142,10 +149,23 @@ export class MetricsListener implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Issue #916 — increment the tx_bad_seq Prometheus counter every time a
+   * retry is triggered.  A sustained rate here means sequence coordination
+   * is failing across replicas and should page on-call.
+   */
+  private onTxBadSeq(payload: TxBadSeqEvent): void {
+    this.metricsService.txBadSeqTotal?.inc({ method: payload.method });
+    this.logger.warn(
+      `[#916] tx_bad_seq metric: method=${payload.method} publicKey=${payload.publicKey} attempt=${payload.attempt}`,
+    );
+  }
+
   onModuleDestroy(): void {
     this.emitter.removeAllListeners(CONTRACT_INVOCATION_COMPLETED);
     this.emitter.removeAllListeners(CONTRACT_READ_COMPLETED);
     this.emitter.removeAllListeners(RETIREMENT_COMPLETED);
+    this.emitter.removeAllListeners(TX_BAD_SEQ);
     this.emitter.removeAllListeners('error');
   }
 }

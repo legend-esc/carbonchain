@@ -34,29 +34,11 @@ export class MetricsService implements OnModuleInit {
   carbonchainCreditsActiveTotal: client.Gauge<string>;
 
   /**
-   * Issue #944 — Histogram of wall-clock duration of Soroban RPC calls
-   * (readContract and invokeContract), bucketed by method and outcome.
-   *
-   * Labels:
-   *   method  — the contract function name (e.g. "retire", "approve_and_mint")
-   *   outcome — "success" | "failure"
-   *
-   * Buckets are designed to cover the realistic Soroban response range:
-   *   fast simulation (50ms) → slow submission + polling (30s).
+   * Issue #916 — Counter: total tx_bad_seq retries by account/method.
+   * A sustained rate here indicates sequence coordination problems across
+   * replicas and should trigger an alert to investigate Redis connectivity.
    */
-  stellarRpcDurationSeconds: client.Histogram<string>;
-
-  /**
-   * Issue #944 — Counter of Soroban contract operations by key operation type.
-   * Tracks read vs write operations independently so dashboards can distinguish
-   * simulation-only calls from full submission flows.
-   *
-   * Labels:
-   *   op_type — "read" | "invoke"
-   *   method  — the contract function name
-   *   outcome — "success" | "failure"
-   */
-  stellarContractOpsTotal: client.Counter<string>;
+  txBadSeqTotal: client.Counter<string>;
 
   constructor() {
     this.register = new client.Registry();
@@ -129,21 +111,11 @@ export class MetricsService implements OnModuleInit {
       registers: [this.register],
     });
 
-    // ── Issue #944: Soroban RPC latency metrics ──────────────────────────────
-
-    this.stellarRpcDurationSeconds = new client.Histogram({
-      name: 'stellar_rpc_duration_seconds',
-      help: 'Wall-clock duration of Soroban RPC calls (readContract / invokeContract) in seconds',
-      labelNames: ['method', 'outcome'],
-      // Buckets span fast simulation (~50ms) to slow polling submission (~30s).
-      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-      registers: [this.register],
-    });
-
-    this.stellarContractOpsTotal = new client.Counter({
-      name: 'stellar_contract_ops_total',
-      help: 'Total number of Soroban contract operations by type (read vs invoke), method and outcome',
-      labelNames: ['op_type', 'method', 'outcome'],
+    // Issue #916 — tx_bad_seq retry counter for sequence coordination monitoring.
+    this.txBadSeqTotal = new client.Counter({
+      name: 'stellar_tx_bad_seq_total',
+      help: 'Total number of tx_bad_seq retries; sustained rate indicates sequence coordination problems',
+      labelNames: ['method'],
       registers: [this.register],
     });
   }

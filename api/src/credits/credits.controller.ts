@@ -43,7 +43,7 @@ export class CreditsController {
   @UseGuards(JwtAuthGuard)
   @Idempotent()
   @Post('issue')
-  issueCredit(@Body() dto: IssueCreditDto): Promise<{ creditId: string }> {
+  issueCredit(@Body() dto: IssueCreditDto): Promise<{ creditId: string; estimatedFeeStroops?: number }> {
     return this.creditsService.issueCredit(dto);
   }
 
