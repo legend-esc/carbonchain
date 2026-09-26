@@ -1,4 +1,5 @@
-import { Component, inject, input } from '@angular/core';
+import { Component, inject, input, effect } from '@angular/core';
+
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../services/auth.service';
 import { StellarWalletService } from '../services/stellar-wallet.service';
@@ -14,6 +15,15 @@ import { TranslatePipe } from '../pipes/translate.pipe';
         <span class="pubkey" [title]="wallet.publicKey()!">
           {{ wallet.publicKey()! | slice: 0 : 6 }}…{{ wallet.publicKey()! | slice: -4 }}
         </span>
+
+        <span class="balance" aria-live="polite">
+          @if (wallet.xlmBalance() !== null) {
+            {{ wallet.xlmBalance()! | number: '1.7-7' }} XLM
+          } @else {
+            <span class="balance-loading">Loading…</span>
+          }
+        </span>
+
         <button class="btn btn-outline" (click)="auth.logout()">
           {{ 'wallet.disconnect' | translate }}
         </button>
@@ -76,6 +86,16 @@ import { TranslatePipe } from '../pipes/translate.pipe';
         font-family: monospace;
         font-size: 0.85rem;
       }
+      .balance {
+        font-family: monospace;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+      }
+      .balance-loading {
+        opacity: 0.7;
+      }
+
       .btn {
         padding: 0.4rem 1rem;
         border-radius: 6px;
@@ -128,6 +148,17 @@ export class ConnectWalletComponent {
   readonly compact = input(false);
   protected readonly auth = inject(AuthService);
   protected readonly wallet = inject(StellarWalletService);
+
+  // Start/stop balance polling automatically based on wallet connection state.
+  constructor() {
+    effect(() => {
+      if (this.wallet.isConnected()) {
+        this.wallet.startBalancePolling();
+      } else {
+        this.wallet.stopBalancePolling();
+      }
+    });
+  }
 
   async login(): Promise<void> {
     try {

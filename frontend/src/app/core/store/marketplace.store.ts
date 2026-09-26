@@ -1,5 +1,6 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+
 import { Offer } from '@shared';
 import { ApiService } from '../services/api.service';
 
@@ -27,6 +28,7 @@ export class MarketplaceStore {
   readonly offers = this._offers.asReadonly();
   readonly state = this._state.asReadonly();
   readonly error = this._error.asReadonly();
+
   readonly page = this._page.asReadonly();
   readonly total = this._total.asReadonly();
   readonly filters = this._filters.asReadonly();

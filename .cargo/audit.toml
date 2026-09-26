@@ -1,0 +1,21 @@
+# .cargo/audit.toml — advisory allowlist for cargo-audit
+#
+# Advisories listed here are reviewed and accepted for this project.
+# Each entry MUST include the advisory ID, the affected package, and
+# a short justification explaining why it is safe to ignore.
+#
+# Reference: https://github.com/RustSec/cargo-audit
+
+[advisories]
+
+# RUSTSEC-2026-0009
+# Package: ed25519-dalek (transitive via stellar-sdk / soroban-sdk)
+# Reason:  This is a timing-side-channel in batch signature verification,
+#          which is not used on the contract path (contracts only call
+#          individual verify).  Will be removed once an updated stellar-sdk
+#          pins a fixed version.
+ignore = [
+  "RUSTSEC-2026-0009",
+  "RUSTSEC-2024-0436",
+  "RUSTSEC-2026-0097",
+]

@@ -1,13 +1,15 @@
-# TODO
-- [x] Implement Sentry error reporting sink (conditional on SENTRY_DSN)
+# TODO - Carbonchain Drips
 
-- [ ] Configure Sentry initialization in Angular via environment (or equivalent) using SENTRY_DSN
-- [ ] Report errors only in production mode
-- [ ] Ensure graceful no-op when SENTRY_DSN is not set
-- [ ] Update relevant code in:
-  - [ ] frontend/src/app/core/services/error-reporting.service.ts
-  - [ ] frontend/src/app/core/handlers/global-error.handler.ts
-- [x] Update/extend tests as needed for production-only reporting and no-op behavior
+## Implement XLM balance display after wallet connect
+- [x] Update `frontend/src/app/core/services/stellar-wallet.service.ts` with:
+  - [x] Horizon XLM balance fetch
+  - [x] balance state signals
+  - [x] polling start/stop at 30s while connected
+- [x] Update `frontend/src/app/core/components/connect-wallet.component.ts` with:
+  - [x] Display abbreviated address + formatted XLM balance
+  - [x] Start polling when authenticated/connected
+  - [x] Stop polling on logout/disconnect
 
-- [ ] Run frontend tests/lint/build to verify
-
+- [x] Sanity checks:
+  - [x] Typecheck/build
+  - [x] Verify no regressions in existing wallet UI

@@ -1,27 +1,68 @@
-import { IsString, IsNotEmpty, IsNumberString } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  MaxLength,
+  IsInt,
+  Min,
+  Matches,
+  IsOptional,
+  IsNumberString,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RetireDto {
+  @ApiProperty({ example: '2024 Scope 3 offset', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  reason: string;
+
   @ApiProperty({
-    example: 'GABC...XYZ',
-    description: 'Stellar public key of the buyer',
+    example: 0,
+    description: 'Replay-protection nonce from the contract',
+    default: 0,
+  })
+  @IsInt()
+  @Min(0)
+  nonce: number = 0;
+
+  @ApiProperty({
+    example: '500000',
+    description: 'Number of tonnes to retire in scaled units (optional, defaults to entire credit)',
+    required: false,
+  })
+  @IsOptional()
+  @IsNumberString()
+  tonnes?: string;
+}
+
+/**
+ * Request body for POST /retirement.
+ *
+ * Mirrors RetireDto's validation and adds the credit ID (which the
+ * /credits/:id/retire route takes from the URL). The buyer is never accepted
+ * from the body — the controller binds it to the authenticated principal.
+ */
+export class RetirementRequestDto extends RetireDto {
+  @ApiProperty({
+    example: 'a'.repeat(64),
+    description: 'Hex-encoded credit ID (64 characters)',
   })
   @IsString()
   @IsNotEmpty()
-  buyerPublicKey: string;
-
-  @ApiProperty({ example: '037176a1...', description: 'Hex-encoded credit ID' })
-  @IsString()
-  @IsNotEmpty()
+  @Matches(/^[0-9a-f]{64}$/i, {
+    message: 'creditId must be a 64-character hex string',
+  })
   creditId: string;
+}
 
-  @ApiProperty({ example: '1000000', description: '1 tonne = 1_000_000 units' })
-  @IsNumberString()
-  @IsNotEmpty()
+/** Full retirement payload used by the service and the POST /retirement endpoint. */
+export class FullRetireDto {
+  buyerPublicKey: string;
+  creditId: string;
   tonnes: string;
-
-  @ApiProperty({ example: '2024 Scope 3 offset' })
-  @IsString()
-  @IsNotEmpty()
   reason: string;
+  nonce: number;
+  /** Issue #589 — vintage year from credit metadata; stored on the retirement record. */
+  vintageYear?: number;
 }

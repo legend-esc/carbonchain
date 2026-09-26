@@ -13,6 +13,7 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Development Environment Setup](#development-environment-setup)
 - [Running Tests](#running-tests)
 - [Code Style Guidelines](#code-style-guidelines)
+- [Adding Error Codes](#adding-error-codes)
 - [Commit Message Conventions](#commit-message-conventions)
 - [Commit Message Conventions](#commit-message-conventions)
 - [Branch Naming Conventions](#branch-naming-conventions)
@@ -264,11 +265,13 @@ cd contracts && cargo fmt --all
 
 Project style is configured in `contracts/rustfmt.toml` (100-char line width, 2021 edition, grouped imports). CI will fail if any contract is not formatted.
 
-Lint with clippy:
+Lint with clippy — **zero warnings are allowed** (`-D warnings` is enforced by CI):
 
 ```bash
-cargo clippy -- -D warnings
+cd contracts && cargo clippy --all-targets -- -D warnings
 ```
+
+Fix all warnings before opening a PR. Do not use `#[allow(...)]` to silence a warning without a documented reason in a comment on the same line.
 
 - Add doc comments (`///`) for all public contract functions
 - Use the `CarbonChainError` type for all error handling (see `docs/features/ERROR_CODES_REFERENCE.md`)
@@ -558,10 +561,32 @@ When creating a PR, please include:
 - [ ] Frontend: `npm run lint`, `npm run format:check`, and `ng test` pass
 - [ ] No secrets or private keys committed
 - [ ] `CHANGELOG.md` updated if this is a user-facing change
-
 ---
 
+## Adding Error Codes
 
+CarbonChain smart contracts use stable numeric error codes. These codes are safe to use in API clients and monitoring because they never change across contract upgrades.
+
+### Numbering Scheme
+
+Codes are allocated by range per contract:
+
+| Range | Contract |
+|-------|----------|
+| 100–125 | Credit Registry |
+| 110–118 | Retirement |
+| 115–125 | Marketplace |
+| 119–129 | MRV Oracle |
+
+When adding a new error code, pick the **next available number** within the contract's range. The overall range is 100–138; once a range is exhausted, expand upward into the shared buffer (130–138).
+
+### Steps
+
+1. **Pick the next code** — find the highest code in the contract's range from `docs/features/ERROR_CODES_REFERENCE.md`, then increment by one.
+2. **Add the variant** — define the new error variant in the contract's error enum (e.g. `contracts/credit_registry/src/lib.rs`).
+3. **Update the reference doc** — add a new row to the contract's table in `docs/features/ERROR_CODES_REFERENCE.md` with the code, name, and description.
+4. **Emits / usage** — annotate the contract function that returns the new error (in the function's doc comment and in any API docs).
+5. **Test coverage** — add a test that asserts the new error is returned in the expected scenario.
 
 ---
 

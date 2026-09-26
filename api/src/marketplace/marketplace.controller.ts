@@ -6,14 +6,16 @@ import {
   Param,
   Body,
   Query,
+  Request,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { MarketplaceService } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
-import { Offer } from '../shared';
+import { Offer } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
 
 @ApiTags('marketplace')
 @Controller('marketplace')
@@ -26,6 +28,7 @@ export class MarketplaceController {
   @ApiQuery({ name: 'methodology', required: false, type: String })
   @ApiQuery({ name: 'minPrice', required: false, type: Number })
   @ApiQuery({ name: 'maxPrice', required: false, type: Number })
+  @UseReplicaForRead()
   @Get('listings')
   getListings(
     @Query('page') page = '1',
@@ -36,21 +39,30 @@ export class MarketplaceController {
   ) {
     return this.marketplaceService.getListingsPaginated({
       page: Math.max(1, parseInt(page, 10) || 1),
-      pageSize: Math.min(100, Math.max(1, parseInt(pageSize, 10) || 20)),
+      pageSize: Math.min(100, Math.max(1, parseInt(pageSize, 10) || 1)),
       methodology,
       minPrice: minPrice !== undefined ? Number(minPrice) : undefined,
       maxPrice: maxPrice !== undefined ? Number(maxPrice) : undefined,
     });
   }
 
-  /** POST /marketplace/offer — protected: requires JWT */
+  @ApiOperation({ summary: 'Create a new marketplace offer' })
+  @ApiResponse({ status: 201, description: 'Offer created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Post('offer')
-  createOffer(@Body() dto: CreateOfferDto): Promise<{ offerId: string }> {
-    return this.marketplaceService.createOffer(dto);
+  createOffer(
+    @Body() dto: CreateOfferDto,
+    @Request() req: any,
+  ): Promise<{ offerId: string }> {
+    return this.marketplaceService.createOffer({
+      ...dto,
+      sellerPublicKey: req.user.account,
+    });
   }
 
   @ApiOperation({ summary: 'Get offer by ID' })
+  @UseReplicaForRead()
   @Get('offer/:id')
   getOffer(@Param('id', ParseIntPipe) id: number): Promise<Offer> {
     return this.marketplaceService.getOffer(id);
@@ -81,17 +93,23 @@ export class MarketplaceController {
   }
 
   @ApiOperation({ summary: 'Cancel an offer' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Caller is not the offer owner' })
   @UseGuards(JwtAuthGuard)
   @Delete('offer/:id/seller/:address')
   cancelOffer(
-    @Param('address') address: string,
     @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
   ): Promise<void> {
-    return this.marketplaceService.cancelOffer(address, id);
+    return this.marketplaceService.cancelOffer(req.user.account, id);
   }
 
   /** POST /marketplace/offer/:id/buy — protected: requires JWT.
    *  Accepts optional signedXdr from user wallet; falls back to admin-signed. */
+  @ApiOperation({ summary: 'Buy an offer from the marketplace' })
+  @ApiResponse({ status: 200, description: 'Offer purchased' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 410, description: 'Offer has expired' })
   @UseGuards(JwtAuthGuard)
   @Post('offer/:id/buy')
   buyOffer(
@@ -100,5 +118,8 @@ export class MarketplaceController {
     @Body('signedXdr') signedXdr?: string,
   ): Promise<void> {
     return this.marketplaceService.buyOffer(buyerPublicKey, id, signedXdr);
+    @Request() req: any,
+  ): Promise<void> {
+    return this.marketplaceService.buyOffer(req.user.account, id);
   }
 }

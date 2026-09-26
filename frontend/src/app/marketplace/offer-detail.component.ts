@@ -5,17 +5,36 @@ import { ApiService } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { firstValueFrom } from 'rxjs';
+import { Offer } from '@shared';
+import { RouterModule } from '@angular/router';
 
 @Component({
   selector: 'app-offer-detail',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterModule],
   template: `
-    <div class="offer-detail" role="dialog" aria-label="Offer detail">
-      <div class="offer-detail__header">
-        <h2>Offer #{{ offer().id }}</h2>
-        <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+    @if (expired()) {
+      <div class="offer-detail" role="alert" aria-label="Expired offer">
+        <div class="offer-detail__header">
+          <h2>Offer Expired</h2>
+          <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+        </div>
+
+        <p class="error-message">This offer has expired</p>
+
+        <div class="offer-detail__actions">
+          <a class="btn btn-primary" [routerLink]="['/marketplace']" (click)="closed.emit()">
+            Back to marketplace
+          </a>
+          <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+        </div>
       </div>
+    } @else {
+      <div class="offer-detail" role="dialog" aria-label="Offer detail">
+        <div class="offer-detail__header">
+          <h2>Offer #{{ offer().id }}</h2>
+          <button class="btn btn-ghost" (click)="closed.emit()" aria-label="Close">✕</button>
+        </div>
 
       <dl class="detail-list">
         <dt>Credit ID</dt>
@@ -63,8 +82,27 @@ import { firstValueFrom } from 'rxjs';
           </button>
         }
         <button class="btn btn-ghost" (click)="closed.emit()">Close</button>
+        <dl class="detail-list">
+          <dt>Credit ID</dt>
+          <dd class="mono">{{ offer().credit_id }}</dd>
+          <dt>Seller</dt>
+          <dd class="mono">{{ offer().seller }}</dd>
+          <dt>Tonnes Available</dt>
+          <dd>{{ formatTonnes(offer().tonnes_available) }}</dd>
+          <dt>Price</dt>
+          <dd>{{ formatXlm(offer().price_xlm) }}</dd>
+          <dt>Status</dt>
+          <dd>
+            <span class="badge badge-open">{{ offer().status }}</span>
+          </dd>
+        </dl>
+
+        <div class="offer-detail__actions">
+          <button class="btn btn-primary" (click)="buy.emit(offer())">Buy Credit</button>
+          <button class="btn btn-ghost" (click)="closed.emit()">Cancel</button>
+        </div>
       </div>
-    </div>
+    }
   `,
   styles: [`
     .offer-detail { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.5rem; max-width: 480px; }
@@ -92,6 +130,7 @@ import { firstValueFrom } from 'rxjs';
 })
 export class OfferDetailComponent implements OnInit {
   readonly offer = input.required<Offer>();
+  readonly errorCode = input<number | null>(null);
   readonly closed = output<void>();
   readonly buy = output<Offer>();
   readonly cancelled = output<Offer>();
@@ -107,6 +146,10 @@ export class OfferDetailComponent implements OnInit {
 
   ngOnInit(): void {
     void this.loadQuote();
+  protected readonly expired = () => this.errorCode() === 123;
+
+  formatTonnes(raw: string): string {
+    return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' t';
   }
 
   private async loadQuote(): Promise<void> {
