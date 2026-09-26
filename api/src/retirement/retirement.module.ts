@@ -6,6 +6,7 @@ import { RetirementController } from './retirement.controller';
 import { CreditRetirementController } from './credit-retirement.controller';
 import { CertificatesController } from './certificates.controller';
 import { CertificateService } from './certificate.service';
+import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { StellarModule } from '../stellar/stellar.module';
 import { AuthModule } from '../auth/auth.module';
 import { CreditsModule } from '../credits/credits.module';
@@ -32,7 +33,7 @@ import { NonceService } from '../common/nonce.service';
       useValue: new EventEmitter(),
     },
   ],
-  exports: [RetirementService],
+  exports: [RetirementService, CertHashReconciler],
 })
 export class RetirementModule implements OnApplicationBootstrap {
   constructor(private readonly nonceService: NonceService) {}

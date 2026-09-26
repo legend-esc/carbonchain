@@ -19,6 +19,13 @@ export const RETIREMENT_COMPLETED = 'retirement.completed';
 /** Fired when a credit's status changes (e.g. Active → Retired). */
 export const CREDIT_STATUS_CHANGED = 'credit.status.changed';
 
+/**
+ * Issue #916 — Fired every time a tx_bad_seq error triggers a retry.
+ * Used to increment the `tx_bad_seq_total` Prometheus counter so operators
+ * can alert on persistent sequence clashes across replicas.
+ */
+export const TX_BAD_SEQ = 'transaction.bad_seq';
+
 // ── Payload interfaces ───────────────────────────────────────────────────────
 
 export interface ContractInvocationCompletedEvent {
@@ -42,6 +49,20 @@ export interface CreditStatusChangedEvent {
   creditId: string;
   previousStatus: string;
   newStatus: string;
+}
+
+/**
+ * Issue #916 — Payload for the TX_BAD_SEQ metric event.
+ * Records which account and method triggered the bad-sequence retry,
+ * and which attempt number this is (1 = first retry).
+ */
+export interface TxBadSeqEvent {
+  /** Stellar public key of the signing account that received tx_bad_seq. */
+  publicKey: string;
+  /** Contract method (or 'buildAndSubmit') that triggered the error. */
+  method: string;
+  /** Retry attempt number (1-indexed). */
+  attempt: number;
 }
 
 // ── Provider factory ─────────────────────────────────────────────────────────
