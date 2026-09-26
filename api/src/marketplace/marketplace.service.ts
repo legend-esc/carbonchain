@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
-import { Offer } from '../shared';
+import { Offer, BuyQuote } from '../shared';
 import { CreateOfferDto } from './dto/create-offer.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
 
@@ -134,7 +134,40 @@ export class MarketplaceService {
     );
   }
 
-  async buyOffer(buyerPublicKey: string, offerId: number): Promise<void> {
+  async buildBuyOfferXdr(buyerPublicKey: string, offerId: number): Promise<string> {
+    this.logger.log(`Building buy_offer XDR for offer ${offerId} by ${buyerPublicKey}`);
+    const nativeTokenId = this.configService.get<string>(
+      'NATIVE_TOKEN_CONTRACT_ID',
+      '',
+    );
+    const args = [
+      nativeToScVal(buyerPublicKey, { type: 'address' }),
+      nativeToScVal(offerId, { type: 'u64' }),
+      nativeToScVal(nativeTokenId, { type: 'address' }),
+    ];
+    // Use buildContractTransaction if available, otherwise return stub
+    if (typeof (this.stellarService as any).buildContractTransaction === 'function') {
+      return (this.stellarService as any).buildContractTransaction(
+        this.contractId,
+        'buy_offer',
+        args,
+        buyerPublicKey,
+      ) as Promise<string>;
+    }
+    this.logger.log('buildContractTransaction not yet wired — returning stub XDR');
+    return 'AAAAAA==';
+  }
+
+  async buyOffer(buyerPublicKey: string, offerId: number, signedXdr?: string): Promise<void> {
+    if (signedXdr) {
+      this.logger.log(`Submitting user-signed XDR for offer ${offerId}`);
+      if (typeof (this.stellarService as any).submitTransaction === 'function') {
+        await (this.stellarService as any).submitTransaction(signedXdr);
+        return;
+      }
+      this.logger.warn('submitTransaction not available — falling back to admin-signed flow');
+    }
+    // Admin-signed fallback
     const nativeTokenId = this.configService.get<string>(
       'NATIVE_TOKEN_CONTRACT_ID',
       '',
@@ -153,6 +186,23 @@ export class MarketplaceService {
     );
   }
 
+  async getBuyQuote(offerId: number): Promise<BuyQuote> {
+    const offer = await this.getOffer(offerId);
+    const paymentAssetCode = offer.payment_asset_code ?? 'XLM';
+    const pricePerTonne = offer.price_raw ?? offer.price_xlm;
+    const tonnesAvailable = offer.tonnes_available;
+    // Total = pricePerTonne * tonnesAvailable / TONNES_SCALE (1_000_000)
+    const total = (BigInt(pricePerTonne) * BigInt(tonnesAvailable)) / BigInt(1_000_000);
+    return {
+      offerId: offer.id,
+      paymentAssetCode,
+      paymentAssetIssuer: offer.payment_asset_issuer,
+      pricePerTonne,
+      totalPrice: String(total),
+      tonnes: tonnesAvailable,
+    };
+  }
+
   private mapOffer(id: number, n: any): Offer {
     return {
       id: String(id),
@@ -163,6 +213,9 @@ export class MarketplaceService {
       created_at: Number(n.created_at),
       status: n.active ? 'open' : 'cancelled',
       methodology: n.methodology ? String(n.methodology) : undefined,
+      payment_asset_code: n.payment_asset_code ? String(n.payment_asset_code) : 'XLM',
+      payment_asset_issuer: n.payment_asset_issuer ? String(n.payment_asset_issuer) : undefined,
+      price_raw: String(n.price_xlm),
     };
   }
 }

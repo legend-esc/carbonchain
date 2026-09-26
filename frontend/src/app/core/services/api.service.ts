@@ -115,9 +115,24 @@ export class ApiService {
 
   // ── Marketplace ───────────────────────────────────────────────────────────
 
-  /** GET /marketplace/listings — all active offers */
-  getListings(): Observable<Offer[]> {
-    return this.http.get<Offer[]>(`${this.baseUrl}/marketplace/listings`);
+  /** GET /marketplace/listings — server-side paginated and filtered */
+  getListings(params?: {
+    page?: number;
+    pageSize?: number;
+    methodology?: string;
+    minPrice?: number;
+    maxPrice?: number;
+  }): Observable<{ data: Offer[]; total: number; page: number; pageSize: number }> {
+    const httpParams: Record<string, string> = {};
+    if (params?.page) httpParams['page'] = String(params.page);
+    if (params?.pageSize) httpParams['pageSize'] = String(params.pageSize);
+    if (params?.methodology) httpParams['methodology'] = params.methodology;
+    if (params?.minPrice !== undefined) httpParams['minPrice'] = String(params.minPrice);
+    if (params?.maxPrice !== undefined) httpParams['maxPrice'] = String(params.maxPrice);
+    return this.http.get<{ data: Offer[]; total: number; page: number; pageSize: number }>(
+      `${this.baseUrl}/marketplace/listings`,
+      { params: httpParams },
+    );
   }
 
   /** GET /marketplace/offer/:id */
@@ -128,6 +143,38 @@ export class ApiService {
   /** GET /marketplace/seller/:address */
   getOffersBySeller(address: string): Observable<string[]> {
     return this.http.get<string[]>(`${this.baseUrl}/marketplace/seller/${address}`);
+  }
+
+  /** GET /marketplace/offer/:id/quote */
+  getBuyQuote(offerId: number): Observable<import('@shared').BuyQuote> {
+    return this.http.get<import('@shared').BuyQuote>(
+      `${this.baseUrl}/marketplace/offer/${offerId}/quote`,
+    );
+  }
+
+  /** POST /marketplace/offer/:id/buy with signed XDR from user wallet */
+  buyOffer(offerId: number, buyerPublicKey: string, signedXdr: string, token: string): Observable<void> {
+    return this.http.post<void>(
+      `${this.baseUrl}/marketplace/offer/${offerId}/buy`,
+      { buyerPublicKey, signedXdr },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /** GET /marketplace/offer/:id/xdr — get unsigned buy XDR for wallet signing */
+  getBuyOfferXdr(offerId: number, buyerPublicKey: string, token: string): Observable<{ xdr: string }> {
+    return this.http.get<{ xdr: string }>(
+      `${this.baseUrl}/marketplace/offer/${offerId}/xdr`,
+      { params: { buyerPublicKey }, headers: this.authHeaders(token) },
+    );
+  }
+
+  /** DELETE /marketplace/offer/:id/seller/:address — cancel offer */
+  cancelOffer(offerId: number, sellerAddress: string, token: string): Observable<void> {
+    return this.http.delete<void>(
+      `${this.baseUrl}/marketplace/offer/${offerId}/seller/${sellerAddress}`,
+      { headers: this.authHeaders(token) },
+    );
   }
 
   // ── Retirement ────────────────────────────────────────────────────────────
@@ -155,6 +202,21 @@ export class ApiService {
     return this.http.post<{ offerId: string }>(`${this.baseUrl}/marketplace/offer`, body, {
       headers: this.authHeaders(token),
     });
+  }
+
+  /** GET /retirement/certificates/:id/download — returns PDF blob (requires JWT) */
+  downloadCertificate(id: string, token: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/retirement/certificates/${id}/download`, {
+      headers: this.authHeaders(token),
+      responseType: 'blob',
+    });
+  }
+
+  /** GET /retirement/certificates/:id/verify — on-chain verification (public) */
+  verifyCertificate(id: string): Observable<import('@shared').CertificateVerification> {
+    return this.http.get<import('@shared').CertificateVerification>(
+      `${this.baseUrl}/retirement/certificates/${id}/verify`,
+    );
   }
 
   // ── Verifiers ─────────────────────────────────────────────────────────────

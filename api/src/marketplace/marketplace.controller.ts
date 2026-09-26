@@ -56,6 +56,24 @@ export class MarketplaceController {
     return this.marketplaceService.getOffer(id);
   }
 
+  @ApiOperation({ summary: 'Get purchase quote for an offer' })
+  @Get('offer/:id/quote')
+  getBuyQuote(@Param('id', ParseIntPipe) id: number) {
+    return this.marketplaceService.getBuyQuote(id);
+  }
+
+  /** GET /marketplace/offer/:id/xdr — build unsigned buy XDR for wallet signing */
+  @UseGuards(JwtAuthGuard)
+  @Get('offer/:id/xdr')
+  getBuyOfferXdr(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('buyerPublicKey') buyerPublicKey: string,
+  ): Promise<{ xdr: string }> {
+    return this.marketplaceService
+      .buildBuyOfferXdr(buyerPublicKey, id)
+      .then((xdr) => ({ xdr }));
+  }
+
   @ApiOperation({ summary: 'Get offers by seller address' })
   @Get('seller/:address')
   getOffersBySeller(@Param('address') address: string): Promise<string[]> {
@@ -63,6 +81,7 @@ export class MarketplaceController {
   }
 
   @ApiOperation({ summary: 'Cancel an offer' })
+  @UseGuards(JwtAuthGuard)
   @Delete('offer/:id/seller/:address')
   cancelOffer(
     @Param('address') address: string,
@@ -71,13 +90,15 @@ export class MarketplaceController {
     return this.marketplaceService.cancelOffer(address, id);
   }
 
-  /** POST /marketplace/offer/:id/buy — protected: requires JWT */
+  /** POST /marketplace/offer/:id/buy — protected: requires JWT.
+   *  Accepts optional signedXdr from user wallet; falls back to admin-signed. */
   @UseGuards(JwtAuthGuard)
   @Post('offer/:id/buy')
   buyOffer(
     @Param('id', ParseIntPipe) id: number,
     @Body('buyerPublicKey') buyerPublicKey: string,
+    @Body('signedXdr') signedXdr?: string,
   ): Promise<void> {
-    return this.marketplaceService.buyOffer(buyerPublicKey, id);
+    return this.marketplaceService.buyOffer(buyerPublicKey, id, signedXdr);
   }
 }

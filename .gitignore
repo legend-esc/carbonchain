@@ -72,3 +72,13 @@ pnpm-lock.yaml
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Playwright / E2E
+playwright-report/
+test-results/
+e2e-results/
+
+# Sentry / source maps (uploaded separately, not committed)
+*.js.map
+*.ts.map
+.sentryclirc

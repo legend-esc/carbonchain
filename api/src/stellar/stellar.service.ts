@@ -193,6 +193,37 @@ export class StellarService implements OnModuleInit {
     );
   }
 
+  /**
+   * Issue #952 — Build an unsigned contract transaction XDR for client-side signing.
+   * Placeholder implementation: returns a stub base64 XDR until the full
+   * Soroban transaction builder path is wired up end-to-end.
+   */
+  async buildContractTransaction(
+    contractId: string,
+    method: string,
+    args: xdr.ScVal[],
+    sourceAccount: string,
+  ): Promise<string> {
+    this.logger.log(
+      `Building tx for ${method} on ${contractId} from ${sourceAccount}`,
+    );
+    // Returns unsigned XDR envelope — placeholder until full Soroban tx builder is wired
+    return 'AAAAAA==';
+  }
+
+  /**
+   * Issue #952 — Submit a pre-signed transaction XDR from the user's wallet.
+   */
+  async submitTransaction(signedXdr: string): Promise<unknown> {
+    this.logger.log('Submitting pre-signed transaction');
+    return this.sorobanRpcServer.sendTransaction(
+      TransactionBuilder.fromXDR(
+        signedXdr,
+        this.networkPassphrase,
+      ) as Transaction,
+    );
+  }
+
   async getContractData(
     contractId: string,
     key: xdr.ScVal,

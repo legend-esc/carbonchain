@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
@@ -36,6 +36,12 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
           <app-connect-wallet />
         </div>
       } @else {
+        @if (wallet.networkMismatch()) {
+          <div class="network-warning" role="alert">
+            ⚠ Your wallet is on the wrong network. Please switch to {{ expectedNetwork }} in Freighter before submitting.
+          </div>
+        }
+
         @if (step() === 'form') {
           <form class="wizard-form" (ngSubmit)="goConfirm()" #f="ngForm">
             <label>
@@ -66,7 +72,7 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
                 placeholder="2024 Scope 3 offset"
               />
             </label>
-            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError">
+            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError || !canSubmit()">
               {{ 'retire.review' | translate }}
             </button>
           </form>
@@ -89,7 +95,7 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
               <button class="btn btn-outline" (click)="step.set('form')">
                 {{ 'retire.back' | translate }}
               </button>
-              <button class="btn btn-danger" [disabled]="submitting()" (click)="submit()">
+              <button class="btn btn-danger" [disabled]="submitting() || !canSubmit()" (click)="submit()">
                 {{
                   submitting() ? ('retire.submitting' | translate) : ('retire.confirm' | translate)
                 }}
@@ -135,6 +141,15 @@ type Step = 'form' | 'confirm' | 'success' | 'error';
         flex-direction: column;
         gap: 0.75rem;
         align-items: flex-start;
+      }
+      .network-warning {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        color: #856404;
+        font-size: 0.9rem;
       }
       .wizard-form {
         display: flex;
@@ -241,6 +256,14 @@ export class RetireComponent {
   readonly submitting = signal(false);
   readonly retirementId = signal<string | null>(null);
   readonly errorMsg = signal<string | null>(null);
+
+  /** True only when the wallet is connected and on the correct network. */
+  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
+
+  /** Exposes the expected network name for display in the template. */
+  get expectedNetwork(): string {
+    return this.wallet.expectedNetwork();
+  }
 
   /** True when the current tonnes value is not a positive multiple of 100,000. */
   get tonnesError(): boolean {

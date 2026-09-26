@@ -49,6 +49,34 @@ export interface Offer {
   tonnes_available: string;
   created_at: number;
   status: "open" | "filled" | "cancelled";
+  methodology?: string;
+  // Multi-currency fields (issue #952)
+  payment_asset_code?: string;   // e.g. 'XLM', 'USDC'
+  payment_asset_issuer?: string; // null for native XLM
+  price_raw?: string;            // raw price in payment asset's smallest unit
+}
+
+export interface BuyQuote {
+  offerId: string;
+  paymentAssetCode: string;
+  paymentAssetIssuer?: string;
+  pricePerTonne: string;
+  totalPrice: string;
+  tonnes: string;
+}
+
+export interface CertificateVerification {
+  id: string;
+  credit_id: string;
+  buyer: string;
+  tonnes_retired: string;
+  reason: string;
+  retired_at: number;
+  tx_hash: string;
+  verified: boolean;
+  ledger_sequence?: number;
+  ipfs_status?: 'available' | 'unavailable' | 'unknown';
+  mismatch_reason?: string;
 }
 
 export interface MrvDataPoint {
