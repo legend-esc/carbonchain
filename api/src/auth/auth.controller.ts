@@ -36,7 +36,8 @@ export class AuthController {
   }
 
   /**
-   * POST /auth/token — original SEP-10 verify endpoint (kept for backward compatibility).
+   * POST /auth/token — original SEP-10 verify endpoint (backward-compatible).
+   * Issue #933 — now returns access_token (15m) + refresh_token (7d).
    */
   @ApiOperation({ summary: 'Verify signed challenge and receive JWT (legacy)' })
   @UseGuards(ThrottlerGuard)
@@ -44,28 +45,50 @@ export class AuthController {
   @Post('token')
   async getToken(
     @Body() body: AuthTokenDto,
-  ): Promise<{ access_token: string }> {
+  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 
   /**
-   * POST /auth/verify — SEP-10 verify endpoint (issue #492 alias).
-   * Rate-limited per Stellar account (10 attempts per 5-minute window)
-   * AND per IP (50 attempts per 5-minute window).
+   * POST /auth/verify — SEP-10 verify endpoint.
+   * Issue #933 — returns access_token (15m) + refresh_token (7d).
+   * Issue #932 — enforces one-time server nonce with account binding.
    */
-  @ApiOperation({ summary: 'Verify signed challenge and receive JWT' })
+  @ApiOperation({ summary: 'Verify signed challenge and receive JWT + refresh token' })
   @UseGuards(ThrottlerGuard)
   @AccountThrottle({ accountLimit: 10, ipLimit: 50, ttl: 300_000 })
   @Post('verify')
-  async verify(@Body() body: AuthTokenDto): Promise<{ access_token: string }> {
+  async verify(
+    @Body() body: AuthTokenDto,
+  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 
   /**
-   * POST /auth/logout — issue #491.
-   * Invalidates the JWT by storing its jti in the Redis blocklist.
+   * POST /auth/refresh — Issue #933.
+   * Exchange a valid refresh token for a new access + refresh token pair.
+   * The old refresh token is invalidated (rotation).  If a previously rotated
+   * token is replayed the entire family is revoked (theft detection).
    */
-  @ApiOperation({ summary: 'Invalidate JWT (logout)' })
+  @ApiOperation({ summary: 'Rotate refresh token and receive new token pair (Issue #933)' })
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ limit: 30, ttl: 60_000 })
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Body() body: { refresh_token: string },
+  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+    if (!body.refresh_token) {
+      throw new Error('refresh_token is required');
+    }
+    return this.authService.rotateRefreshToken(body.refresh_token);
+  }
+
+  /**
+   * POST /auth/logout — Revokes both the access token jti AND the refresh
+   * token family so all sessions derived from that family are invalidated.
+   */
+  @ApiOperation({ summary: 'Invalidate JWT and refresh token family (logout)' })
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
@@ -74,13 +97,16 @@ export class AuthController {
     req: {
       user: { account: string };
       headers: { authorization?: string };
+      body?: { refresh_token?: string };
     },
   ): Promise<{ message: string }> {
     const authHeader = req.headers.authorization ?? '';
     const token = authHeader.startsWith('Bearer ')
       ? authHeader.slice(7)
       : authHeader;
-    await this.authService.logout(token);
+    const refreshToken = (req.body as { refresh_token?: string } | undefined)
+      ?.refresh_token;
+    await this.authService.logout(token, refreshToken);
     return { message: 'Logged out successfully' };
   }
 

@@ -7,11 +7,25 @@ import { WebhooksService } from '../webhooks/webhooks.service';
 import { CacheService } from '../common/cache.service';
 import { EventEntity } from './event.entity';
 
+/** Build a chainable QueryBuilder mock that resolves with `rows`. */
+function makeQb(rows: unknown[]) {
+  const qb = {
+    orderBy: jest.fn().mockReturnThis(),
+    addOrderBy: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getMany: jest.fn().mockResolvedValue(rows),
+  };
+  return qb;
+}
+
 describe('EventsService', () => {
   let service: EventsService;
   let stellarService: StellarService;
   let webhooksService: WebhooksService;
   let cacheService: CacheService;
+
   const mockRepository = {
     find: jest.fn(),
     findOne: jest.fn(),
@@ -19,6 +33,7 @@ describe('EventsService', () => {
     save: jest.fn(),
     count: jest.fn(),
     delete: jest.fn(),
+    createQueryBuilder: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -101,50 +116,114 @@ describe('EventsService', () => {
     });
   });
 
+  // ─── getEvents — keyset / cursor pagination (Issue #931) ───────────────
+
   describe('getEvents', () => {
-    it('should return events from the repository', async () => {
-      mockRepository.find.mockResolvedValue([
+    it('returns events and a nextCursor when page is full', async () => {
+      const rows = Array.from({ length: 50 }, (_, i) => ({
+        id: `e${i}`,
+        contractId: 'C1',
+        eventType: 'CreditMinted',
+        ledger: `${100 - i}`,
+        timestamp: '1700000000',
+        data: {},
+      }));
+      const qb = makeQb(rows);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.getEvents();
+      expect(result.events).toHaveLength(50);
+      expect(result.nextCursor).toBe('e49'); // last row id
+    });
+
+    it('returns null nextCursor when page is not full', async () => {
+      const rows = [
         {
-          id: 'e1',
+          id: 'only-event',
           contractId: 'C1',
           eventType: 'CreditMinted',
           ledger: '10',
           timestamp: '1700000000',
-          data: { value: {} },
+          data: {},
         },
-      ]);
-      const events = await service.getEvents();
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({
-        id: 'e1',
-        type: 'CreditMinted',
-        contractId: 'C1',
-        ledger: 10,
-      });
+      ];
+      const qb = makeQb(rows);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.getEvents();
+      expect(result.nextCursor).toBeNull();
     });
 
-    it('should return empty array when repository has no events', async () => {
-      mockRepository.find.mockResolvedValue([]);
-      const events = await service.getEvents();
-      expect(events).toEqual([]);
+    it('returns empty events and null nextCursor when repository is empty', async () => {
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.getEvents();
+      expect(result.events).toEqual([]);
+      expect(result.nextCursor).toBeNull();
     });
 
-    it('should cap take at 200', async () => {
-      mockRepository.find.mockResolvedValue([]);
+    it('caps page size at 200', async () => {
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
       await service.getEvents(undefined, undefined, 999, 0);
-      expect(mockRepository.find).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 200 }),
+      expect(qb.take).toHaveBeenCalledWith(200);
+    });
+
+    it('applies contractId filter via andWhere', async () => {
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await service.getEvents('C1', undefined);
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'e.contractId = :contractId',
+        { contractId: 'C1' },
       );
     });
 
-    it('should pass contractId and eventType filters', async () => {
-      mockRepository.find.mockResolvedValue([]);
-      await service.getEvents('C1', 'CreditMinted');
-      expect(mockRepository.find).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { contractId: 'C1', eventType: 'CreditMinted' },
-        }),
+    it('applies eventType filter via andWhere', async () => {
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await service.getEvents(undefined, 'CreditMinted');
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'e.eventType = :eventType',
+        { eventType: 'CreditMinted' },
       );
+    });
+
+    it('applies keyset WHERE clause when beforeCursor is provided', async () => {
+      // First call: anchor lookup via findOne
+      mockRepository.findOne.mockResolvedValueOnce({
+        id: 'cursor-id',
+        ledger: '100',
+      });
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await service.getEvents(undefined, undefined, 50, 0, 'cursor-id');
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '(e.ledger < :anchorLedger OR (e.ledger = :anchorLedger AND e.id < :anchorId))',
+        { anchorLedger: '100', anchorId: 'cursor-id' },
+      );
+    });
+
+    it('falls back to offset skip when beforeCursor is absent and skip > 0', async () => {
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await service.getEvents(undefined, undefined, 50, 10);
+      expect(qb.skip).toHaveBeenCalledWith(10);
+    });
+
+    it('does not call skip when skip is 0 and no cursor provided', async () => {
+      const qb = makeQb([]);
+      mockRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await service.getEvents(undefined, undefined, 50, 0);
+      expect(qb.skip).not.toHaveBeenCalled();
     });
   });
 
@@ -183,7 +262,7 @@ describe('EventsService', () => {
 
     it('should index new events and trigger webhooks', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      mockRepository.create.mockImplementation((e) => e);
+      mockRepository.create.mockImplementation((e: unknown) => e);
       mockRepository.save.mockResolvedValue(undefined);
       mockRepository.count.mockResolvedValue(0);
 
@@ -234,7 +313,7 @@ describe('EventsService', () => {
 
     it('should invalidate cache on credit status change events', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      mockRepository.create.mockImplementation((e) => e);
+      mockRepository.create.mockImplementation((e: unknown) => e);
       mockRepository.save.mockResolvedValue(undefined);
       mockRepository.count.mockResolvedValue(0);
 
@@ -256,7 +335,7 @@ describe('EventsService', () => {
 
     it('should trim the event store when it exceeds the max size', async () => {
       mockRepository.findOne.mockResolvedValue(null);
-      mockRepository.create.mockImplementation((e) => e);
+      mockRepository.create.mockImplementation((e: unknown) => e);
       mockRepository.save.mockResolvedValue(undefined);
       mockRepository.count.mockResolvedValue(1001);
       mockRepository.find.mockResolvedValue([{ id: 'C1-1-aaa' }]);
