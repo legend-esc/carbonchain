@@ -1,4 +1,5 @@
 import { Injectable, signal, computed } from '@angular/core';
+import { Subject } from 'rxjs';
 
 import { firstValueFrom } from 'rxjs';
 
@@ -36,6 +37,9 @@ export class StellarWalletService {
     this.loadStoredAddress() ? 'connected' : 'disconnected',
   );
   private readonly _error = signal<string | null>(null);
+  private readonly _networkMismatch = signal(false);
+  private readonly _expectedNetwork = signal<string>('testnet');
+  private readonly _networkChanged$ = new Subject<void>();
   private readonly _network = signal<WalletNetwork | null>(this.loadStoredNetwork());
   private readonly _networkMismatch = signal<boolean>(false);
 
@@ -48,6 +52,9 @@ export class StellarWalletService {
   readonly state = this._state.asReadonly();
   readonly error = this._error.asReadonly();
   readonly isConnected = computed(() => this._state() === 'connected');
+  readonly networkMismatch = this._networkMismatch.asReadonly();
+  readonly expectedNetwork = this._expectedNetwork.asReadonly();
+  readonly networkChanged$ = this._networkChanged$.asObservable();
 
   /** Network (testnet/mainnet) the wallet last connected/persisted with. */
   readonly network = this._network.asReadonly();
@@ -99,6 +106,7 @@ export class StellarWalletService {
       this._network.set(walletNetwork);
       this._networkMismatch.set(false);
       this._state.set('connected');
+      await this.checkNetworkMatch();
       this.persistSession(publicKey, walletNetwork);
       return publicKey;
     } catch (err) {
@@ -114,7 +122,9 @@ export class StellarWalletService {
     if (!this.isConnected()) {
       throw new Error('Wallet is not connected. Call connect() first.');
     }
-
+    if (this._networkMismatch()) {
+      throw new Error('Network mismatch: please switch your wallet to the correct network.');
+    }
     try {
       return await window.freighter!.signTransaction(xdr, { networkPassphrase });
     } catch (err) {
@@ -200,6 +210,32 @@ export class StellarWalletService {
     return window.freighter!.getNetworkDetails();
   }
 
+  /**
+   * Checks whether the wallet's active network matches the expected network.
+   * Sets `_networkMismatch` accordingly. Called automatically after connect().
+   */
+  async checkNetworkMatch(): Promise<void> {
+    if (!this.isFreighterInstalled) return;
+    try {
+      const details = await window.freighter!.getNetworkDetails();
+      const walletNet = details.network.toLowerCase();
+      const expected = this._expectedNetwork().toLowerCase();
+      this._networkMismatch.set(walletNet !== expected);
+    } catch {
+      // If we can't check, assume ok to avoid blocking the user unnecessarily.
+      this._networkMismatch.set(false);
+    }
+  }
+
+  /**
+   * Clears any network-scoped cached data and disconnects the wallet.
+   * Emits on `networkChanged$` so subscribers can react (e.g. clear local caches).
+   */
+  clearNetworkScopedData(): void {
+    this.disconnect();
+    this._networkChanged$.next();
+  }
+
   /** Disconnects the wallet (clears local state — Freighter has no explicit disconnect API). */
   disconnect(): void {
     this.stopBalancePolling();
@@ -207,6 +243,7 @@ export class StellarWalletService {
     this._publicKey.set(null);
     this._state.set('disconnected');
     this._error.set(null);
+    this._networkMismatch.set(false);
     this._xlmBalance.set(null);
     this._balanceError.set(null);
     this._network.set(null);
