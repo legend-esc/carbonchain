@@ -12,6 +12,12 @@ export interface IRetirementRepository {
     limit: number,
   ): Promise<PageResult<RetirementEntity>>;
   findAll(page: number, limit: number): Promise<PageResult<RetirementEntity>>;
+  /**
+   * #925 — Return the total number of retirement records without loading any
+   * page data. Implementors backed by a real DB should use a COUNT(*) query
+   * rather than paginating and reading `.total`.
+   */
+  count(): Promise<number>;
 }
 
 export const RETIREMENT_REPOSITORY = 'RETIREMENT_REPOSITORY';
@@ -56,6 +62,15 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
     limit: number,
   ): Promise<PageResult<RetirementEntity>> {
     return this.paginate(Array.from(this.store.values()), page, limit);
+  }
+
+  /**
+   * #925 — COUNT-based query: returns the total number of records without
+   * loading any page data. O(1) for the in-memory store; real DB implementations
+   * must issue a SELECT COUNT(*) query rather than paginating.
+   */
+  async count(): Promise<number> {
+    return this.store.size;
   }
 
   private paginate(

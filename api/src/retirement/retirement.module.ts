@@ -32,7 +32,7 @@ import { NonceService } from '../common/nonce.service';
       useValue: new EventEmitter(),
     },
   ],
-  exports: [RetirementService],
+  exports: [RetirementService, RETIREMENT_REPOSITORY],
 })
 export class RetirementModule implements OnApplicationBootstrap {
   constructor(private readonly nonceService: NonceService) {}

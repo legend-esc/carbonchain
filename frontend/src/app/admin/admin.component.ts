@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
@@ -263,6 +263,16 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
           or traded.
         </p>
 
+        @if (healthDegraded()) {
+          <p class="alert alert--warning" role="alert" aria-live="polite">
+            ⚠ Contract status probe failed — pause state is unknown. Check RPC connectivity before proceeding.
+          </p>
+        }
+
+        @if (contractPauseStatus() === 'unknown' && !healthDegraded()) {
+          <p class="alert alert--info" role="status">Checking contract status…</p>
+        }
+
         @if (pauseError()) {
           <p class="alert alert--error" role="alert">{{ pauseError() }}</p>
         }
@@ -439,8 +449,13 @@ export class AdminComponent implements OnInit {
   protected readonly slashError = signal<string | null>(null);
   protected readonly showSlashConfirm = signal(false);
 
-  // ── Pause state ──────────────────────────────────────────────────────────
-  protected readonly contractPaused = signal(false);
+  // ── Pause state (#926: tri-state) ───────────────────────────────────────
+  /** #926 — tri-state: 'paused' | 'unpaused' | 'unknown' */
+  protected readonly contractPauseStatus = signal<'paused' | 'unpaused' | 'unknown'>('unknown');
+  /** Backward-compat computed boolean for template bindings that expect true/false */
+  protected readonly contractPaused = computed(() => this.contractPauseStatus() === 'paused');
+  /** #926 — true when the last probe failed so the UI shows a degraded indicator */
+  protected readonly healthDegraded = signal(false);
   protected readonly showPauseConfirm = signal(false);
   protected readonly isPausing = signal(false);
   protected readonly pauseError = signal<string | null>(null);
@@ -455,9 +470,18 @@ export class AdminComponent implements OnInit {
       const token = this.auth.token()!;
       const stats = await firstValueFrom(this.api.getAdminStats(token));
       this.maxApprovals.set(Math.max(stats.activeVerifiers, 1));
-      this.contractPaused.set(stats.paused);
+      // #926 — use tri-state when available; fall back to boolean for older API
+      const pauseStatus = (stats as { contractPauseStatus?: 'paused' | 'unpaused' | 'unknown' }).contractPauseStatus;
+      if (pauseStatus) {
+        this.contractPauseStatus.set(pauseStatus);
+      } else {
+        this.contractPauseStatus.set(stats.paused ? 'paused' : 'unpaused');
+      }
+      const health = (stats as { health?: { degraded: boolean } }).health;
+      this.healthDegraded.set(health?.degraded ?? false);
     } catch {
-      // Non-fatal — defaults suffice
+      // Non-fatal — defaults suffice; keep contractPauseStatus as 'unknown'
+      this.healthDegraded.set(true);
     }
   }
 
@@ -638,7 +662,9 @@ export class AdminComponent implements OnInit {
       const result = currentlyPaused
         ? await firstValueFrom(this.api.unpauseContract(token))
         : await firstValueFrom(this.api.pauseContract(token));
-      this.contractPaused.set(result.paused);
+      // #926 — update tri-state after confirmed on-chain result
+      this.contractPauseStatus.set(result.paused ? 'paused' : 'unpaused');
+      this.healthDegraded.set(false);
       this.toast.show(
         result.paused
           ? 'Contract paused. All operations stopped.'

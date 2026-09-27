@@ -18,7 +18,14 @@ describe('AdminComponent', () => {
       getAdminStats: vi
         .fn()
         .mockReturnValue(
-          of({ totalCredits: 0, totalRetirements: 0, activeVerifiers: 3, paused: false }),
+          of({
+            totalCredits: 0,
+            totalRetirements: 0,
+            activeVerifiers: 3,
+            paused: false,
+            contractPauseStatus: 'unpaused',
+            health: { degraded: false },
+          }),
         ),
       registerMethodology: vi.fn(),
       getAdminNonce: vi.fn().mockReturnValue(of({ address: 'GADMIN', nonce: 0 })),
@@ -179,20 +186,25 @@ describe('AdminComponent', () => {
   });
 
   it('calls pauseContract API on confirm and updates state', async () => {
+    // Initial state: unpaused
     expect((component as any)['contractPaused']()).toBe(false);
     (component as any).openPauseConfirm();
     await (component as any).confirmPause();
     expect(apiSpy.pauseContract).toHaveBeenCalledWith(MOCK_TOKEN);
+    // After pause: contractPauseStatus should be 'paused', so computed contractPaused() = true
+    expect((component as any)['contractPauseStatus']()).toBe('paused');
     expect((component as any)['contractPaused']()).toBe(true);
     expect(toastSpy.show).toHaveBeenCalled();
     expect((component as any)['showPauseConfirm']()).toBe(false);
   });
 
   it('calls unpauseContract API when already paused', async () => {
-    (component as any)['contractPaused'].set(true);
+    // Set to paused via tri-state signal
+    (component as any)['contractPauseStatus'].set('paused');
     (component as any).openPauseConfirm();
     await (component as any).confirmPause();
     expect(apiSpy.unpauseContract).toHaveBeenCalledWith(MOCK_TOKEN);
+    expect((component as any)['contractPauseStatus']()).toBe('unpaused');
     expect((component as any)['contractPaused']()).toBe(false);
     expect(toastSpy.show).toHaveBeenCalledWith('Contract unpaused. Operations resumed.', 'success');
   });
@@ -209,5 +221,57 @@ describe('AdminComponent', () => {
     await fixture.whenStable();
     // stats.activeVerifiers = 3, so maxApprovals should be 3
     expect((component as any)['maxApprovals']()).toBe(3);
+  });
+
+  // ── #926: tri-state pause status ─────────────────────────────────────────
+
+  it('#926 — sets contractPauseStatus to "unpaused" from stats', async () => {
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect((component as any)['contractPauseStatus']()).toBe('unpaused');
+    expect((component as any)['healthDegraded']()).toBe(false);
+  });
+
+  it('#926 — sets contractPauseStatus to "paused" when stats returns paused', async () => {
+    apiSpy.getAdminStats.mockReturnValue(
+      of({
+        totalCredits: 0,
+        totalRetirements: 0,
+        activeVerifiers: 3,
+        paused: true,
+        contractPauseStatus: 'paused',
+        health: { degraded: false },
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect((component as any)['contractPauseStatus']()).toBe('paused');
+    expect((component as any)['contractPaused']()).toBe(true);
+  });
+
+  it('#926 — sets healthDegraded to true when stats call fails', async () => {
+    apiSpy.getAdminStats.mockReturnValue(throwError(() => new Error('RPC down')));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect((component as any)['healthDegraded']()).toBe(true);
+  });
+
+  it('#926 — sets contractPauseStatus to "unknown" from health.degraded stats', async () => {
+    apiSpy.getAdminStats.mockReturnValue(
+      of({
+        totalCredits: 0,
+        totalRetirements: 0,
+        activeVerifiers: 3,
+        paused: false,
+        contractPauseStatus: 'unknown',
+        health: { degraded: true, reason: 'probe failed' },
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect((component as any)['contractPauseStatus']()).toBe('unknown');
+    expect((component as any)['healthDegraded']()).toBe(true);
+    // contractPaused() must NOT return true when unknown
+    expect((component as any)['contractPaused']()).toBe(false);
   });
 });

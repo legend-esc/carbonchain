@@ -1,9 +1,8 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, NotImplementedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
-import { CreditStatus } from '../../../shared';
 import { nativeToScVal } from '@stellar/stellar-sdk';
 
 describe('AdminController', () => {
@@ -19,15 +18,17 @@ describe('AdminController', () => {
           useValue: {
             getStats: jest.fn().mockResolvedValue({
               totalCredits: 0,
-              totalRetirements: 0,
+              totalRetirements: 5,
               activeVerifiers: 3,
+              paused: false,
+              contractPauseStatus: 'unpaused',
+              health: { degraded: false },
             }),
+            registerVerifier: jest.fn().mockResolvedValue({ registered: true, address: 'GVER1' }),
             suspendVerifier: jest.fn().mockResolvedValue({ suspended: true }),
-            flagCredit: jest.fn().mockResolvedValue({
-              flagged: true,
-              creditId: 'abc',
-              status: CreditStatus.Flagged,
-            }),
+            // #924 — flagCredit and configureVerifier throw 501
+            flagCredit: jest.fn().mockRejectedValue(new NotImplementedException()),
+            configureVerifier: jest.fn().mockRejectedValue(new NotImplementedException()),
             registerMethodology: jest.fn().mockReturnValue({
               registered: true,
               name: 'VCS',
@@ -53,26 +54,36 @@ describe('AdminController', () => {
     service = module.get(AdminService);
   });
 
-  it('GET /admin/stats returns stats', async () => {
+  it('GET /admin/stats returns stats with tri-state contractPauseStatus', async () => {
     const result = await controller.getStats();
     expect(result.activeVerifiers).toBe(3);
+    expect(result.contractPauseStatus).toBe('unpaused');
+    expect(result.health.degraded).toBe(false);
     expect(service.getStats).toHaveBeenCalled();
   });
 
-  it('POST /admin/verifiers/:id/suspend calls suspendVerifier', async () => {
+  it('POST /admin/verifiers/register calls registerVerifier on-chain', async () => {
+    const result = await controller.registerVerifier({ address: 'GVER1' });
+    expect(result).toEqual({ registered: true, address: 'GVER1' });
+    expect(service.registerVerifier).toHaveBeenCalledWith('GVER1');
+  });
+
+  it('POST /admin/verifiers/:id/suspend calls suspendVerifier (on-chain remove)', async () => {
     const result = await controller.suspendVerifier('GVER1');
     expect(result).toEqual({ suspended: true });
     expect(service.suspendVerifier).toHaveBeenCalledWith('GVER1');
   });
 
-  it('POST /admin/credits/:id/flag calls flagCredit', async () => {
-    const result = await controller.flagCredit('abc');
-    expect(result).toEqual({
-      flagged: true,
-      creditId: 'abc',
-      status: CreditStatus.Flagged,
-    });
+  it('#924 — POST /admin/credits/:id/flag returns 501 NotImplementedException', async () => {
+    await expect(controller.flagCredit('abc')).rejects.toThrow(NotImplementedException);
     expect(service.flagCredit).toHaveBeenCalledWith('abc');
+  });
+
+  it('#924 — POST /admin/verifiers/:id/configure returns 501 NotImplementedException', async () => {
+    await expect(
+      controller.configureVerifier('GVER1', { methodologies: ['VCS'] }),
+    ).rejects.toThrow(NotImplementedException);
+    expect(service.configureVerifier).toHaveBeenCalledWith('GVER1', { methodologies: ['VCS'] });
   });
 
   it('POST /admin/methodologies calls registerMethodology', () => {

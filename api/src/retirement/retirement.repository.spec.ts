@@ -43,4 +43,21 @@ describe('InMemoryRetirementRepository', () => {
     const result = await repo.findByBuyer('GBUYER1', 1, 10);
     expect(result.data).toHaveLength(1);
   });
+
+  // #925 — COUNT-based query
+  it('count() returns 0 for empty store', async () => {
+    expect(await repo.count()).toBe(0);
+  });
+
+  it('count() returns correct total without loading page data', async () => {
+    for (let i = 0; i < 7; i++) await repo.save(makeRetirement(`rc${i}`));
+    expect(await repo.count()).toBe(7);
+  });
+
+  it('count() reflects removals (save overwrites, no duplicates)', async () => {
+    const r = makeRetirement('dup1');
+    await repo.save(r);
+    await repo.save(r); // save same id twice — should not double-count
+    expect(await repo.count()).toBe(1);
+  });
 });

@@ -1,10 +1,9 @@
-import { Controller, Get, Post, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard';
 import { AdminService, AdminStats } from './admin.service';
 import type { VerifierCapabilities } from './admin.service';
-import { CreditStatus } from '../../../shared';
 
 @ApiTags('admin')
 @UseGuards(AuthGuard('jwt'), AdminGuard)
@@ -19,8 +18,15 @@ export class AdminController {
     return this.adminService.getStats();
   }
 
-  @ApiOperation({ summary: 'Register a new verifier' })
-  @ApiResponse({ status: 201, description: 'Verifier registered' })
+  /**
+   * POST /admin/verifiers/register — register a new verifier on-chain.
+   *
+   * The verifier must have already deposited at least the minimum stake via
+   * POST /verifiers/:address/stake/deposit before calling this endpoint.
+   * Consumes one admin nonce.
+   */
+  @ApiOperation({ summary: 'Register a new verifier on-chain' })
+  @ApiResponse({ status: 201, description: 'Verifier registered on-chain' })
   @Post('verifiers/register')
   registerVerifier(
     @Body() body: { address: string },
@@ -28,29 +34,52 @@ export class AdminController {
     return this.adminService.registerVerifier(body.address);
   }
 
-  @ApiOperation({ summary: 'Suspend a verifier' })
-  @ApiResponse({ status: 200, description: 'Verifier suspended' })
+  /**
+   * POST /admin/verifiers/:id/suspend — remove a verifier on-chain.
+   *
+   * Calls `remove_verifier` on the credit_registry contract. The contract will
+   * reject removal if the verifier still has pending credits assigned.
+   * Consumes one admin nonce.
+   */
+  @ApiOperation({ summary: 'Suspend (remove) a verifier on-chain' })
+  @ApiResponse({ status: 200, description: 'Verifier suspended (removed on-chain)' })
   @Post('verifiers/:id/suspend')
   suspendVerifier(@Param('id') id: string): Promise<{ suspended: boolean }> {
     return this.adminService.suspendVerifier(id);
   }
 
-  @ApiOperation({ summary: 'Configure verifier capabilities' })
-  @ApiResponse({ status: 200, description: 'Verifier configured' })
+  /**
+   * POST /admin/verifiers/:id/configure — NOT IMPLEMENTED.
+   *
+   * Configuring verifier services requires the verifier's own signature, not
+   * the admin's. Verifiers must configure their own services via
+   * POST /verifiers/:address/services in their own authenticated session.
+   *
+   * Returns 501 so the UI knows to hide this feature for admin sessions.
+   */
+  @ApiOperation({ summary: 'Configure verifier capabilities (NOT IMPLEMENTED — requires verifier signature)' })
+  @ApiResponse({ status: 501, description: 'Not implemented — requires verifier signature, not admin' })
   @Post('verifiers/:id/configure')
   configureVerifier(
     @Param('id') id: string,
     @Body() body: VerifierCapabilities,
-  ): Promise<{ configured: boolean; verifierId: string }> {
+  ): Promise<never> {
     return this.adminService.configureVerifier(id, body);
   }
 
-  @ApiOperation({ summary: 'Flag a credit for review' })
-  @ApiResponse({ status: 200, description: 'Credit flagged' })
+  /**
+   * POST /admin/credits/:id/flag — NOT IMPLEMENTED.
+   *
+   * Flagging a credit on-chain requires a verifier signature. Admin cannot
+   * directly flag credits. Use POST /credits/:id/dispute from a verifier
+   * authenticated session.
+   *
+   * Returns 501 so the UI knows to hide this feature.
+   */
+  @ApiOperation({ summary: 'Flag a credit for review (NOT IMPLEMENTED — requires verifier signature)' })
+  @ApiResponse({ status: 501, description: 'Not implemented — requires verifier signature, not admin' })
   @Post('credits/:id/flag')
-  flagCredit(
-    @Param('id') id: string,
-  ): Promise<{ flagged: boolean; creditId: string; status: CreditStatus }> {
+  flagCredit(@Param('id') id: string): Promise<never> {
     return this.adminService.flagCredit(id);
   }
 

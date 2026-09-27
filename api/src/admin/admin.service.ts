@@ -1,17 +1,36 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+import {
+  Injectable,
+  Inject,
+  Logger,
+  NotImplementedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CreditsService } from '../credits/credits.service';
 import { VerifiersService } from '../verifiers/verifiers.service';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
-import { CreditStatus } from '../../../shared';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
+import { IRetirementRepository, RETIREMENT_REPOSITORY } from '../retirement/retirement.repository';
+
+// ── Pause tri-state (#926) ────────────────────────────────────────────────────
+
+/** Tri-state for contract pause status:
+ * - 'paused'   — contract is confirmed paused
+ * - 'unpaused' — contract is confirmed not paused
+ * - 'unknown'  — probe failed; operator needs attention
+ */
+export type ContractPauseStatus = 'paused' | 'unpaused' | 'unknown';
 
 export interface AdminStats {
   totalCredits: number;
   totalRetirements: number;
   activeVerifiers: number;
+  /** @deprecated Use contractPauseStatus for tri-state; kept for backward compat */
   paused: boolean;
+  /** #926 — Tri-state pause status. 'unknown' means the probe failed. */
+  contractPauseStatus: ContractPauseStatus;
+  /** #926 — true when any probe failed, so the UI can show a degraded indicator */
+  health: { degraded: boolean; reason?: string };
 }
 
 export interface VerifierCapabilities {
@@ -25,29 +44,48 @@ export class AdminService {
   private readonly creditRegistryContractId: string;
 
   constructor(
-    private readonly creditsService: CreditsService,
     private readonly verifiersService: VerifiersService,
     private readonly configService: ConfigService,
     private readonly stellarService: StellarService,
     private readonly keypairService: StellarKeypairService,
+    @Inject(RETIREMENT_REPOSITORY)
+    private readonly retirementRepo: IRetirementRepository,
   ) {
     this.creditRegistryContractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
   }
 
+  // ── #926 + #925 ────────────────────────────────────────────────────────────
+
   async getStats(): Promise<AdminStats> {
     const verifiers = await this.verifiersService.listVerifiers();
-    let paused = false;
+
+    // #926 — tri-state pause probe: catch errors and surface as 'unknown'
+    let contractPauseStatus: ContractPauseStatus = 'unknown';
+    let probeError: string | undefined;
     try {
-      paused = await this.getContractPaused();
-    } catch {
-      // Non-fatal — default to false if contract call fails.
+      const isPaused = await this.getContractPaused();
+      contractPauseStatus = isPaused ? 'paused' : 'unpaused';
+    } catch (err: unknown) {
+      probeError = (err as Error)?.message ?? 'contract probe failed';
+      this.logger.warn(`Pause probe failed — surfacing as unknown: ${probeError}`);
+      // contractPauseStatus stays 'unknown'
     }
+
+    // #925 — use COUNT-based query, not a page fetch
+    const totalRetirements = await this.retirementRepo.count();
+
     return {
       totalCredits: 0, // on-chain aggregate; requires contract-level count endpoint
-      totalRetirements: 0, // on-chain aggregate; requires contract-level count endpoint
+      totalRetirements,
       activeVerifiers: verifiers.length,
-      paused,
+      // Backward-compat boolean: treat 'unknown' as false so existing consumers don't break.
+      paused: contractPauseStatus === 'paused',
+      contractPauseStatus,
+      health: {
+        degraded: contractPauseStatus === 'unknown',
+        reason: probeError,
+      },
     };
   }
 
@@ -87,31 +125,127 @@ export class AdminService {
     return { paused: false };
   }
 
+  // ── #924 — verifier lifecycle ──────────────────────────────────────────────
+
+  /**
+   * Register a verifier on-chain via `register_verifier`.
+   *
+   * The verifier must have already deposited the minimum stake (via
+   * `POST /verifiers/:address/stake/deposit`) before this call succeeds —
+   * the contract enforces `InsufficientStake` otherwise.
+   *
+   * Consumes one admin nonce.
+   */
   async registerVerifier(
     address: string,
   ): Promise<{ registered: boolean; address: string }> {
+    const admin = this.keypairService.getAdminKeypair();
+
+    // Fetch admin's current nonce atomically before building the transaction.
+    const nonceRetval = await this.stellarService.readContract(
+      this.creditRegistryContractId,
+      'get_nonce',
+      [nativeToScVal(admin.publicKey(), { type: 'address' })],
+    );
+    const nonce: bigint = nonceRetval
+      ? (scValToNative(nonceRetval) as bigint)
+      : 0n;
+
+    const args = [
+      nativeToScVal(admin.publicKey(), { type: 'address' }),
+      nativeToScVal(address, { type: 'address' }),
+      nativeToScVal(nonce, { type: 'u64' }),
+    ];
+
+    await this.stellarService.invokeContract(
+      this.creditRegistryContractId,
+      'register_verifier',
+      args,
+      admin,
+    );
+
+    this.logger.log(
+      `Verifier ${address} registered on-chain via credit_registry.register_verifier()`,
+    );
     return { registered: true, address };
   }
 
+  /**
+   * Suspend (remove) a verifier on-chain via `remove_verifier`.
+   *
+   * The contract blocks removal when the verifier has pending credits assigned.
+   * Consumes one admin nonce.
+   */
   async suspendVerifier(id: string): Promise<{ suspended: boolean }> {
+    // Confirm the verifier exists in our registry before hitting the chain.
     await this.verifiersService.getVerifier(id);
+
+    const admin = this.keypairService.getAdminKeypair();
+
+    const nonceRetval = await this.stellarService.readContract(
+      this.creditRegistryContractId,
+      'get_nonce',
+      [nativeToScVal(admin.publicKey(), { type: 'address' })],
+    );
+    const nonce: bigint = nonceRetval
+      ? (scValToNative(nonceRetval) as bigint)
+      : 0n;
+
+    const args = [
+      nativeToScVal(admin.publicKey(), { type: 'address' }),
+      nativeToScVal(id, { type: 'address' }),
+      nativeToScVal(nonce, { type: 'u64' }),
+    ];
+
+    await this.stellarService.invokeContract(
+      this.creditRegistryContractId,
+      'remove_verifier',
+      args,
+      admin,
+    );
+
+    this.logger.log(
+      `Verifier ${id} removed on-chain via credit_registry.remove_verifier()`,
+    );
     return { suspended: true };
   }
 
+  /**
+   * Configure a verifier's service capabilities.
+   *
+   * The contract's `configure_verifier_services` requires the **verifier** to
+   * sign the transaction with their own keypair — this is NOT an admin
+   * operation. The admin panel cannot perform this action on behalf of the
+   * verifier. The verifier must call `POST /verifiers/:address/services`
+   * themselves (via Freighter / their own wallet).
+   *
+   * Returns HTTP 501 so callers know the endpoint exists but is intentionally
+   * not implemented at admin level.
+   */
   async configureVerifier(
-    id: string,
+    _id: string,
     _capabilities: VerifierCapabilities,
-  ): Promise<{ configured: boolean; verifierId: string }> {
-    void _capabilities;
-    await this.verifiersService.getVerifier(id);
-    return { configured: true, verifierId: id };
+  ): Promise<never> {
+    throw new NotImplementedException(
+      'configure_verifier_services requires the verifier to sign with their own keypair. ' +
+        'Use POST /verifiers/:address/services from the verifier\'s authenticated session.',
+    );
   }
 
-  async flagCredit(
-    id: string,
-  ): Promise<{ flagged: boolean; creditId: string; status: CreditStatus }> {
-    await this.creditsService.getCredit(id);
-    return { flagged: true, creditId: id, status: CreditStatus.Flagged };
+  /**
+   * Flag a credit for review.
+   *
+   * The contract's `flag_credit` requires the **verifier** to sign, not the
+   * admin. The admin panel cannot directly flag a credit on-chain.
+   *
+   * Returns HTTP 501 so the UI can hide this feature until a verifier-signed
+   * endpoint is wired up.
+   */
+  async flagCredit(_id: string): Promise<never> {
+    throw new NotImplementedException(
+      'flag_credit requires a verifier signature. ' +
+        'Use POST /credits/:id/dispute from a verifier\'s authenticated session.',
+    );
   }
 
   /**

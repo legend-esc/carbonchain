@@ -141,3 +141,12 @@ pids/
 # Soroban CLI local deploy artifacts
 .stellar/
 contract-ids.*.json
+
+# Package lock files (only api/package-lock.json and frontend/package-lock.json are committed)
+# Root-level lock files from accidental installs
+/package-lock.json
+/package.json
+
+# Editor / AI assistant context caches
+*.cursorrules
+.cursor/

@@ -15,10 +15,23 @@ import { JwtAuthGuard } from './jwt-auth.guard';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'changeme'),
-        signOptions: { expiresIn: '1h' },
-      }),
+      useFactory: (config: ConfigService) => {
+        // #923 — Refuse to start when JWT_SECRET is absent.
+        // env-validation.ts enforces this at boot; the guard here prevents
+        // the JwtModule from signing tokens with an empty/default key if the
+        // validation is somehow bypassed.
+        const jwtSecret = config.get<string>('JWT_SECRET');
+        if (!jwtSecret) {
+          throw new Error(
+            'JWT_SECRET is not set. ' +
+              'Set a strong random value (≥ 32 characters) in api/.env before starting the server.',
+          );
+        }
+        return {
+          secret: jwtSecret,
+          signOptions: { expiresIn: '1h' },
+        };
+      },
     }),
   ],
   providers: [

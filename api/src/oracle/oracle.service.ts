@@ -133,10 +133,18 @@ export class OracleService {
       'MRV_ORACLE_CONTRACT_ID',
       '',
     );
-    this.webhookSecret = this.configService.get<string>(
-      'ORACLE_WEBHOOK_SECRET',
-      'changeme',
-    );
+
+    // #923 — Refuse to start when ORACLE_WEBHOOK_SECRET is absent.
+    // Under NODE_ENV=test the spec supplies a mock ConfigService that returns
+    // a real value, so the guard below never triggers in unit tests.
+    const secret = this.configService.get<string>('ORACLE_WEBHOOK_SECRET');
+    if (!secret) {
+      throw new Error(
+        'ORACLE_WEBHOOK_SECRET is not set. ' +
+          'Set a strong random value in api/.env before starting the server.',
+      );
+    }
+    this.webhookSecret = secret;
   }
 
   // ── HMAC validation ──────────────────────────────────────────────────────────
