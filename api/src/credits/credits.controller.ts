@@ -30,18 +30,23 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult, CursorPageResult } from './credit.repository';
 import { BulkCreditsDto } from './dto/bulk-credits.dto';
 import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('credits')
 @Controller('credits')
 export class CreditsController {
-  constructor(private readonly creditsService: CreditsService) {}
+  constructor(
+    private readonly creditsService: CreditsService,
+    private readonly retirementService: RetirementService,
+  ) {}
 
   @ApiOperation({ summary: 'Issue a new carbon credit' })
   @ApiResponse({ status: 201, description: 'Credit issued successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post('issue')
-  issueCredit(@Body() dto: IssueCreditDto): Promise<{ creditId: string }> {
+  issueCredit(@Body() dto: IssueCreditDto): Promise<{ creditId: string; estimatedFeeStroops?: number }> {
     return this.creditsService.issueCredit(dto);
   }
 
@@ -85,7 +90,7 @@ export class CreditsController {
         pagination_mode: 'cursor';
       }
   > {
-    const parsedLimit = parseInt(limit, 10);
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 1, 1), 100);
 
     // Cursor-based path (preferred — O(1) at any depth)
     if (cursor !== undefined) {
@@ -101,6 +106,8 @@ export class CreditsController {
       });
     }
 
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+
     // Offset-based path (deprecated — emits warning header via service layer)
     return this.creditsService.listCredits({
       methodology,
@@ -109,7 +116,7 @@ export class CreditsController {
       status,
       minTonnes,
       maxTonnes,
-      page: parseInt(page, 10),
+      page: parsedPage,
       limit: parsedLimit,
     });
   }
@@ -184,6 +191,7 @@ export class CreditsController {
   @ApiResponse({ status: 400, description: 'Caller does not own this credit' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post(':id/transfer')
   async transferCredit(
     @Param('id') creditId: string,
@@ -203,6 +211,7 @@ export class CreditsController {
   @ApiResponse({ status: 400, description: 'Caller does not own this credit' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post(':id/split')
   async splitCredit(
     @Param('id') creditId: string,
@@ -361,6 +370,43 @@ export class CreditsController {
   async mergeCredits(
     @Body() dto: MergeCreditsDto,
   ): Promise<{ mergedCreditId: string; sourceCount: number }> {
-    return this.creditsService.mergeCredits(dto.callerPublicKey, dto.creditIds);
+    return this.creditsService.mergeCredits(
+      dto.callerPublicKey,
+      dto.creditIds,
+      dto.nonce,
+    );
+  }
+
+  /**
+   * ## Thin proxy — retire via credit ID route
+   *
+   * `POST /credits/:id/retire` is a convenience route that delegates directly
+   * to the **canonical** `POST /retirement` entrypoint via
+   * `RetirementService.retire()`.  Both routes share the same DTO shape
+   * (`RetireDto`) and return an identical response:
+   * `{ retirementId: string; certificateIpfsHash: string }`.
+   *
+   * Do NOT add independent logic here — all retire business logic lives in
+   * `RetirementService.retire()`.
+   */
+  @ApiOperation({
+    summary: '(Proxy) Retire a credit — delegates to POST /retirement',
+    description:
+      'Thin proxy for POST /retirement. Uses the same RetireDto and returns the same response shape. The credit ID from the URL is used as the creditId field.',
+  })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/retire')
+  async retireCredit(
+    @Param('id') creditId: string,
+    @Body() body: { buyerPublicKey: string; tonnes: string; reason: string },
+    @Request() req: any,
+  ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
+    const dto: RetireDto = {
+      buyerPublicKey: body.buyerPublicKey ?? req.user.account,
+      creditId,
+      tonnes: body.tonnes,
+      reason: body.reason,
+    };
+    return this.retirementService.retire(dto);
   }
 }

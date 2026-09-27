@@ -10,11 +10,11 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { StrKey } from '@stellar/stellar-sdk';
 import { VerifiersService, VerifierInfo } from './verifiers.service';
 import { CreditMetadata, VerifierReputation } from '../../../shared';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @ApiTags('verifiers')
 @Controller('verifiers')
@@ -54,23 +54,19 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get pending credits for a verifier' })
   @ApiResponse({ status: 200, description: 'Pending credits' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get(':id/pending')
-  async getPendingCredits(
-    @Param('id') verifierId: string,
-  ): Promise<CreditMetadata[]> {
-    return this.verifiersService.getPendingCredits(verifierId);
+  async getPendingCredits(@Request() req: any): Promise<CreditMetadata[]> {
+    return this.verifiersService.getPendingCredits(req.user.account);
   }
 
   @ApiOperation({ summary: 'Get approval history for a verifier' })
   @ApiResponse({ status: 200, description: 'Approval history' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get(':id/history')
-  async getApprovalHistory(
-    @Param('id') verifierId: string,
-  ): Promise<CreditMetadata[]> {
-    return this.verifiersService.getApprovalHistory(verifierId);
+  async getApprovalHistory(@Request() req: any): Promise<CreditMetadata[]> {
+    return this.verifiersService.getApprovalHistory(req.user.account);
   }
 
   @ApiOperation({ summary: 'Approve a pending credit as a verifier' })
@@ -84,7 +80,7 @@ export class VerifiersController {
     description: 'Verifier has already approved this credit',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/approve/:creditId')
   @HttpCode(200)
   async approveCredit(
@@ -162,27 +158,33 @@ export class VerifiersController {
    * In production the verifier should sign this transaction themselves via Freighter.
    * The current implementation signs with the admin keypair for test-mode convenience.
    */
-  @ApiOperation({ summary: 'Deposit stake for a verifier' })
+  @ApiOperation({
+    summary: 'Deposit stake for a verifier',
+    description:
+      'The :address path param is informational only — the account credited is always the authenticated caller.',
+  })
   @ApiResponse({ status: 200, description: 'Updated stake after deposit' })
   @ApiResponse({ status: 400, description: 'Invalid address or amount' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/stake/deposit')
   @HttpCode(200)
   async depositStake(
-    @Param('address') address: string,
+    @Param('address') _address: string,
     @Body() body: { tokenId: string; amount: string; nonce: string },
+    @Request() req: any,
   ): Promise<{ address: string; stake: string }> {
-    if (!StrKey.isValidEd25519PublicKey(address)) {
+    const account = req.user.account;
+    if (!StrKey.isValidEd25519PublicKey(account)) {
       throw new BadRequestException(
-        `'${address}' is not a valid Stellar Ed25519 public key.`,
+        `'${account}' is not a valid Stellar Ed25519 public key.`,
       );
     }
     if (!body.tokenId || !body.amount || !body.nonce) {
       throw new BadRequestException('tokenId, amount, and nonce are required');
     }
     return this.verifiersService.depositStake(
-      address,
+      account,
       body.tokenId,
       body.amount,
       body.nonce,
@@ -204,23 +206,25 @@ export class VerifiersController {
     description: 'No unbonding request or unbonding period not elapsed',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Post(':address/stake/withdraw')
   @HttpCode(200)
   async withdrawStake(
-    @Param('address') address: string,
+    @Param('address') _address: string,
     @Body() body: { tokenId: string; nonce: string },
+    @Request() req: any,
   ): Promise<{ withdrawn: boolean; address: string }> {
-    if (!StrKey.isValidEd25519PublicKey(address)) {
+    const account = req.user.account;
+    if (!StrKey.isValidEd25519PublicKey(account)) {
       throw new BadRequestException(
-        `'${address}' is not a valid Stellar Ed25519 public key.`,
+        `'${account}' is not a valid Stellar Ed25519 public key.`,
       );
     }
     if (!body.tokenId || !body.nonce) {
       throw new BadRequestException('tokenId and nonce are required');
     }
     return this.verifiersService.withdrawStake(
-      address,
+      account,
       body.tokenId,
       body.nonce,
     );

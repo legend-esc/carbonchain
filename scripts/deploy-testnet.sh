@@ -113,16 +113,32 @@ retry "initialize retirement" stellar contract invoke \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
   -- initialize \
-  --admin "$ADMIN_ADDRESS"
+  --admin "$ADMIN_ADDRESS" \
+  --registry-id "$CREDIT_REGISTRY_ID"
 
 log "Initializing marketplace..."
+# The marketplace requires registry_id (#692) and token_id (#691) at init.
+# token_id is the Stellar Asset Contract address for the allowed payment token.
+# The native XLM SAC is a network-wide singleton — try to deploy it, but if it
+# already exists (Error(Storage, ExistingValue)) just look up its address.
+NATIVE_SAC=$(stellar contract asset deploy \
+  --asset native \
+  --source "$ADMIN_SECRET_KEY" \
+  --network testnet 2>/dev/null) || \
+NATIVE_SAC=$(stellar contract asset id \
+  --asset native \
+  --network testnet)
+[[ -n "$NATIVE_SAC" ]] || fail "Could not determine native XLM SAC address"
+log "  native_xlm_sac: $NATIVE_SAC"
 retry "initialize marketplace" stellar contract invoke \
   --id "$MARKETPLACE_ID" \
   --source "$ADMIN_SECRET_KEY" \
   --network testnet \
   -- initialize \
   --admin "$ADMIN_ADDRESS" \
-  --min-price-per-tonne 0
+  --min-price-per-tonne 0 \
+  --registry-id "$CREDIT_REGISTRY_ID" \
+  --token-id "$NATIVE_SAC"
 
 log "Initializing mrv_oracle..."
 retry "initialize mrv_oracle" stellar contract invoke \

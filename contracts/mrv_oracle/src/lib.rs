@@ -1,4 +1,6 @@
 #![no_std]
+mod history_ring_buffer;
+
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
     IntoVal, String, Symbol, Val, Vec,
@@ -33,30 +35,40 @@ pub enum DataKey {
     Paused,
     /// Replay-protection nonce per address.
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection (#899).
+    NonceBitmap(Address),
     /// Pending admin for two-step transfer.
     PendingAdmin,
     /// Anomaly threshold as a basis-point fraction of the previous reading (default 2000 = 20%).
     AnomalyThreshold,
     /// Per-project anomaly threshold override (basis points).
     ProjectAnomalyThreshold(String),
+    /// Trusted credit registry address.
+    TrustedRegistry,
+    /// Ring buffer slot storage for per-project MRV history.
+    HistorySlots(String),
+    /// Ring buffer metadata (head pointer, count) for per-project MRV history.
+    HistoryMeta(String),
 }
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum OracleError {
-    NotInitialized = 119,
-    Unauthorized = 120,
-    AlreadyInitialized = 121,
-    Overflow = 122,
-    ContractPaused = 123,
-    ProjectNotFound = 124,
-    InvalidNonce = 125,
-    InvalidProject = 126,
-    InvalidTimestamp = 127,
-    NoPendingAdmin = 128,
-    InvalidReading = 129,
-    InvalidThreshold = 130,
+    // Oracle contract codes are kept in the reserved MRV range.
+    NotInitialized = 400,
+    Unauthorized = 401,
+    AlreadyInitialized = 402,
+    Overflow = 403,
+    ContractPaused = 404,
+    ProjectNotFound = 405,
+    InvalidNonce = 406,
+    InvalidProject = 407,
+    InvalidTimestamp = 408,
+    NoPendingAdmin = 409,
+    InvalidReading = 410,
+    InvalidThreshold = 411,
+    InvalidRegistry = 412,
 }
 
 #[contractevent]
@@ -117,12 +129,17 @@ pub struct CreditFlagged {
 }
 
 // Maximum MRV history entries retained per project (ring-buffer eviction).
+#[allow(dead_code)]
 const MAX_HISTORY: u32 = 100;
 
 /// Minimum TTL in ledgers (~1 year at 5s/ledger).
 const MIN_TTL: u32 = 6_307_200;
 /// Threshold below which TTL is extended.
 const TTL_THRESHOLD: u32 = MIN_TTL / 2;
+/// Maximum skew allowed between a caller-supplied reading timestamp and the ledger time.
+const MAX_READING_SKEW: u64 = 3_600;
+/// Maximum number of credits flagged in a single MRV update to bound cross-contract calls.
+const MAX_FLAG_BATCH: u32 = 20;
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -241,14 +258,20 @@ impl MrvOracle {
     /// # Errors
     /// - [`OracleError::NotInitialized`] — contract has not been initialised.
     /// - [`OracleError::Unauthorized`] — caller is not the admin.
+    /// - [`OracleError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    /// - [`OracleError::InvalidThreshold`] — `threshold_bps` is not in the valid range (1–10000).
     pub fn set_anomaly_threshold(
         env: Env,
         admin: Address,
         threshold_bps: u32,
+        nonce: u64,
     ) -> Result<(), OracleError> {
         Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(OracleError::InvalidNonce);
+        }
         if threshold_bps == 0 || threshold_bps > 10_000 {
-            return Err(OracleError::InvalidReading);
+            return Err(OracleError::InvalidThreshold);
         }
         env.storage()
             .instance()
@@ -305,6 +328,33 @@ impl MrvOracle {
             .get(&DataKey::ProjectAnomalyThreshold(project_id))
     }
 
+    /// Set the trusted credit registry address. Only the admin may call this.
+    ///
+    /// # Errors
+    /// - [`OracleError::NotInitialized`] — contract has not been initialised.
+    /// - [`OracleError::Unauthorized`] — caller is not the admin.
+    /// - [`OracleError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    pub fn set_trusted_registry(
+        env: Env,
+        admin: Address,
+        registry_id: Address,
+        nonce: u64,
+    ) -> Result<(), OracleError> {
+        Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(OracleError::InvalidNonce);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::TrustedRegistry, &registry_id);
+        Ok(())
+    }
+
+    /// Returns the trusted credit registry address, if set.
+    pub fn get_trusted_registry(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::TrustedRegistry)
+    }
+
     /// Returns a page of registered oracles. `page_size` is capped at 50.
     pub fn list_oracles(env: Env, page: u32, page_size: u32) -> Vec<Address> {
         let effective_size = if page_size > 50 { 50 } else { page_size };
@@ -332,6 +382,8 @@ impl MrvOracle {
     /// - [`OracleError::Unauthorized`] — `oracle` is not a registered oracle address.
     /// - [`OracleError::InvalidNonce`] — `nonce` does not match the current oracle nonce.
     /// - [`OracleError::InvalidTimestamp`] — `timestamp` is later than the current ledger timestamp.
+    /// - [`OracleError::InvalidRegistry`] — `registry_id` does not match the trusted registry.
+    /// - [`OracleError::InvalidProject`] — project has no credits in the registry.
     /// - [`OracleError::Overflow`] — anomaly calculation overflowed (extremely large `tonnes` value).
     pub fn update_mrv_data(
         env: Env,
@@ -352,11 +404,21 @@ impl MrvOracle {
         if !Self::consume_nonce(&env, &oracle, nonce) {
             return Err(OracleError::InvalidNonce);
         }
-        if timestamp > env.ledger().timestamp() {
+        let ledger_ts = env.ledger().timestamp();
+        if timestamp > ledger_ts || timestamp.saturating_add(MAX_READING_SKEW) < ledger_ts {
             return Err(OracleError::InvalidTimestamp);
         }
         if tonnes < 0 {
             return Err(OracleError::InvalidReading);
+        }
+
+        let trusted: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TrustedRegistry)
+            .ok_or(OracleError::InvalidRegistry)?;
+        if registry_id != trusted {
+            return Err(OracleError::InvalidRegistry);
         }
 
         // Validate project exists in registry
@@ -390,21 +452,32 @@ impl MrvOracle {
             MIN_TTL,
         );
 
-        let hist_key = DataKey::History(project_id.clone());
-        let mut history: Vec<MrvDataPoint> = env
+        let hist_slots_key = DataKey::HistorySlots(project_id.clone());
+        let hist_meta_key = DataKey::HistoryMeta(project_id.clone());
+        let mut slots: soroban_sdk::Map<u32, MrvDataPoint> = env
             .storage()
             .persistent()
-            .get(&hist_key)
-            .unwrap_or_else(|| Vec::new(&env));
-        if history.len() >= MAX_HISTORY {
-            // Evict oldest entry (index 0) to keep the ring buffer bounded.
-            history.remove(0);
-        }
-        history.push_back(point);
-        env.storage().persistent().set(&hist_key, &history);
+            .get(&hist_slots_key)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+        let mut meta: crate::history_ring_buffer::RingBufferMeta = env
+            .storage()
+            .persistent()
+            .get(&hist_meta_key)
+            .unwrap_or(crate::history_ring_buffer::RingBufferMeta { head: 0, count: 0 });
+        crate::history_ring_buffer::HistoryRingBuffer::push(
+            &env,
+            &mut slots,
+            &mut meta,
+            point.clone(),
+        );
+        env.storage().persistent().set(&hist_slots_key, &slots);
+        env.storage().persistent().set(&hist_meta_key, &meta);
         env.storage()
             .persistent()
-            .extend_ttl(&hist_key, TTL_THRESHOLD, MIN_TTL);
+            .extend_ttl(&hist_slots_key, TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&hist_meta_key, TTL_THRESHOLD, MIN_TTL);
 
         MrvUpd {
             oracle: oracle.clone(),
@@ -422,29 +495,44 @@ impl MrvOracle {
                 threshold_bps: threshold,
             }
             .publish(&env);
-            // Cross-contract call to flag all credits in the project (best-effort)
-            for i in 0..credits.len() {
+            // Cross-contract call to flag credits in the project up to MAX_FLAG_BATCH (best-effort)
+            let flag_limit = credits.len().min(MAX_FLAG_BATCH);
+            for i in 0..flag_limit {
                 let cid = credits.get(i).unwrap();
-                // Best-effort cross-contract call to flag credit in registry;
-                // swallow errors (oracle may not be a verifier on the registry)
+                // Fetch the oracle's current nonce from the registry so the
+                // flag_credit call uses a valid replay-protection nonce.
+                // If get_nonce fails (e.g. registry not reachable), skip.
+                let registry_nonce: u64 = match env.try_invoke_contract::<u64, soroban_sdk::Error>(
+                    &registry_id,
+                    &Symbol::new(&env, "get_nonce"),
+                    (oracle.clone(),).into_val(&env),
+                ) {
+                    Ok(Ok(n)) => n,
+                    _ => continue,
+                };
                 let flag_args: Vec<Val> = (
                     oracle.clone(),
                     cid.clone(),
                     String::from_str(&env, "MRV anomaly detected"),
-                    0u64,
+                    registry_nonce,
                 )
                     .into_val(&env);
-                let _ = env.try_invoke_contract::<Val, Val>(
+                let flag_result = env.try_invoke_contract::<Val, Val>(
                     &registry_id,
                     &Symbol::new(&env, "flag_credit"),
                     flag_args,
                 );
-                CreditFlagged {
-                    oracle: oracle.clone(),
-                    project_id: project_id.clone(),
-                    credit_id: cid,
+                // Only emit CreditFlagged when the registry call actually succeeded.
+                // Swallowing the error and emitting the event would give off-chain
+                // indexers a false signal that the credit was flagged.
+                if flag_result.is_ok() {
+                    CreditFlagged {
+                        oracle: oracle.clone(),
+                        project_id: project_id.clone(),
+                        credit_id: cid,
+                    }
+                    .publish(&env);
                 }
-                .publish(&env);
             }
         }
 
@@ -484,12 +572,17 @@ impl MrvOracle {
     /// # Errors
     /// - [`OracleError::NotInitialized`] — contract has not been initialised.
     /// - [`OracleError::Unauthorized`] — caller is not the admin.
+    /// - [`OracleError::InvalidNonce`] — `nonce` does not match the current admin nonce.
     pub fn upgrade(
         env: Env,
         admin: Address,
         new_wasm_hash: soroban_sdk::BytesN<32>,
+        nonce: u64,
     ) -> Result<(), OracleError> {
         Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(OracleError::InvalidNonce);
+        }
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -529,10 +622,22 @@ impl MrvOracle {
 
     /// Returns the full MRV history for `project_id` (up to 100 entries).
     pub fn get_history(env: Env, project_id: String) -> Vec<MrvDataPoint> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::History(project_id))
-            .unwrap_or_else(|| Vec::new(&env))
+        let slots_key = DataKey::HistorySlots(project_id.clone());
+        if env.storage().persistent().has(&slots_key) {
+            let slots: soroban_sdk::Map<u32, MrvDataPoint> =
+                env.storage().persistent().get(&slots_key).unwrap();
+            let meta: crate::history_ring_buffer::RingBufferMeta = env
+                .storage()
+                .persistent()
+                .get(&DataKey::HistoryMeta(project_id.clone()))
+                .unwrap();
+            crate::history_ring_buffer::HistoryRingBuffer::to_vec_ordered(&slots, &meta)
+        } else {
+            env.storage()
+                .persistent()
+                .get(&DataKey::History(project_id))
+                .unwrap_or_else(|| Vec::new(&env))
+        }
     }
 
     /// Returns individual MRV data points for `project_id` where `from_ts <= recorded_at <= to_ts`.
@@ -542,11 +647,7 @@ impl MrvOracle {
         from_ts: u64,
         to_ts: u64,
     ) -> Vec<MrvDataPoint> {
-        let history: Vec<MrvDataPoint> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::History(project_id))
-            .unwrap_or_else(|| Vec::new(&env));
+        let history = Self::get_history(env.clone(), project_id.clone());
         let mut result: Vec<MrvDataPoint> = Vec::new(&env);
         for point in history.iter() {
             if point.recorded_at >= from_ts && point.recorded_at <= to_ts {
@@ -564,11 +665,7 @@ impl MrvOracle {
         from_ts: u64,
         to_ts: u64,
     ) -> (i128, i128) {
-        let history = env
-            .storage()
-            .persistent()
-            .get::<_, Vec<MrvDataPoint>>(&DataKey::History(project_id))
-            .unwrap_or_else(|| Vec::new(&env));
+        let history = Self::get_history(env.clone(), project_id.clone());
 
         let mut sum: i128 = 0;
         let mut count: i128 = 0;
@@ -599,20 +696,44 @@ impl MrvOracle {
         Ok(())
     }
 
-    fn consume_nonce(env: &Env, addr: &Address, expected: u64) -> bool {
+    pub const NONCE_WINDOW: u64 = 16;
+
+    fn consume_nonce(env: &Env, addr: &Address, submitted: u64) -> bool {
         let current: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::Nonce(addr.clone()))
             .unwrap_or(0u64);
-        if current != expected {
+        if submitted < current || submitted >= current + Self::NONCE_WINDOW {
             return false;
         }
+        let offset = (submitted - current) as u32;
+        let bitmap_key = DataKey::NonceBitmap(addr.clone());
+        let mut bitmap: u64 = env.storage().persistent().get(&bitmap_key).unwrap_or(0u64);
+        let bit = 1u64 << offset;
+        if bitmap & bit != 0 {
+            return false;
+        }
+        bitmap |= bit;
+        let mut advance = 0u32;
+        while (advance as u64) < Self::NONCE_WINDOW && (bitmap & (1u64 << advance)) != 0 {
+            advance += 1;
+        }
+        let new_current = current + advance as u64;
+        bitmap >>= advance;
         let key = DataKey::Nonce(addr.clone());
-        env.storage().persistent().set(&key, &(current + 1));
+        env.storage().persistent().set(&key, &new_current);
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+        if bitmap != 0 {
+            env.storage().persistent().set(&bitmap_key, &bitmap);
+            env.storage()
+                .persistent()
+                .extend_ttl(&bitmap_key, TTL_THRESHOLD, MIN_TTL);
+        } else {
+            env.storage().persistent().remove(&bitmap_key);
+        }
         true
     }
 
@@ -659,7 +780,7 @@ impl MrvOracle {
             .get(&DataKey::Latest(project_id.clone()));
         match prev {
             None => Ok((false, 0)),
-            Some(p) if p.tonnes == 0 => Ok((false, 0)),
+            Some(p) if p.tonnes == 0 => Ok((new_tonnes != 0, 0)),
             Some(p) => {
                 let diff = (new_tonnes - p.tonnes).abs();
                 // diff / prev > threshold_bps / 10000
@@ -746,7 +867,8 @@ mod tests {
         let oracle = Address::generate(&env);
         client.initialize(&admin);
         let reg_nonce = client.get_nonce(&admin);
-        client.register_oracle(&admin, &oracle, &reg_nonce);
+        client.set_trusted_registry(&admin, &registry_id, &reg_nonce);
+        client.register_oracle(&admin, &oracle, &(reg_nonce + 1));
         (env, client, oracle, registry_id, admin)
     }
 
@@ -862,8 +984,6 @@ mod tests {
             &registry_id,
             &nonce,
         );
-        // Clear events from first update
-        let events_before = env.events().all().events().len();
         let nonce2 = client.get_nonce(&oracle);
         client.update_mrv_data(
             &oracle,
@@ -874,8 +994,8 @@ mod tests {
             &nonce2,
         );
         let all_events = env.events().all();
-        // After anomalous update: MrvUpd + AnomalyDetected — total must be 2 more than before.
-        assert_eq!(all_events.events().len(), events_before + 2);
+        // After anomalous update: MrvUpd + AnomalyDetected = 2 events from last invocation.
+        assert_eq!(all_events.events().len(), 2);
     }
 
     #[test]
@@ -1356,7 +1476,6 @@ mod tests {
             &n1,
         );
 
-        let events_before = env.events().all().events().len();
         let n2 = client.get_nonce(&oracle);
         client.update_mrv_data(
             &oracle,
@@ -1368,8 +1487,8 @@ mod tests {
         );
 
         let all_events = env.events().all();
-        // MrvUpd + AnomalyDetected = 2 events
-        assert_eq!(all_events.events().len(), events_before + 2);
+        // MrvUpd + AnomalyDetected = 2 events from the anomalous invocation
+        assert_eq!(all_events.events().len(), 2);
     }
 
     #[test]
@@ -1391,5 +1510,302 @@ mod tests {
         assert!(client
             .try_set_project_anomaly_threshold(&admin, &proj, &10001u32, &nonce)
             .is_err());
+    }
+
+    // ── Issue #700: CreditFlagged truthfulness ───────────────────────────────
+
+    /// When the oracle is NOT a registered verifier on the registry the flag_credit
+    /// call will fail — CreditFlagged must NOT be emitted in that case.
+    #[test]
+    fn test_no_credit_flagged_event_when_flag_fails() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+
+        // First reading — no anomaly
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_000_000,
+            &env.ledger().timestamp(),
+            &registry_id,
+            &n1,
+        );
+
+        // Second reading: 50% deviation triggers anomaly
+        // The oracle address is NOT a verifier on the credit registry,
+        // so the cross-contract flag_credit call will fail.
+        let n2 = client.get_nonce(&oracle);
+        let anomaly = client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_500_000,
+            &env.ledger().timestamp(),
+            &registry_id,
+            &n2,
+        );
+        assert!(anomaly, "expected anomaly to be detected");
+
+        // Events emitted from the anomalous invocation: MrvUpd + AnomalyDetected = 2
+        // CreditFlagged must NOT appear because flag_credit failed
+        let events_after = env.events().all().events().len();
+        assert_eq!(
+            events_after,
+            2,
+            "only MrvUpd and AnomalyDetected should be emitted; CreditFlagged must be absent when flag fails"
+        );
+    }
+
+    /// When the oracle IS a registered verifier on the registry the flag_credit call
+    /// succeeds and CreditFlagged IS emitted (MrvUpd + AnomalyDetected + CreditFlagged = 3).
+    #[test]
+    fn test_credit_flagged_event_emitted_when_flag_succeeds() {
+        let env = Env::default();
+        env.cost_estimate().budget().reset_unlimited();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+
+        let registry = carbonchain_credit_registry::test_helpers::RegistryHelper::deploy(&env);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+        registry.initialize(&admin, &retirement, 1);
+
+        // Register the oracle as a verifier on the credit registry so flag_credit succeeds
+        let oracle = Address::generate(&env);
+        let reg_verifier_nonce = registry.get_nonce(&admin);
+        registry.register_verifier(&admin, &oracle, reg_verifier_nonce);
+
+        let issuer = Address::generate(&env);
+        let anonce = registry.get_nonce(&admin);
+        registry.register_issuer(&admin, &issuer, anonce);
+        let anonce2 = registry.get_nonce(&admin);
+        registry.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "VCS"),
+            anonce2,
+        );
+        registry.register_project(
+            &admin,
+            &String::from_str(&env, "PROJ-FLAG"),
+            &String::from_str(&env, "Flag Project"),
+            &String::from_str(&env, "Test"),
+            &String::from_str(&env, "NG"),
+        );
+        let inonce = registry.get_nonce(&issuer);
+        let credit_id = registry.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-FLAG"),
+            2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            1_000_000,
+            &String::from_str(&env, "bafybei789"),
+            inonce,
+        );
+        // Mint the credit (oracle is the verifier here)
+        let vnonce = registry.get_nonce(&oracle);
+        registry.approve_and_mint(&oracle, &credit_id, vnonce);
+
+        // Deploy and set up the MRV oracle
+        let oracle_id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &oracle_id);
+        client.initialize(&admin);
+        let reg_nonce = client.get_nonce(&admin);
+        client.set_trusted_registry(&admin, &registry.id, &reg_nonce);
+        client.register_oracle(&admin, &oracle, &(reg_nonce + 1));
+
+        let proj = String::from_str(&env, "PROJ-FLAG");
+
+        // First reading (no anomaly)
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_000_000,
+            &env.ledger().timestamp(),
+            &registry.id,
+            &n1,
+        );
+
+        // Anomalous second reading (50% jump)
+        let n2 = client.get_nonce(&oracle);
+        let anomaly = client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_500_000,
+            &env.ledger().timestamp(),
+            &registry.id,
+            &n2,
+        );
+        assert!(anomaly, "expected anomaly to be detected");
+
+        // Events include MrvUpd + AnomalyDetected + CreditFlagged (and possibly
+        // sub-contract events from flag_credit). Must be at least 3.
+        let events_after = env.events().all().events().len();
+        assert!(
+            events_after >= 3,
+            "expected at least MrvUpd + AnomalyDetected + CreditFlagged when oracle is a verifier, got {}",
+            events_after
+        );
+    }
+
+    // ── Issue: upgrade nonce consumption ─────────────────────────────────────
+
+    #[test]
+    fn test_upgrade_consumes_nonce() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let fake_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+        let nonce = client.get_nonce(&admin);
+
+        // upgrade with fake WASM fails at the host level (Wasm does not exist),
+        // but InvalidNonce is rejected first — verify stale nonce is rejected.
+        let stale_nonce = nonce.saturating_sub(1);
+        let result = client.try_upgrade(&admin, &fake_hash, &stale_nonce);
+        assert!(
+            result.is_err(),
+            "stale nonce must be rejected before wasm lookup"
+        );
+
+        // Current nonce must not have advanced (stale nonce was rejected pre-consume)
+        assert_eq!(
+            client.get_nonce(&admin),
+            nonce,
+            "nonce must not advance on InvalidNonce rejection"
+        );
+
+        // A nonce beyond the window must also be rejected
+        let future_nonce = nonce + 16;
+        let result2 = client.try_upgrade(&admin, &fake_hash, &future_nonce);
+        assert!(result2.is_err(), "nonce beyond window must be rejected");
+    }
+
+    // ── Issue: set_anomaly_threshold nonce and error ──────────────────────────
+
+    #[test]
+    fn test_set_anomaly_threshold_consumes_nonce_and_returns_invalid_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let nonce = client.get_nonce(&admin);
+
+        // Wrong nonce must be rejected
+        assert!(client
+            .try_set_anomaly_threshold(&admin, &1000u32, &(nonce + 1))
+            .is_err());
+
+        // Threshold 0 must return InvalidThreshold, not InvalidReading
+        let err = client
+            .try_set_anomaly_threshold(&admin, &0u32, &nonce)
+            .unwrap_err();
+        assert_eq!(err, Ok(OracleError::InvalidThreshold));
+
+        // Threshold > 10000 must return InvalidThreshold
+        let err = client
+            .try_set_anomaly_threshold(&admin, &10001u32, &nonce)
+            .unwrap_err();
+        assert_eq!(err, Ok(OracleError::InvalidThreshold));
+
+        // Valid threshold succeeds and is stored
+        client.set_anomaly_threshold(&admin, &5000u32, &nonce);
+        assert_eq!(client.get_anomaly_threshold(), 5000);
+    }
+
+    // ── Issue: trusted registry validation ───────────────────────────────────
+
+    #[test]
+    fn test_update_mrv_data_rejects_untrusted_registry() {
+        let (env, client, oracle, _registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+
+        // Deploy a fake registry
+        let fake_registry = carbonchain_credit_registry::test_helpers::RegistryHelper::deploy(&env);
+        let fake_admin = Address::generate(&env);
+        let fake_retirement = Address::generate(&env);
+        fake_registry.initialize(&fake_admin, &fake_retirement, 1);
+        let _fake_nonce = fake_registry.get_nonce(&fake_admin);
+        fake_registry.register_project(
+            &fake_admin,
+            &String::from_str(&env, "PROJ-001"),
+            &String::from_str(&env, "Fake"),
+            &String::from_str(&env, "Desc"),
+            &String::from_str(&env, "NG"),
+        );
+        let issuer = Address::generate(&env);
+        let inonce_issuer = fake_registry.get_nonce(&fake_admin);
+        fake_registry.register_issuer(&fake_admin, &issuer, inonce_issuer);
+        let inonce_meth = fake_registry.get_nonce(&fake_admin);
+        fake_registry.register_methodology(
+            &fake_admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            inonce_meth,
+        );
+        let inonce2 = fake_registry.get_nonce(&issuer);
+        fake_registry.submit_credit(
+            &issuer,
+            &String::from_str(&env, "PROJ-001"),
+            2024,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "NG"),
+            1_000_000,
+            &String::from_str(&env, "bafybei999"),
+            inonce2,
+        );
+
+        let nonce = client.get_nonce(&oracle);
+        assert!(client
+            .try_update_mrv_data(
+                &oracle,
+                &proj,
+                &1_000_000,
+                &env.ledger().timestamp(),
+                &fake_registry.id,
+                &nonce
+            )
+            .is_err());
+    }
+
+    // ── Issue: detect_anomaly zero-baseline handling ──────────────────────────
+
+    #[test]
+    fn test_anomaly_detected_after_zero_baseline() {
+        let (env, client, oracle, registry_id, _admin) = setup();
+        let proj = String::from_str(&env, "PROJ-001");
+
+        // First reading: zero baseline
+        let n1 = client.get_nonce(&oracle);
+        client.update_mrv_data(
+            &oracle,
+            &proj,
+            &0,
+            &env.ledger().timestamp(),
+            &registry_id,
+            &n1,
+        );
+
+        // Second reading: non-zero after zero should be flagged as anomaly
+        let n2 = client.get_nonce(&oracle);
+        let anomaly = client.update_mrv_data(
+            &oracle,
+            &proj,
+            &1_000_000,
+            &env.ledger().timestamp(),
+            &registry_id,
+            &n2,
+        );
+        assert!(anomaly, "expected anomaly after zero baseline");
     }
 }

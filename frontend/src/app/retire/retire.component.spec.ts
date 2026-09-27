@@ -57,7 +57,9 @@ describe('RetireComponent', () => {
 
     creditStoreMock = {
       credits: signal([]).asReadonly(),
+      isLoading: signal(false).asReadonly(),
       loadOne: vi.fn().mockResolvedValue(undefined),
+      loadByProject: vi.fn().mockResolvedValue(undefined),
     };
 
     routerMock = { navigate: vi.fn().mockResolvedValue(true) };
@@ -125,8 +127,10 @@ describe('RetireComponent', () => {
     expect(routerMock.navigate).toHaveBeenCalledWith(['/certificates', 'abc123']);
   });
 
-  it('submit() sets signingError on wallet rejection', async () => {
-    walletServiceMock.signTransaction = vi.fn().mockRejectedValue(new Error('User rejected'));
+  it('submit() sets signingError on API failure (replaces old wallet-rejection path)', async () => {
+    apiServiceMock.retireCredit = vi
+      .fn()
+      .mockReturnValue(throwError(() => new Error('User rejected')));
     const fixture = TestBed.createComponent(RetireComponent);
     const comp = fixture.componentInstance;
     comp.selectedCredits.set([credit]);
@@ -136,7 +140,6 @@ describe('RetireComponent', () => {
 
     expect(comp.errorMsg()).toBe('User rejected');
     expect(comp.step()).toBe('confirm');
-    expect(apiServiceMock.retireCredit).not.toHaveBeenCalled();
   });
 
   it('submit() sets signingError on API failure', async () => {

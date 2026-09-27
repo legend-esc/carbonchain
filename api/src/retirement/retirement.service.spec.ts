@@ -540,4 +540,33 @@ describe('RetirementService — batchRetire transaction safety', () => {
     const allRecords = await repo.findAll(1, 100);
     expect(allRecords.total).toBe(2);
   });
+
+  it('attributes each retirement record to its true source credit when one fails', async () => {
+    // Contract fails the middle credit ("bb") and returns retirement IDs for
+    // "aa" and "cc" in input order.
+    mockStellarService.invokeContract.mockResolvedValue({
+      returnValue: nativeToScVal({
+        succeeded: [Buffer.from(RET1, 'hex'), Buffer.from(RET3, 'hex')],
+        failed: [{ credit_id: Buffer.from('bb', 'hex'), error_code: 110 }],
+      }),
+    });
+
+    const result = await service.batchRetire({
+      buyerPublicKey: buyer,
+      creditIds: ['aa', 'bb', 'cc'],
+      tonnes: ['1000000', '2000000', '3000000'],
+      reason: 'batch test',
+      nonce: '0',
+    });
+
+    expect(result.succeeded).toEqual([RET1, RET3]);
+    expect(result.failed.map((f) => f.id)).toEqual(['bb']);
+
+    const rec1 = await repo.findById(RET1);
+    const rec3 = await repo.findById(RET3);
+    expect(rec1!.creditId).toBe('aa');
+    expect(rec1!.tonnesRetired).toBe('1000000');
+    expect(rec3!.creditId).toBe('cc');
+    expect(rec3!.tonnesRetired).toBe('3000000');
+  });
 });

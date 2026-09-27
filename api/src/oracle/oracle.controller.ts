@@ -12,7 +12,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   ApiTags,
   ApiOperation,
@@ -26,6 +26,7 @@ import {
   MrvAggregateResponse,
 } from './oracle.service';
 import { AdminGuard } from '../admin/admin.guard';
+import { WebhookIpAllowlistGuard } from '../webhooks/webhook-ip-allowlist.guard';
 
 @ApiTags('oracle')
 @Controller('oracle')
@@ -38,6 +39,7 @@ export class OracleController {
     description: 'MRV data ingested, returns anomaly flag',
   })
   @ApiResponse({ status: 401, description: 'Invalid oracle signature' })
+  @UseGuards(WebhookIpAllowlistGuard)
   @Post('mrv')
   ingestMrv(@Body() dto: MrvWebhookDto): Promise<{ anomaly: boolean }> {
     return this.oracleService.ingestMrvData(dto);
@@ -93,7 +95,7 @@ export class OracleController {
   @ApiResponse({ status: 200, description: 'Threshold updated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Admin only' })
-  @UseGuards(AuthGuard('jwt'), AdminGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Patch(':projectId/threshold')
   @HttpCode(HttpStatus.OK)
   async setProjectThreshold(

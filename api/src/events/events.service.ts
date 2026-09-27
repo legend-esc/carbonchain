@@ -56,6 +56,24 @@ export class EventsService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     this.logger.log('EventsService initialized - loading last synced ledgers');
+    // Check whether stored lastLedger is ahead of the node's current sequence on resume
+    let currentLedger = 0;
+    try {
+      if (typeof this.stellarService.getLatestLedger === 'function') {
+        currentLedger = await this.stellarService.getLatestLedger();
+      } else if (typeof this.stellarService.getSorobanRpcServer === 'function') {
+        const server = this.stellarService.getSorobanRpcServer();
+        if (server && typeof server.getLatestLedger === 'function') {
+          const res = await server.getLatestLedger();
+          currentLedger = res?.sequence || 0;
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not retrieve latest ledger on resume: ${(error as Error).message}`,
+      );
+    }
+
     // Load last synced ledger per contract from DB
     const contractIds = this.getContractIds();
     for (const contractId of contractIds) {
@@ -64,9 +82,20 @@ export class EventsService implements OnModuleInit {
         order: { ledger: 'DESC' },
       });
       if (lastEvent) {
-        this.lastLedgerCache.set(contractId, Number(lastEvent.ledger));
+        let lastLedger = Number(lastEvent.ledger);
+        if (currentLedger > 0 && lastLedger > currentLedger) {
+          this.logger.warn(
+            `Contract ${contractId}: stored lastLedger ${lastLedger} is ahead of node current sequence ${currentLedger}. Handling reorg.`,
+          );
+          for (let reverted = lastLedger; reverted > currentLedger; reverted--) {
+            await this.handleReorg(contractId, reverted);
+          }
+          lastLedger = this.lastLedgerCache.get(contractId) || currentLedger;
+        } else {
+          this.lastLedgerCache.set(contractId, lastLedger);
+        }
         this.logger.log(
-          `Contract ${contractId}: last synced ledger = ${lastEvent.ledger}`,
+          `Contract ${contractId}: last synced ledger = ${lastLedger}`,
         );
       }
     }
@@ -243,32 +272,74 @@ export class EventsService implements OnModuleInit {
   }
 
   /**
-   * Query events from PostgreSQL (fast, <50ms).
+   * Query events from PostgreSQL using keyset (cursor) pagination.
+   *
+   * Issue #931 — offset-based pagination (skip) is unstable under concurrent
+   * writes because appended rows shift offsets and cause duplicate/missed
+   * pages.  Keyset pagination pins a cursor to a monotonic `(ledger, id)`
+   * pair so concurrent inserts never affect in-flight pages.
+   *
+   * Cursor semantics:
+   *  - Pass `beforeCursor` to fetch the next page of events OLDER than the
+   *    cursor (i.e. lower ledger / earlier id).  The cursor value is the `id`
+   *    field of the last event on the previous page.
+   *  - The response includes a `nextCursor` field — pass it as `beforeCursor`
+   *    on the subsequent request.  A null `nextCursor` means there are no
+   *    more pages.
+   *  - `take` / `skip` remain accepted as deprecated aliases so existing
+   *    consumers keep working without changes.
+   *
+   * @param contractId  Optional contract address filter.
+   * @param eventType   Optional event-type filter.
+   * @param limit       Page size (max 200, default 50).
+   * @param beforeCursor Opaque cursor from a previous response (keyset mode).
+   * @param skip        Deprecated offset (only used when beforeCursor absent).
    */
   async getEvents(
     contractId?: string,
     eventType?: string,
-    take = 50,
+    limit = 50,
     skip = 0,
-  ): Promise<SorobanEvent[]> {
-    const limit = Math.min(take, 200);
-    const where: any = {};
+    beforeCursor?: string,
+  ): Promise<{ events: SorobanEvent[]; nextCursor: string | null }> {
+    const pageSize = Math.min(limit, 200);
+
+    const qb = this.eventRepository
+      .createQueryBuilder('e')
+      .orderBy('e.ledger', 'DESC')
+      .addOrderBy('e.id', 'DESC')
+      .take(pageSize);
 
     if (contractId) {
-      where.contractId = contractId;
+      qb.andWhere('e.contractId = :contractId', { contractId });
     }
     if (eventType) {
-      where.eventType = eventType;
+      qb.andWhere('e.eventType = :eventType', { eventType });
     }
 
-    const events = await this.eventRepository.find({
-      where,
-      order: { ledger: 'DESC' },
-      take: limit,
-      skip,
-    });
+    if (beforeCursor) {
+      // Keyset path — look up the anchor row to get its (ledger, id) values.
+      const anchor = await this.eventRepository.findOne({
+        where: { id: beforeCursor },
+        select: { id: true, ledger: true },
+      });
 
-    return events.map((e) => ({
+      if (anchor) {
+        // Return rows with a ledger strictly less than the anchor, OR on the
+        // same ledger but with a lexicographically smaller id (stable tie-break).
+        qb.andWhere(
+          '(e.ledger < :anchorLedger OR (e.ledger = :anchorLedger AND e.id < :anchorId))',
+          { anchorLedger: anchor.ledger, anchorId: anchor.id },
+        );
+      }
+    } else if (skip > 0) {
+      // Deprecated offset path — kept for backward compatibility.
+      qb.skip(skip);
+    }
+
+    const rows = await qb.getMany();
+
+    const events = rows.map((e) => ({
       id: e.id,
       type: e.eventType,
       contractId: e.contractId,
@@ -276,6 +347,13 @@ export class EventsService implements OnModuleInit {
       timestamp: Number(e.timestamp),
       data: e.data,
     }));
+
+    // nextCursor is the id of the last row returned; null when the page is
+    // smaller than pageSize (no more rows exist).
+    const nextCursor =
+      rows.length === pageSize ? rows[rows.length - 1].id : null;
+
+    return { events, nextCursor };
   }
 
   async getEventById(eventId: string): Promise<SorobanEvent | undefined> {

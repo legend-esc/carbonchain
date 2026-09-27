@@ -6,6 +6,7 @@ import {
   Body,
   UseGuards,
   Query,
+  Request,
   ParseIntPipe,
   DefaultValuePipe,
   NotFoundException,
@@ -20,13 +21,15 @@ import {
   BatchRetireResult,
   CertificateVerification,
 } from './retirement.service';
-import { FullRetireDto } from './dto/retire.dto';
+import { RetirementRequestDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
 import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -34,17 +37,27 @@ export class RetirementController {
   constructor(
     private readonly retirementService: RetirementService,
     private readonly certificateService: CertificateService,
+    private readonly certHashReconciler: CertHashReconciler,
   ) {}
 
   @ApiOperation({ summary: 'Retire a carbon credit' })
   @ApiResponse({ status: 201, description: 'Credit retired successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post()
   retire(
-    @Body() dto: FullRetireDto,
+    @Body() dto: RetirementRequestDto,
+    @Request() req: { user: { account: string } },
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
-    return this.retirementService.retire(dto);
+    // Buyer is bound to the authenticated principal, never taken from the body.
+    // Delegates to retireCredit so this path runs the same off-chain status
+    // checks as POST /credits/:id/retire.
+    return this.retirementService.retireCredit(
+      dto.creditId,
+      { reason: dto.reason, nonce: dto.nonce },
+      req.user.account,
+    );
   }
 
   @ApiOperation({ summary: 'Batch retire multiple credits at once' })
@@ -53,12 +66,17 @@ export class RetirementController {
   @ApiResponse({ status: 429, description: 'Too Many Requests' })
   @Throttle({ limit: 5, ttl: 60000 })
   @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Idempotent()
   @Post('batch')
   batchRetire(@Body() dto: BatchRetireDto): Promise<BatchRetireResult> {
     return this.retirementService.batchRetire(dto);
   }
 
   @ApiOperation({ summary: 'List retirements (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiQuery({ name: 'buyer', required: false, type: String })
+  @ApiQuery({ name: 'status', required: false, type: String })
   @ApiResponse({
     status: 200,
     description: 'Paginated list of retirement records',
@@ -68,7 +86,8 @@ export class RetirementController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.listRetirements(page, limit);
+    const clampedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.retirementService.listRetirements(page, clampedLimit);
   }
 
   @ApiOperation({ summary: 'Get retirement record by ID' })
@@ -80,17 +99,24 @@ export class RetirementController {
   }
 
   @ApiOperation({ summary: 'Get retirements by account address' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
   @ApiResponse({
     status: 200,
     description: 'Paginated retirements for account',
   })
   @Get('account/:address')
   getByAccount(
-    @Param('address') address: string,
+    @Param('address', StellarAddressPipe) address: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.getRetirementsByAccount(address, page, limit);
+    const clampedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.retirementService.getRetirementsByAccount(
+      address,
+      page,
+      clampedLimit,
+    );
   }
 
   @ApiOperation({ summary: 'Download retirement certificate as PDF' })
@@ -130,13 +156,48 @@ export class RetirementController {
     });
   }
 
+  /**
+   * GET /retirement/certificates/:id/verify
+   *
+   * Returns the retirement certificate verification result, including:
+   *   - #918: txStatus — on-chain finality state (pending/success/failed/timeout)
+   *   - #921: certHashStatus — whether the IPFS hash is written on-chain
+   *             (none/pending/onchain/failure)
+   */
   @ApiOperation({ summary: 'Verify retirement certificate authenticity' })
-  @ApiResponse({ status: 200, description: 'Certificate verification result' })
+  @ApiResponse({
+    status: 200,
+    description: 'Certificate verification result with on-chain status fields',
+    type: CertificateResponse,
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Get('certificates/:id/verify')
   verifyCertificate(
     @Param('id') certificateId: string,
   ): Promise<CertificateVerification> {
     return this.retirementService.verifyCertificate(certificateId);
+  }
+
+  /**
+   * POST /retirement/certificates/:id/reconcile
+   *
+   * Manually trigger a cert hash reconciliation for a single retirement.
+   * Useful for support workflows when the daily reconciler hasn't run yet.
+   * #921
+   */
+  @ApiOperation({
+    summary:
+      'Trigger cert hash reconciliation for a specific retirement (#921)',
+  })
+  @ApiResponse({ status: 200, description: 'Reconciliation result' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtAuthGuard)
+  @Post('certificates/:id/reconcile')
+  async reconcileCertHash(
+    @Param('id') retirementId: string,
+  ): Promise<{ triggered: boolean; retirementId: string }> {
+    // Run the full reconciler scan — it will pick up this record if pending
+    await this.certHashReconciler.reconcile(1);
+    return { triggered: true, retirementId };
   }
 }

@@ -33,6 +33,13 @@ export class MetricsService implements OnModuleInit {
   /** Gauge: current number of active (non-retired) credits on-chain. */
   carbonchainCreditsActiveTotal: client.Gauge<string>;
 
+  /**
+   * Issue #916 — Counter: total tx_bad_seq retries by account/method.
+   * A sustained rate here indicates sequence coordination problems across
+   * replicas and should trigger an alert to investigate Redis connectivity.
+   */
+  txBadSeqTotal: client.Counter<string>;
+
   constructor() {
     this.register = new client.Registry();
     client.collectDefaultMetrics({ register: this.register });
@@ -101,6 +108,14 @@ export class MetricsService implements OnModuleInit {
     this.carbonchainCreditsActiveTotal = new client.Gauge({
       name: 'carbonchain_credits_active_total',
       help: 'Current number of active carbon credits on-chain',
+      registers: [this.register],
+    });
+
+    // Issue #916 — tx_bad_seq retry counter for sequence coordination monitoring.
+    this.txBadSeqTotal = new client.Counter({
+      name: 'stellar_tx_bad_seq_total',
+      help: 'Total number of tx_bad_seq retries; sustained rate indicates sequence coordination problems',
+      labelNames: ['method'],
       registers: [this.register],
     });
   }

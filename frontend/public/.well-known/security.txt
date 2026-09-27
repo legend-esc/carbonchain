@@ -1,0 +1,7 @@
+# CarbonChain Security Policy
+# RFC 9116 — https://www.rfc-editor.org/rfc/rfc9116
+
+Contact: mailto:security@carbonchain.example.com
+Expires: 2027-12-31T23:59:59Z
+Preferred-Languages: en
+Policy: https://github.com/legend-esc/carbonchain/blob/main/SECURITY.md

@@ -12,7 +12,7 @@ describe('Environment Variable Validation (#46, #255, #923)', () => {
       'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
     DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/carbonchain',
     JWT_SECRET: 'supersecret1234567890123456789012',
-    ORACLE_WEBHOOK_SECRET: 'a-strong-webhook-secret-value',
+    ORACLE_WEBHOOK_SECRET: 'supersecretoraclekey123',
     STELLAR_NETWORK: 'testnet',
     STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
     STELLAR_SOROBAN_RPC: 'https://soroban-testnet.stellar.org',
@@ -51,6 +51,13 @@ describe('Environment Variable Validation (#46, #255, #923)', () => {
     const { error } = envValidationSchema.validate(invalidEnv);
     expect(error).toBeDefined();
     expect(error!.message).toContain('JWT_SECRET');
+  });
+
+  it('fails when ORACLE_WEBHOOK_SECRET is missing', () => {
+    const { ORACLE_WEBHOOK_SECRET: _, ...rest } = validEnv;
+    const { error } = envValidationSchema.validate(rest);
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('ORACLE_WEBHOOK_SECRET');
   });
 
   it('applies default PORT of 3000 when not set', () => {

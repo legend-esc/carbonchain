@@ -9,12 +9,14 @@ import {
   VerifierRepository,
   verifierRepositoryProvider,
 } from './verifier.repository';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule,
     StellarModule,
     TypeOrmModule.forFeature([VerifierEntity]),
+    AuthModule,
   ],
   controllers: [VerifiersController],
   providers: [VerifiersService, VerifierRepository, verifierRepositoryProvider],

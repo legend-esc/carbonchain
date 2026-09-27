@@ -1,5 +1,6 @@
 import { IsString, IsNotEmpty, IsNumber } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsTonnesMultiple } from '../validators/tonnes.validator';
 
 export class SplitCreditDto {
   @ApiProperty({
@@ -9,6 +10,7 @@ export class SplitCreditDto {
   })
   @IsString()
   @IsNotEmpty()
+  @IsTonnesMultiple()
   splitTonnes: string;
 
   @ApiProperty({

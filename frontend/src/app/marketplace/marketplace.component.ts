@@ -10,6 +10,9 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ToastService } from '../core/services/toast.service';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { MarketplaceListComponent } from './marketplace-list.component';
+import { OfferDetailComponent } from './offer-detail.component';
+import { Offer } from '@shared';
 
 interface FilterState {
   methodology: string;
@@ -22,6 +25,13 @@ interface FilterState {
 @Component({
   selector: 'app-marketplace',
   standalone: true,
+  imports: [
+    CommonModule,
+    ConnectWalletComponent,
+    TranslatePipe,
+    MarketplaceListComponent,
+    OfferDetailComponent,
+  ],
   imports: [CommonModule, FormsModule, ConnectWalletComponent, TranslatePipe],
   template: `
     <div class="marketplace">
@@ -33,6 +43,23 @@ interface FilterState {
           <app-connect-wallet />
         </div>
       } @else {
+        @if (wallet.networkMismatch()) {
+          <div class="network-warning" role="alert">
+            ⚠ Your wallet is on the wrong network. Please switch to {{ wallet.expectedNetwork() }} in Freighter.
+          </div>
+        }
+
+        <app-marketplace-list (offerSelected)="onOfferSelected($event)" />
+
+        @if (selectedOffer()) {
+          <div class="overlay" (click)="selectedOffer.set(null)" role="presentation"></div>
+          <div class="modal" role="dialog" aria-modal="true">
+            <app-offer-detail
+              [offer]="selectedOffer()!"
+              (closed)="selectedOffer.set(null)"
+              (buy)="onBuyComplete($event)"
+              (cancelled)="onCancelled($event)"
+            />
         <!-- Filter controls -->
         <section class="filters" aria-label="Filter marketplace listings">
           <div class="filters__grid">
@@ -223,6 +250,21 @@ interface FilterState {
       }
     </div>
   `,
+  styles: [`
+    .marketplace { max-width: 960px; margin: 0 auto; padding: 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    .network-warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      color: #856404;
+      font-size: 0.9rem;
+    }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; }
+    .modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 11; }
+  `],
   styles: [
     `
       .marketplace {
@@ -499,6 +541,22 @@ export class MarketplaceComponent implements OnInit {
     maxTonnes: '',
   };
 
+  onOfferSelected(offer: Offer): void {
+    this.selectedOffer.set(offer);
+  }
+
+  onBuyComplete(offer: Offer): void {
+    this.selectedOffer.set(null);
+    // Reload listings after a successful purchase
+    const pk = this.wallet.publicKey();
+    if (pk) void this.store.loadOffersBySeller(pk);
+  }
+
+  onCancelled(offer: Offer): void {
+    this.selectedOffer.set(null);
+    // Reload listings after cancellation
+    const pk = this.wallet.publicKey();
+    if (pk) void this.store.loadOffersBySeller(pk);
   /** Selected payment asset for the Buy action. Defaults to XLM. */
   readonly selectedPaymentAsset = signal(this.paymentAssets[0]);
 
@@ -602,17 +660,7 @@ export class MarketplaceComponent implements OnInit {
     try {
       const { networkPassphrase } = await this.wallet.getNetworkDetails();
       // The buy flow: build a transaction XDR client-side then sign via Freighter.
-      await firstValueFrom(
-        this.api.createOffer(
-          {
-            sellerPublicKey: offer.seller,
-            creditId: offer.credit_id,
-            priceXlm: offer.price_xlm,
-            tonnes: offer.tonnes_available,
-          },
-          this.auth.token() ?? '',
-        ),
-      );
+      await firstValueFrom(this.api.buyOffer(offer.id, this.auth.token() ?? ''));
       this.toast.show('Purchase submitted successfully!', 'success');
       await this.load();
     } catch (err) {

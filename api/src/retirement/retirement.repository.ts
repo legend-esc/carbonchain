@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import { Repository } from 'typeorm';
 import { RetirementEntity } from './retirement.entity';
 import { PageResult } from '../credits/credit.repository';
+import { InjectRepository } from '@nestjs/typeorm';
 
 export interface IRetirementRepository {
   save(record: RetirementEntity): Promise<RetirementEntity>;
@@ -12,12 +15,8 @@ export interface IRetirementRepository {
     limit: number,
   ): Promise<PageResult<RetirementEntity>>;
   findAll(page: number, limit: number): Promise<PageResult<RetirementEntity>>;
-  /**
-   * #925 — Return the total number of retirement records without loading any
-   * page data. Implementors backed by a real DB should use a COUNT(*) query
-   * rather than paginating and reading `.total`.
-   */
-  count(): Promise<number>;
+  /** Issue #942 — Paginated query with optional buyer/status filters. */
+  findPaginated(dto: ListRetirementsDto): Promise<[RetirementEntity[], number]>;
 }
 
 export const RETIREMENT_REPOSITORY = 'RETIREMENT_REPOSITORY';
@@ -65,12 +64,32 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
   }
 
   /**
-   * #925 — COUNT-based query: returns the total number of records without
-   * loading any page data. O(1) for the in-memory store; real DB implementations
-   * must issue a SELECT COUNT(*) query rather than paginating.
+   * Issue #942 — Paginated query compatible with the ListRetirementsDto shape.
+   * Applies optional buyer/status filters, sorts by retiredAt DESC, and
+   * returns a [data, total] tuple matching the TypeORM findAndCount signature.
    */
-  async count(): Promise<number> {
-    return this.store.size;
+  async findPaginated(
+    dto: ListRetirementsDto,
+  ): Promise<[RetirementEntity[], number]> {
+    const page = dto.page ?? 1;
+    const pageSize = dto.pageSize ?? 20;
+
+    let all = Array.from(this.store.values());
+
+    if (dto.buyer) {
+      all = all.filter((r) => r.buyer === dto.buyer);
+    }
+    // RetirementEntity does not yet have a `status` column; filter is a no-op
+    // until the entity is extended. This keeps the interface consistent.
+
+    // Sort by retiredAt DESC (most recent first)
+    all.sort((a, b) => b.retiredAt - a.retiredAt);
+
+    const total = all.length;
+    const skip = (page - 1) * pageSize;
+    const data = all.slice(skip, skip + pageSize);
+
+    return [data, total];
   }
 
   private paginate(
@@ -85,5 +104,48 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
       page,
       limit,
     };
+  }
+}
+
+@Injectable()
+export class TypeOrmRetirementRepository implements IRetirementRepository {
+  constructor(
+    @Inject('RETIREMENT_ENTITY_REPOSITORY')
+    private readonly repository: Repository<RetirementEntity>,
+  ) {}
+
+  save(record: RetirementEntity): Promise<RetirementEntity> {
+    return this.repository.save(record);
+  }
+
+  saveAll(records: RetirementEntity[]): Promise<RetirementEntity[]> {
+    return this.repository.save(records);
+  }
+
+  findById(id: string): Promise<RetirementEntity | undefined> {
+    return this.repository
+      .findOne({ where: { id } })
+      .then((record) => record ?? undefined);
+  }
+
+  async findByBuyer(buyer: string, page: number, limit: number) {
+    return this.paginate({ buyer }, page, limit);
+  }
+
+  async findAll(page: number, limit: number) {
+    return this.paginate({}, page, limit);
+  }
+
+  private async paginate(
+    where: Record<string, unknown>,
+    page: number,
+    limit: number,
+  ): Promise<PageResult<RetirementEntity>> {
+    const [data, total] = await this.repository.findAndCount({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { data, total, page, limit };
   }
 }

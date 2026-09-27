@@ -61,7 +61,14 @@ pub enum DataKey {
     Admin,
     Paused,
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection (#899).
+    NonceBitmap(Address),
     PendingAdmin,
+    Registry,
+    Version,
+    /// IPFS hash of the off-chain retirement certificate PDF.
+    /// Set after retirement via `set_certificate_hash`.
+    CertificateHash(BytesN<32>),
 }
 
 /// A single failed retirement entry within a partial-success batch.

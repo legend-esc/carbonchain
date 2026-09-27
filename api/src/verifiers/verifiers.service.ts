@@ -4,6 +4,8 @@ import {
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  BadRequestException,
+  InternalServerErrorException,
   Inject,
   OnApplicationBootstrap,
 } from '@nestjs/common';
@@ -30,6 +32,16 @@ export interface VerifierInfo {
     disputeCount: number;
   };
   registeredAt?: Date;
+  /**
+   * Issue #946 — ISO-8601 timestamp of the last successful on-chain
+   * reconcile. Null for records that pre-date the sync feature.
+   */
+  syncedAt?: Date | null;
+  /**
+   * Issue #946 — True when this record is present in the DB but missing
+   * from the live on-chain verifier list (possible out-of-band removal).
+   */
+  unstable?: boolean;
 }
 
 const REPUTATION_KEY = (address: string) => `verifiers:reputation:${address}`;
@@ -89,41 +101,86 @@ export class VerifiersService implements OnApplicationBootstrap {
    * Reconcile the off-chain DB with the current on-chain verifier list.
    *
    * For each on-chain address:
-   *  - If it already exists in the DB → skip (preserve existing metadata).
-   *  - If it is new → insert with empty name/capabilities.
+   *  - If it already exists in the DB → upsert (update syncedAt, clear unstable).
+   *  - If it is new → insert with empty name/capabilities and syncedAt = now.
+   *
+   * For each DB address NOT found on-chain:
+   *  - Mark as `unstable = true` and log an audit warning. The record is
+   *    preserved (never deleted) so off-chain metadata is not lost.
+   *
+   * Issue #946: Any change (new verifier or unstable flip) is logged as an
+   * audit entry so operators have an immutable record of drift events.
    */
   async syncOnChainVerifiers(): Promise<void> {
     this.logger.log('Syncing on-chain verifiers with local database…');
 
     const onChainVerifiers = await this.fetchOnChainVerifiers();
-    if (onChainVerifiers.length === 0) {
-      this.logger.log('No on-chain verifiers found — skipping sync.');
-      return;
-    }
+    const onChainSet = new Set(onChainVerifiers);
 
     const existing = await this.verifierRepo.findAll();
-    const existingAddresses = new Set(existing.map((v) => v.address));
+    const existingByAddress = new Map(existing.map((v) => [v.address, v]));
+    const now = new Date();
 
-    const toInsert: VerifierEntity[] = [];
+    // ── Step 1: Upsert all on-chain verifiers ────────────────────────────────
+    const toUpsert: VerifierEntity[] = [];
+
     for (const address of onChainVerifiers) {
-      if (!existingAddresses.has(address)) {
+      const existing = existingByAddress.get(address);
+      if (existing) {
+        // Already in DB — refresh syncedAt and clear any previous unstable flag.
+        const wasUnstable = existing.unstable;
+        existing.syncedAt = now;
+        existing.unstable = false;
+        toUpsert.push(existing);
+        if (wasUnstable) {
+          // Audit: verifier was previously flagged unstable but is now back on-chain.
+          this.logger.log(
+            `[audit:verifier-sync] address=${address} event=restored_to_chain syncedAt=${now.toISOString()}`,
+          );
+        }
+      } else {
+        // New on-chain verifier not yet in the DB — insert it.
         const entity = new VerifierEntity();
         entity.address = address;
         entity.name = null;
         entity.capabilities = [];
         entity.reputation = { approvalCount: 0, disputeCount: 0 };
-        toInsert.push(entity);
+        entity.unstable = false;
+        entity.syncedAt = now;
+        toUpsert.push(entity);
+        // Audit: new verifier discovered on-chain.
+        this.logger.log(
+          `[audit:verifier-sync] address=${address} event=discovered_on_chain syncedAt=${now.toISOString()}`,
+        );
       }
     }
 
-    if (toInsert.length > 0) {
-      await this.verifierRepo.saveAll(toInsert);
-      this.logger.log(
-        `Sync complete: inserted ${toInsert.length} new verifier(s).`,
-      );
-    } else {
-      this.logger.log('Sync complete: no new verifiers to insert.');
+    if (toUpsert.length > 0) {
+      await this.verifierRepo.saveAll(toUpsert);
     }
+
+    // ── Step 2: Mark DB-only verifiers as unstable ───────────────────────────
+    const toMarkUnstable: VerifierEntity[] = [];
+
+    for (const entity of existing) {
+      if (!onChainSet.has(entity.address) && !entity.unstable) {
+        entity.unstable = true;
+        entity.syncedAt = now;
+        toMarkUnstable.push(entity);
+        // Audit: verifier present in DB but absent from chain (possible removal).
+        this.logger.warn(
+          `[audit:verifier-sync] address=${entity.address} event=missing_from_chain unstable=true syncedAt=${now.toISOString()}`,
+        );
+      }
+    }
+
+    if (toMarkUnstable.length > 0) {
+      await this.verifierRepo.saveAll(toMarkUnstable);
+    }
+
+    this.logger.log(
+      `Sync complete: upserted=${toUpsert.length} markedUnstable=${toMarkUnstable.length}`,
+    );
   }
 
   // ── Queries ───────────────────────────────────────────────────────────────
@@ -304,7 +361,43 @@ export class VerifiersService implements OnApplicationBootstrap {
       );
     }
 
+    // Guard against accidental admin-key signing in production.
+    // Set VERIFIER_SIGNING_MODE=production to enforce this check.
+    // In production the verifier must sign via their own wallet (Freighter).
+    // See the JSDoc above for the planned two-phase signing flow.
+    const signingMode = this.configService.get<string>(
+      'VERIFIER_SIGNING_MODE',
+      'test',
+    );
+    if (signingMode === 'production') {
+      throw new InternalServerErrorException(
+        'approveCredit cannot use the admin keypair in production. ' +
+          'Implement the two-phase Freighter signing flow before enabling ' +
+          'VERIFIER_SIGNING_MODE=production.',
+      );
+    }
+
     await this.getVerifier(address);
+
+    // ── #771: enforce the multi-sig approval threshold ──────────────────────
+    // `set_required_approvals` configures how many distinct verifier signatures
+    // are required before a credit mints. The contract enforces this at mint
+    // time, but failing fast at the API edge yields a clear, structured 4xx
+    // instead of an opaque contract error when the credit is already fully
+    // approved.
+    const requiredApprovals = await this.getRequiredApprovals();
+    if (requiredApprovals <= 0) {
+      throw new BadRequestException(
+        'Approval threshold is not configured on the contract',
+      );
+    }
+
+    const approvalCount = await this.getCreditApprovalCount(creditId);
+    if (approvalCount >= requiredApprovals) {
+      throw new ConflictException(
+        'Credit already has the required number of verifier approvals',
+      );
+    }
 
     // Fetch the verifier's current replay-protection nonce from the contract.
     // This must be done atomically with the transaction build to avoid
@@ -355,6 +448,40 @@ export class VerifiersService implements OnApplicationBootstrap {
       }
       throw error;
     }
+  }
+
+  /**
+   * Reads the on-chain multi-sig threshold configured via `set_required_approvals`.
+   * Returns 0 (treated as "unconfigured") when the contract is unreachable.
+   */
+  private async getRequiredApprovals(): Promise<number> {
+    try {
+      const retval = await this.stellarService.readContract(
+        this.contractId,
+        'get_required_approvals',
+        [],
+      );
+      const value = retval ? (scValToNative(retval) as number | bigint) : 0;
+      return Number(value);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Reads the number of distinct verifier approvals a credit has received.
+   */
+  private async getCreditApprovalCount(creditId: string): Promise<number> {
+    const args = [
+      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
+    ];
+    const retval = await this.stellarService.readContract(
+      this.contractId,
+      'get_approval_count',
+      args,
+    );
+    const value = retval ? (scValToNative(retval) as number | bigint) : 0;
+    return Number(value);
   }
 
   async getReputation(address: string): Promise<VerifierReputation> {
@@ -477,10 +604,8 @@ export class VerifiersService implements OnApplicationBootstrap {
     amount: string,
     nonce: string,
   ): Promise<{ address: string; stake: string }> {
-    const amountBig = BigInt(amount);
-    if (amountBig <= 0n) {
-      throw new Error('amount must be positive');
-    }
+    const amountBig = this.parsePositiveBigInt(amount, 'amount');
+    const nonceBig = this.parseNonNegativeBigInt(nonce, 'nonce');
     this.logger.log(
       `Depositing stake for verifier ${address}: amount=${amount} token=${tokenId}`,
     );
@@ -488,7 +613,7 @@ export class VerifiersService implements OnApplicationBootstrap {
       nativeToScVal(address, { type: 'address' }),
       nativeToScVal(tokenId, { type: 'address' }),
       nativeToScVal(amountBig, { type: 'i128' }),
-      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+      nativeToScVal(nonceBig, { type: 'u64' }),
     ];
     const signer = this.keypairService.getAdminKeypair();
     await this.stellarService.invokeContract(
@@ -509,11 +634,12 @@ export class VerifiersService implements OnApplicationBootstrap {
     tokenId: string,
     nonce: string,
   ): Promise<{ withdrawn: boolean; address: string }> {
+    const nonceBig = this.parseNonNegativeBigInt(nonce, 'nonce');
     this.logger.log(`Withdrawing stake for verifier ${address}`);
     const args = [
       nativeToScVal(address, { type: 'address' }),
       nativeToScVal(tokenId, { type: 'address' }),
-      nativeToScVal(BigInt(nonce), { type: 'u64' }),
+      nativeToScVal(nonceBig, { type: 'u64' }),
     ];
     const signer = this.keypairService.getAdminKeypair();
     await this.stellarService.invokeContract(
@@ -526,6 +652,27 @@ export class VerifiersService implements OnApplicationBootstrap {
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
+
+  /** Regex for an unsigned integer literal — the only shape BigInt() should be trusted with here. */
+  private static readonly UINT_STRING = /^\d+$/;
+
+  private parsePositiveBigInt(value: string, field: string): bigint {
+    if (!VerifiersService.UINT_STRING.test(value)) {
+      throw new BadRequestException(`${field} must be a positive integer`);
+    }
+    const parsed = BigInt(value);
+    if (parsed <= 0n) {
+      throw new BadRequestException(`${field} must be positive`);
+    }
+    return parsed;
+  }
+
+  private parseNonNegativeBigInt(value: string, field: string): bigint {
+    if (!VerifiersService.UINT_STRING.test(value)) {
+      throw new BadRequestException(`${field} must be a non-negative integer`);
+    }
+    return BigInt(value);
+  }
 
   /**
    * Fetch the raw list of verifier addresses from the on-chain registry.
@@ -546,6 +693,9 @@ export class VerifiersService implements OnApplicationBootstrap {
       capabilities: entity.capabilities,
       reputation: entity.reputation,
       registeredAt: entity.registeredAt,
+      // Issue #946 — expose the on-chain reconcile timestamp and stability flag.
+      syncedAt: entity.syncedAt ?? null,
+      unstable: entity.unstable ?? false,
     };
   }
 }

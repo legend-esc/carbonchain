@@ -16,3 +16,4 @@ process.env.IPFS_SECRET_KEY = 'test-ipfs-secret-key';
 process.env.STELLAR_NETWORK = 'testnet';
 process.env.STELLAR_HORIZON_URL = 'https://horizon-testnet.stellar.org';
 process.env.STELLAR_SOROBAN_RPC = 'https://soroban-testnet.stellar.org';
+process.env.ORACLE_WEBHOOK_SECRET = 'test-oracle-webhook-secret-key';

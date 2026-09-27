@@ -1,3 +1,4 @@
+import { Component, inject, signal, computed } from '@angular/core';
 import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
@@ -48,6 +49,69 @@ export type WizardStep = 1 | 2 | 3;
           <app-connect-wallet />
         </div>
       } @else {
+        @if (wallet.networkMismatch()) {
+          <div class="network-warning" role="alert">
+            ⚠ Your wallet is on the wrong network. Please switch to {{ expectedNetwork }} in Freighter before submitting.
+          </div>
+        }
+
+        @if (step() === 'form') {
+          <form class="wizard-form" (ngSubmit)="goConfirm()" #f="ngForm">
+            <label>
+              {{ 'retire.creditId' | translate }}
+              <input name="creditId" [(ngModel)]="creditId" required placeholder="037176a1…" />
+            </label>
+            <label>
+              {{ 'retire.tonnes' | translate }}
+              <input
+                name="tonnes"
+                [(ngModel)]="tonnes"
+                required
+                type="number"
+                min="100000"
+                step="100000"
+                placeholder="1000000"
+              />
+              @if (tonnesError) {
+                <span class="field-error">Must be a positive multiple of 100,000</span>
+              }
+            </label>
+            <label>
+              {{ 'retire.reason' | translate }}
+              <input
+                name="reason"
+                [(ngModel)]="reason"
+                required
+                placeholder="2024 Scope 3 offset"
+              />
+            </label>
+            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError || !canSubmit()">
+              {{ 'retire.review' | translate }}
+            </button>
+          </form>
+        }
+
+        @if (step() === 'confirm') {
+          <div class="confirm-box">
+            <h2>{{ 'retire.confirmTitle' | translate }}</h2>
+            <dl>
+              <dt>{{ 'retire.creditId' | translate }}</dt>
+              <dd class="mono">{{ creditId }}</dd>
+              <dt>{{ 'retire.tonnes' | translate }}</dt>
+              <dd>{{ formatTonnes(tonnes) }}</dd>
+              <dt>{{ 'retire.reason' | translate }}</dt>
+              <dd>{{ reason }}</dd>
+              <dt>{{ 'retire.wallet' | translate }}</dt>
+              <dd class="mono">{{ wallet.publicKey() }}</dd>
+            </dl>
+            <div class="actions">
+              <button class="btn btn-outline" (click)="step.set('form')">
+                {{ 'retire.back' | translate }}
+              </button>
+              <button class="btn btn-danger" [disabled]="submitting() || !canSubmit()" (click)="submit()">
+                {{
+                  submitting() ? ('retire.submitting' | translate) : ('retire.confirm' | translate)
+                }}
         <!-- Step indicator -->
         <nav class="step-indicator" aria-label="Retirement wizard steps">
           @for (s of [1, 2, 3]; track s) {
@@ -196,6 +260,12 @@ export type WizardStep = 1 | 2 | 3;
               <p class="field-error" role="alert">{{ signingError() }}</p>
             }
 
+            @if (tonnesControl.invalid) {
+              <p class="field-error" role="alert">
+                Total tonnes must be a positive multiple of 100,000.
+              </p>
+            }
+
             <div class="confirm-box">
               <dl>
                 <dt>Credits to Retire</dt>
@@ -234,7 +304,7 @@ export type WizardStep = 1 | 2 | 3;
               <button
                 class="btn btn-danger"
                 type="button"
-                [disabled]="submitting()"
+                [disabled]="submitting() || tonnesControl.invalid"
                 (click)="submit()"
                 [attr.aria-busy]="submitting()"
                 aria-label="Sign and retire credits"
@@ -264,6 +334,16 @@ export type WizardStep = 1 | 2 | 3;
         gap: 0.75rem;
         align-items: flex-start;
       }
+      .network-warning {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        color: #856404;
+        font-size: 0.9rem;
+      }
+      .wizard-form {
 
       /* Step indicator */
       .step-indicator {
@@ -500,6 +580,12 @@ export class RetireComponent implements OnInit {
     validators: [Validators.required, Validators.maxLength(200)],
   });
 
+  /** Total tonnes across selected credits — must be a multiple of 100,000. */
+  readonly tonnesControl = new FormControl<number>(0, {
+    nonNullable: true,
+    validators: [multipleOf100kValidator()],
+  });
+
   /** Only Active credits owned by the connected wallet. */
   readonly activeCredits = computed(() =>
     this.store
@@ -521,7 +607,8 @@ export class RetireComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
-    if (pk && this.auth.isAuthenticated()) {
+    if (pk && this.auth.isAuthenticated() && this.store.credits().length === 0) {
+      await this.store.loadByProject(pk);
     }
   }
 
@@ -544,6 +631,18 @@ export class RetireComponent implements OnInit {
     }
   }
 
+  /** True only when the wallet is connected and on the correct network. */
+  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
+
+  /** Exposes the expected network name for display in the template. */
+  get expectedNetwork(): string {
+    return this.wallet.expectedNetwork();
+  }
+
+  /** True when the current tonnes value is not a positive multiple of 100,000. */
+  get tonnesError(): boolean {
+    const v = this.tonnes;
+    return !v || v <= 0 || v % 100_000 !== 0;
   goToStep(step: WizardStep): void {
     if (step === 3) {
       this.reasonControl.markAsTouched();
@@ -572,6 +671,13 @@ export class RetireComponent implements OnInit {
 
     if (credits.length === 0 || !pk) return;
 
+    this.tonnesControl.setValue(Number(this.totalSelectedTonnes()));
+    if (this.tonnesControl.invalid) {
+      this.signingError.set('Total tonnes must be a positive multiple of 100,000.');
+      this.currentStep.set(3);
+      return;
+    }
+
     this.submitting.set(true);
     this.signingError.set(null);
 
@@ -580,17 +686,6 @@ export class RetireComponent implements OnInit {
 
       if (credits.length === 1) {
         const credit = credits[0];
-        let signedXdr: string;
-        try {
-          const { networkPassphrase } = await this.wallet.getNetworkDetails();
-          signedXdr = await this.wallet.signTransaction(credit.id, networkPassphrase);
-        } catch (freighterErr) {
-          const msg =
-            freighterErr instanceof Error ? freighterErr.message : 'Wallet signing was rejected.';
-          this.signingError.set(msg);
-          this.currentStep.set(3);
-          return;
-        }
 
         const { retirementId } = await firstValueFrom(
           this.api.retireCredit(

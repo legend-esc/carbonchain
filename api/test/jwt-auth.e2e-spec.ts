@@ -111,6 +111,7 @@ describe('JWT logout flow (issue #491)', () => {
       get: jest.fn(async (key: string) => blocklist.get(key) ?? null),
       set: jest.fn(async (key: string, value: boolean) => {
         blocklist.set(key, value);
+        return true;
       }),
       del: jest.fn(async () => undefined),
     } as unknown as CacheService;
