@@ -1,5 +1,7 @@
+import {
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { MarketplaceController } from './marketplace.controller';
 import { MarketplaceService } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
@@ -9,6 +11,7 @@ describe('MarketplaceController', () => {
   let controller: MarketplaceController;
 
   const mockMarketplaceService = {
+    getListingsKeyset: jest.fn(),
     getListingsPaginated: jest.fn(),
     createOffer: jest.fn(),
     getOffer: jest.fn(),
@@ -39,73 +42,44 @@ describe('MarketplaceController', () => {
     jest.clearAllMocks();
   });
 
-  // === getListings — query parsing & clamping
+  // === #930 getListings — keyset pagination
 
-  describe('getListings', () => {
-    const pageResult = { data: [], total: 0, page: 1, pageSize: 20 };
+  describe('getListings (#930 keyset)', () => {
+    const keysetResult = { data: [], count: 0 };
 
-    it('applies default page=1 / pageSize=20 when unset', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
+    it('calls getListingsKeyset with no cursor/limit for first page', async () => {
+      mockMarketplaceService.getListingsKeyset.mockResolvedValueOnce(
+        keysetResult,
       );
       await controller.getListings();
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith({
-        page: 1,
-        pageSize: 20,
+      expect(mockMarketplaceService.getListingsKeyset).toHaveBeenCalledWith({
+        cursor: undefined,
+        limit: undefined,
         methodology: undefined,
         minPrice: undefined,
         maxPrice: undefined,
       });
     });
 
-    it('clamps pageSize above 100 down to 100', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
+    it('passes cursor through to getListingsKeyset', async () => {
+      mockMarketplaceService.getListingsKeyset.mockResolvedValueOnce(
+        keysetResult,
       );
-      await controller.getListings('2', '9999');
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
-        expect.objectContaining({ page: 2, pageSize: 100 }),
-      );
-    });
-
-    it('clamps pageSize of 0 up to 1', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
-      );
-      await controller.getListings('1', '0');
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
-        expect.objectContaining({ pageSize: 1 }),
-      );
-    });
-
-    it('clamps a negative page up to 1', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
-      );
-      await controller.getListings('-5', '20');
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
-        expect.objectContaining({ page: 1 }),
-      );
-    });
-
-    it('falls back to 1 for a non-numeric page', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
-      );
-      await controller.getListings('abc', '20');
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
-        expect.objectContaining({ page: 1 }),
+      const cursor = Buffer.from(JSON.stringify({ offset: 50 })).toString('base64url');
+      await controller.getListings(cursor, '50');
+      expect(mockMarketplaceService.getListingsKeyset).toHaveBeenCalledWith(
+        expect.objectContaining({ cursor, limit: 50 }),
       );
     });
 
     it('passes filters through as numbers only when provided', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
+      mockMarketplaceService.getListingsKeyset.mockResolvedValueOnce(
+        keysetResult,
       );
-      await controller.getListings('1', '20', 'VCS', '100', '500');
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith({
-        page: 1,
-        pageSize: 20,
+      await controller.getListings(undefined, '20', 'VCS', '100', '500');
+      expect(mockMarketplaceService.getListingsKeyset).toHaveBeenCalledWith({
+        cursor: undefined,
+        limit: 20,
         methodology: 'VCS',
         minPrice: 100,
         maxPrice: 500,
@@ -113,17 +87,17 @@ describe('MarketplaceController', () => {
     });
 
     it('leaves price filters undefined when omitted', async () => {
-      mockMarketplaceService.getListingsPaginated.mockResolvedValueOnce(
-        pageResult,
+      mockMarketplaceService.getListingsKeyset.mockResolvedValueOnce(
+        keysetResult,
       );
-      await controller.getListings('1', '20', 'VCS');
-      expect(mockMarketplaceService.getListingsPaginated).toHaveBeenCalledWith(
+      await controller.getListings(undefined, '20', 'VCS');
+      expect(mockMarketplaceService.getListingsKeyset).toHaveBeenCalledWith(
         expect.objectContaining({ minPrice: undefined, maxPrice: undefined }),
       );
     });
 
     it('propagates errors from the service', async () => {
-      mockMarketplaceService.getListingsPaginated.mockRejectedValueOnce(
+      mockMarketplaceService.getListingsKeyset.mockRejectedValueOnce(
         new Error('read failed'),
       );
       await expect(controller.getListings()).rejects.toThrow('read failed');

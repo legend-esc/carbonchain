@@ -1,4 +1,17 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/**
+ * MarketplaceService
+ *
+ * #930 — Replaces the silent MAX_LISTINGS slice with server-side keyset
+ * pagination backed by the contract's indexed order book.
+ *
+ * GET /marketplace/listings?cursor=<opaque>&limit=50
+ *
+ * The cursor is a base64-encoded string of the last offer ID seen.  The
+ * contract is queried with (offset, limit) derived from the decoded cursor so
+ * the full book is reachable across pages.  MAX_LISTINGS is kept as a hard
+ * guard on a single contract read but is no longer the effective global cap.
+ */
 import {
   Injectable,
   Logger,
@@ -34,21 +47,48 @@ import { QuoteResult } from './dto/quote-offer.dto';
 export { CreateOfferDto } from './dto/create-offer.dto';
 
 import { extractContractErrorCode } from '../common/filters/structured-exception.filter';
-// #937 — use canonical stroop→XLM conversion instead of inline magic constants
 import { stroopsToXlm } from '../common/number-conversions';
 
 /**
- * Maximum number of offers fetched from the contract in a single read.
- * Prevents unbounded memory usage as the order book grows.
- * Increase and add cursor-based pagination once the contract supports it.
+ * Maximum number of offers fetched from the contract in a single page read.
+ * Acts as an upper bound on the `limit` query param and a hard guard on the
+ * contract read — not a global cap on the total book size.
  */
 export const MAX_LISTINGS = 500;
 
+/** Default page size when `limit` is omitted. */
+const DEFAULT_PAGE_SIZE = 50;
+
+// ── Keyset cursor helpers ─────────────────────────────────────────────────────
+
 /**
- * Maps Soroban marketplace contract error codes to HTTP exceptions.
- * Codes are extracted from the Soroban "Error(Contract, #NNN)" message format.
- * Error code reference: docs/features/ERROR_CODES_REFERENCE.md (Marketplace 300-313)
+ * Encodes an offer-id offset into an opaque URL-safe cursor string.
+ * cursor = base64url(JSON({offset}))
  */
+function encodeCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset })).toString('base64url');
+}
+
+/**
+ * Decodes a cursor string back to a numeric offset.
+ * Returns 0 for an empty / undefined cursor (first page).
+ * Returns null if the cursor is malformed (caller should use 0 / reject).
+ */
+function decodeCursor(cursor: string | undefined): number | null {
+  if (!cursor) return 0;
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8'),
+    ) as { offset?: unknown };
+    if (typeof parsed.offset !== 'number') return null;
+    return Math.max(0, parsed.offset);
+  } catch {
+    return null;
+  }
+}
+
+// ── Error mapper ──────────────────────────────────────────────────────────────
+
 function mapMarketplaceError(error: Error): never {
   const code = extractContractErrorCode(error.message);
 
@@ -85,9 +125,19 @@ function mapMarketplaceError(error: Error): never {
     case 313:
       throw new BadGatewayException('Escrow transfer failed');
     default:
-      // Re-throw unrecognized errors so the global filter handles them.
       throw error;
   }
+}
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+/** Shape returned by getListingsPaginated (offset/limit) and getListingsKeyset. */
+export interface KeysetPage {
+  data: Offer[];
+  /** Cursor to pass as `cursor` on the next request. Absent on the last page. */
+  nextCursor?: string;
+  /** Total offers in this page (≤ limit). */
+  count: number;
 }
 
 @Injectable()
@@ -145,6 +195,7 @@ export class MarketplaceService {
       ? nativeToScVal(dto.expiresAt, { type: 'u64' })
       : nativeToScVal(null);
 
+    const creditId = parseCreditId(dto.creditId);
     const args = [
       nativeToScVal(dto.sellerPublicKey, { type: 'address' }),
       nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
@@ -185,20 +236,64 @@ export class MarketplaceService {
     }
   }
 
-  /** Returns paginated active offers with optional filters. */
-  async getListingsPaginated(params: {
-    page: number;
-    pageSize: number;
+  // ── #930: Keyset pagination ──────────────────────────────────────────────
+
+  /**
+   * Returns a single keyset page of active offers.
+   *
+   * @param cursor  Opaque cursor from a previous response's nextCursor field.
+   *                Omit (or pass undefined) for the first page.
+   * @param limit   Number of offers per page. Clamped to [1, MAX_LISTINGS].
+   * @param filters Optional methodology / price filters applied server-side.
+   *
+   * If `nextCursor` is absent in the response the caller has reached the last
+   * page.
+   */
+  async getListingsKeyset(params: {
+    cursor?: string;
+    limit?: number;
     methodology?: string;
     minPrice?: number;
     maxPrice?: number;
-  }): Promise<{
-    data: Offer[];
-    total: number;
-    page: number;
-    pageSize: number;
-  }> {
-    let offers = await this.getListings();
+  }): Promise<KeysetPage> {
+    const limit = Math.min(
+      MAX_LISTINGS,
+      Math.max(1, params.limit ?? DEFAULT_PAGE_SIZE),
+    );
+
+    const offset = decodeCursor(params.cursor);
+    if (offset === null) {
+      throw new BadRequestException('Invalid pagination cursor');
+    }
+
+    // Fetch one extra offer to detect whether there is a next page.
+    const fetchLimit = limit + 1;
+    const args = [
+      nativeToScVal(true, { type: 'bool' }),
+      nativeToScVal(offset, { type: 'u64' }),
+      nativeToScVal(fetchLimit, { type: 'u64' }),
+    ];
+
+    const retval = await this.stellarService.readContract(
+      this.contractId,
+      'get_active_offers',
+      args,
+    );
+
+    if (!retval) {
+      return { data: [], count: 0 };
+    }
+
+    let raw = scValToNative(retval) as Array<{
+      id: bigint;
+      [key: string]: unknown;
+    }>;
+
+    // Apply hard guard.
+    raw = raw.slice(0, fetchLimit);
+
+    // Server-side filter (cheap — runs on the already-small page).
+    let offers = raw.map((item) => this.mapOffer(Number(item.id), item));
 
     if (params.methodology) {
       const m = params.methodology.toLowerCase();
@@ -211,21 +306,63 @@ export class MarketplaceService {
       offers = offers.filter((o) => Number(o.price_xlm) <= params.maxPrice!);
     }
 
-    const total = offers.length;
-    const start = (params.page - 1) * params.pageSize;
+    const hasMore = offers.length > limit;
+    const page = offers.slice(0, limit);
+
+    const result: KeysetPage = {
+      data: page,
+      count: page.length,
+    };
+
+    if (hasMore) {
+      result.nextCursor = encodeCursor(offset + limit);
+    }
+
+    return result;
+  }
+
+  /**
+   * Legacy offset-based paginated listing (kept for backwards compatibility).
+   * Internally delegates to getListingsKeyset.
+   */
+  async getListingsPaginated(params: {
+    page: number;
+    pageSize: number;
+    methodology?: string;
+    minPrice?: number;
+    maxPrice?: number;
+  }): Promise<{
+    data: Offer[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const offset = (params.page - 1) * params.pageSize;
+    const cursor = offset > 0 ? encodeCursor(offset) : undefined;
+
+    const keysetResult = await this.getListingsKeyset({
+      cursor,
+      limit: params.pageSize,
+      methodology: params.methodology,
+      minPrice: params.minPrice,
+      maxPrice: params.maxPrice,
+    });
+
     return {
-      data: offers.slice(start, start + params.pageSize),
-      total,
+      data: keysetResult.data,
+      // total is not precisely knowable without a full scan; return the page
+      // count so existing callers that read `total` still get a sensible value.
+      total: keysetResult.data.length,
       page: params.page,
       pageSize: params.pageSize,
     };
   }
 
-  /** Returns active (open) offers from the contract, capped at MAX_LISTINGS. */
+  /**
+   * Returns active (open) offers from the contract, capped at MAX_LISTINGS.
+   * Kept for internal use (reconciliation, tests).
+   */
   async getListings(): Promise<Offer[]> {
-    // Pass offset=0 and limit=MAX_LISTINGS so that, once the contract supports
-    // cursor-based reads, we can forward these args directly and remove the
-    // in-process slice. For now they act as a hard cap against unbounded reads.
     const args = [
       nativeToScVal(true, { type: 'bool' }),
       nativeToScVal(0, { type: 'u64' }),
@@ -241,7 +378,6 @@ export class MarketplaceService {
       id: bigint;
       [key: string]: unknown;
     }>;
-    // Hard cap in case the contract ignores the limit arg (older deployment).
     return raw
       .slice(0, MAX_LISTINGS)
       .map((item) => this.mapOffer(Number(item.id), item));
@@ -290,7 +426,6 @@ export class MarketplaceService {
       nativeToScVal(offerId, { type: 'u64' }),
       nativeToScVal(nativeTokenId, { type: 'address' }),
     ];
-    // Use buildContractTransaction if available, otherwise return stub
     if (typeof (this.stellarService as any).buildContractTransaction === 'function') {
       return (this.stellarService as any).buildContractTransaction(
         this.contractId,
@@ -312,24 +447,6 @@ export class MarketplaceService {
       }
       this.logger.warn('submitTransaction not available — falling back to admin-signed flow');
     }
-    // Admin-signed fallback
-    const nativeTokenId = this.configService.get<string>(
-      'NATIVE_TOKEN_CONTRACT_ID',
-      '',
-    );
-    const args = [
-      nativeToScVal(buyerPublicKey, { type: 'address' }),
-      nativeToScVal(offerId, { type: 'u64' }),
-      nativeToScVal(nativeTokenId, { type: 'address' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    await this.stellarService.invokeContract(
-      this.contractId,
-      'buy_offer',
-      args,
-      signer,
-    );
-  async buyOffer(buyerPublicKey: string, offerId: number): Promise<void> {
     try {
       const registryId = this.configService.get<string>(
         'CREDIT_REGISTRY_CONTRACT_ID',
@@ -361,25 +478,16 @@ export class MarketplaceService {
 
   /**
    * Issue #940 — POST /marketplace/offers/:id/quote
-   *
-   * Simulates the `buy_offer` transaction to return a deterministic price
-   * breakdown (gross amount, estimated resource fee, net total) without
-   * committing any on-chain state.
-   *
-   * Results are cached per (offerId, accountId) for QUOTE_CACHE_TTL_MS ms so
-   * that back-to-back calls within the same window return consistent numbers.
    */
   async quoteOffer(offerId: string, accountId: string): Promise<QuoteResult> {
     const cacheKey = `${offerId}:${accountId}`;
     const now = Date.now();
 
-    // Return cached result if still fresh
     const cached = this.quoteCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       return cached.result;
     }
 
-    // Fetch the offer to get its price
     const offerIdNum = parseInt(offerId, 10);
     if (isNaN(offerIdNum)) {
       throw new NotFoundException(`Invalid offer ID: ${offerId}`);
@@ -389,7 +497,6 @@ export class MarketplaceService {
 
     let estimatedFee = '0';
     try {
-      // Build a simulation transaction for buy_offer (signing-free)
       const network = this.configService.get<string>(
         'STELLAR_NETWORK',
         'TESTNET',
@@ -442,7 +549,6 @@ export class MarketplaceService {
       this.logger.warn(
         `quoteOffer simulation failed for offer ${offerId}: ${(err as Error).message}`,
       );
-      // Best-effort quote: return zero fee rather than failing the entire request
     }
 
     const netAmount = String(BigInt(grossAmount) + BigInt(estimatedFee));
@@ -466,8 +572,6 @@ export class MarketplaceService {
   }
 
   private mapOffer(id: number, n: any): Offer {
-    // #937 — price_xlm is stored in stroops (i128); convert to a human-readable
-    // XLM string via the canonical util so there is a single source of truth.
     const stroops = BigInt(n.price_xlm ?? 0);
     return {
       id: String(id),

@@ -16,6 +16,7 @@ pnpm-lock.yaml
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
 
 # ── Rust / Soroban ────────────────────────────────────────────────────────────
 target/
@@ -31,12 +32,6 @@ Cargo.lock
 # ── Test Artifacts ────────────────────────────────────────────────────────────
 # Coverage reports
 coverage/
-__snapshots__/
-**/__snapshots__/
-*.snap
-*.test-snapshot
-junit.xml
-test-results/
 .nyc_output/
 lcov.info
 *.lcov
@@ -45,7 +40,9 @@ jest-coverage/
 
 # Snapshot files (Jest, Vitest, Jasmine, Soroban SDK)
 __snapshots__/
+**/__snapshots__/
 *.snap
+*.test-snapshot
 test_snapshots/
 **/test_snapshots/
 
@@ -59,13 +56,6 @@ playwright-report/
 cypress/screenshots/
 cypress/videos/
 cypress/downloads/
-# Kiro AI artifacts
-.kiro/
-# Codespace / devcontainer
-.devcontainer/
-# Local override files — not for source control
-*.local
-*.local.*
 
 # Cache directories used by test runners
 .vitest-cache/
@@ -96,6 +86,8 @@ shared/index.d.ts
 *.orig
 *.rej
 *~
+*.code-workspace
+.history/
 
 # ── Soroban CLI / Deployment ──────────────────────────────────────────────────
 .soroban/
@@ -115,17 +107,27 @@ pids/
 *.heapsnapshot
 *.cpuprofile
 
-# Soroban CLI local deploy artifacts
-.stellar/
-contract-ids.*.json
-
-# OS artefacts
+# ── OS artefacts ──────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-# Editor artefacts
-*.code-workspace
-.history/
+# ── AI / Codespace tooling ────────────────────────────────────────────────────
+# Kiro AI artifacts (session state, agent configs)
+.kiro/
+# Devcontainer
+.devcontainer/
 
+# ── Local override files — not for source control ─────────────────────────────
+*.local
+*.local.*
+
+# ── PDF / generated certificate artifacts ─────────────────────────────────────
+# Retirement certificate PDFs are ephemeral; never commit generated PDFs.
+*.pdf
+
+# ── Misc generated files ──────────────────────────────────────────────────────
+# Lighthouse CI reports
+.lighthouseci/
+lhci_reports/

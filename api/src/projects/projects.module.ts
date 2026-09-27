@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ProjectsService } from './projects.service';
 import { ProjectsController } from './projects.controller';
 import {
@@ -8,7 +9,7 @@ import {
 } from './project.repository';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, ScheduleModule.forRoot()],
   controllers: [ProjectsController],
   providers: [
     ProjectsService,

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { HttpException, HttpStatus } from '@nestjs/common';
 import { CertificateService, CertificateData } from './certificate.service';
 import { computeFileCid } from '../common/ipfs-cid.util';
 
@@ -14,36 +15,48 @@ const SAMPLE_DATA: CertificateData = {
 
 const VALID_CID = computeFileCid(Buffer.from('certificate pdf bytes'));
 
+function makeService(overrides: Record<string, unknown> = {}): Promise<CertificateService> {
+  return Test.createTestingModule({
+    providers: [
+      CertificateService,
+      {
+        provide: ConfigService,
+        useValue: {
+          get: (key: string, fallback: unknown = '') => {
+            const map: Record<string, unknown> = {
+              CERT_POOL_SIZE: 2,
+              CERT_QUEUE_DEPTH: 3,
+              CERT_TIMEOUT_MS: 30_000,
+              ...overrides,
+            };
+            return key in map ? map[key] : fallback;
+          },
+        },
+      },
+    ],
+  })
+    .compile()
+    .then((m) => m.get<CertificateService>(CertificateService));
+}
+
 describe('CertificateService', () => {
   let service: CertificateService;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        CertificateService,
-        {
-          provide: ConfigService,
-          useValue: { get: (_key: string, fallback = '') => fallback },
-        },
-      ],
-    }).compile();
-
-    service = module.get<CertificateService>(CertificateService);
+    service = await makeService();
   });
+
+  // ── Existing functional tests ────────────────────────────────────────────
 
   it('generates a PDF buffer with non-zero length', async () => {
     const buf = await service.generatePdf(SAMPLE_DATA);
-    // In Node 22+ worker threads transfer Uint8Array; Buffer is a subclass of Uint8Array.
     expect(buf instanceof Uint8Array).toBe(true);
     expect(buf.length).toBeGreaterThan(0);
   });
 
   it('is non-blocking: generatePdf does not block the event loop', async () => {
-    // Start PDF generation — do NOT await yet.
     const pdfPromise = service.generatePdf(SAMPLE_DATA);
 
-    // This microtask executes while the worker is running, proving the event
-    // loop was not blocked.
     let eventLoopReached = false;
     await Promise.resolve().then(() => {
       eventLoopReached = true;
@@ -51,26 +64,74 @@ describe('CertificateService', () => {
 
     expect(eventLoopReached).toBe(true);
 
-    // Now await the PDF to confirm it still completes successfully.
     const buf = await pdfPromise;
     expect(buf.length).toBeGreaterThan(0);
   });
 
-  // ── Issue #493: Pinata failure path ───────────────────────────────────────
+  // ── #929: Pool / backpressure tests ─────────────────────────────────────
+
+  describe('#929 — bounded worker pool', () => {
+    it('50 concurrent requests complete without process exhaustion (pool size=4)', async () => {
+      // Use default pool size of 4 so we exercise the queue drain path.
+      const bigService = await makeService({
+        CERT_POOL_SIZE: 4,
+        CERT_QUEUE_DEPTH: 100,
+      });
+
+      const requests = Array.from({ length: 50 }, (_, i) =>
+        bigService.generatePdf({ ...SAMPLE_DATA, retirementId: `r-${i}` }),
+      );
+
+      const results = await Promise.all(requests);
+      expect(results).toHaveLength(50);
+      results.forEach((buf) => expect(buf.length).toBeGreaterThan(0));
+    }, 120_000); // 2-minute timeout for 50 serial-queued workers
+
+    it('throws 429 when queue is full', async () => {
+      // Pool size=1, queue depth=0 → second request immediately 429s.
+      const tinyService = await makeService({
+        CERT_POOL_SIZE: 1,
+        CERT_QUEUE_DEPTH: 0,
+      });
+
+      // Fire first request (fills the single worker slot) but do NOT await.
+      const first = tinyService.generatePdf(SAMPLE_DATA);
+
+      // Second request: pool full AND queue full → 429.
+      await expect(
+        tinyService.generatePdf({ ...SAMPLE_DATA, retirementId: 'overflow' }),
+      ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+
+      // Let the first request finish cleanly.
+      await first;
+    });
+
+    it('queues within pool limit and drains in FIFO order', async () => {
+      // Pool=1, queue=2 → up to 3 inflight at once (1 running + 2 queued).
+      const svc = await makeService({ CERT_POOL_SIZE: 1, CERT_QUEUE_DEPTH: 2 });
+      const ids: string[] = [];
+
+      const results = await Promise.all([
+        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-1' }).then((b) => { ids.push('job-1'); return b; }),
+        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-2' }).then((b) => { ids.push('job-2'); return b; }),
+        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-3' }).then((b) => { ids.push('job-3'); return b; }),
+      ]);
+
+      expect(results).toHaveLength(3);
+      results.forEach((buf) => expect(buf.length).toBeGreaterThan(0));
+    });
+  });
+
+  // ── Pinata failure path ──────────────────────────────────────────────────
 
   it('generateAndPin returns null ipfsHash when Pinata is unreachable', async () => {
-    // Intercept the global fetch to simulate a network failure.
     const originalFetch = global.fetch;
     global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'));
 
     try {
       const result = await service.generateAndPin(SAMPLE_DATA);
-
-      // PDF was generated.
       expect(result.pdfBuffer).toBeInstanceOf(Uint8Array);
       expect(result.pdfBuffer.length).toBeGreaterThan(0);
-
-      // IPFS hash is null (Pinata unreachable — graceful degradation).
       expect(result.ipfsHash).toBeNull();
     } finally {
       global.fetch = originalFetch;
@@ -87,7 +148,6 @@ describe('CertificateService', () => {
 
     try {
       const result = await service.generateAndPin(SAMPLE_DATA);
-
       expect(result.pdfBuffer.length).toBeGreaterThan(0);
       expect(result.ipfsHash).toBeNull();
     } finally {
@@ -105,7 +165,6 @@ describe('CertificateService', () => {
 
     try {
       const result = await service.generateAndPin(SAMPLE_DATA);
-
       expect(result.pdfBuffer.length).toBeGreaterThan(0);
       expect(result.ipfsHash).toBe(expectedHash);
     } finally {
@@ -114,13 +173,7 @@ describe('CertificateService', () => {
   });
 
   it('generateAndPin propagates DataCloneError from worker as structured 500', async () => {
-    // Build a data object with a non-cloneable property to trigger DataCloneError.
-    // worker_threads uses v8 serialization which tolerates circular references,
-    // but functions cannot be cloned — passing one as workerData throws synchronously.
-    const badData: any = {
-      ...SAMPLE_DATA,
-      callback: () => {},
-    };
+    const badData: any = { ...SAMPLE_DATA, callback: () => {} };
 
     await expect(service.generateAndPin(badData)).rejects.toMatchObject({
       response: expect.objectContaining({

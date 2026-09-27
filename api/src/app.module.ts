@@ -24,6 +24,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { OracleModule } from './oracle/oracle.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
     WebhooksModule,
     OracleModule,
     MetricsModule,
+    ReconciliationModule,
   ],
   controllers: [AppController],
   providers: [

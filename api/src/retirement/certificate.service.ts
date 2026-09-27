@@ -1,12 +1,35 @@
+/**
+ * CertificateService — #929
+ *
+ * Generates retirement certificate PDFs in a bounded worker-thread pool.
+ *
+ * Problem: each request previously spawned a fresh Worker with no pool or
+ * backpressure.  A burst of retirements could exhaust the thread budget and
+ * stall unrelated endpoints.
+ *
+ * Fix:
+ *  - `MAX_POOL_SIZE` concurrent workers running at any time (default: 4,
+ *    configurable via CERT_POOL_SIZE env var).
+ *  - A FIFO queue accepting up to `MAX_QUEUE_DEPTH` pending jobs (default: 20,
+ *    configurable via CERT_QUEUE_DEPTH env var).
+ *  - When the queue is full a 429 TooManyRequests is thrown immediately.
+ *  - Each job has a per-certificate timeout (`CERT_TIMEOUT_MS`, default 30 s).
+ *  - Prometheus gauges for pool depth and queue depth.
+ */
 import {
   Injectable,
   Logger,
   InternalServerErrorException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Worker } from 'worker_threads';
 import { join } from 'path';
 import { isValidIpfsCid } from '../common/ipfs-cid.util';
+import client from 'prom-client';
+
+// ── Public types ─────────────────────────────────────────────────────────────
 
 export interface CertificateData {
   retirementId: string;
@@ -29,6 +52,16 @@ export interface GenerateAndPinResult {
   ipfsHash: string | null;
 }
 
+// ── Internal queue item ──────────────────────────────────────────────────────
+
+interface QueueItem {
+  data: CertificateData;
+  resolve: (buf: Buffer) => void;
+  reject: (err: unknown) => void;
+}
+
+// ── Service ─────────────────────────────────────────────────────────────────
+
 @Injectable()
 export class CertificateService {
   private readonly logger = new Logger(CertificateService.name);
@@ -36,6 +69,27 @@ export class CertificateService {
   private readonly pinataSecretKey: string;
   private readonly pinataApiUrl: string;
   private readonly ipfsTimeoutMs: number;
+
+  /** Maximum number of worker threads running concurrently. */
+  private readonly maxPoolSize: number;
+  /** Maximum number of jobs waiting in the FIFO queue. */
+  private readonly maxQueueDepth: number;
+  /** Per-certificate generation timeout in ms. */
+  private readonly certTimeoutMs: number;
+
+  /** Number of worker threads currently executing a job. */
+  private activeWorkers = 0;
+  /** FIFO queue of pending PDF generation jobs. */
+  private readonly queue: QueueItem[] = [];
+
+  // ── Prometheus metrics ────────────────────────────────────────────────────
+
+  /** Gauge: workers currently active. */
+  private readonly activeWorkersGauge: client.Gauge<string>;
+  /** Gauge: jobs currently waiting in the queue. */
+  private readonly queueDepthGauge: client.Gauge<string>;
+  /** Counter: total 429 rejections due to queue overflow. */
+  private readonly queueOverflowCounter: client.Counter<string>;
 
   constructor(private readonly configService: ConfigService) {
     this.pinataApiKey = this.configService.get<string>('IPFS_API_KEY', '');
@@ -50,19 +104,38 @@ export class CertificateService {
     this.ipfsTimeoutMs = Number(
       this.configService.get<number>('IPFS_TIMEOUT_MS', 30_000),
     );
+    this.maxPoolSize = Number(
+      this.configService.get<number>('CERT_POOL_SIZE', 4),
+    );
+    this.maxQueueDepth = Number(
+      this.configService.get<number>('CERT_QUEUE_DEPTH', 20),
+    );
+    this.certTimeoutMs = Number(
+      this.configService.get<number>('CERT_TIMEOUT_MS', 30_000),
+    );
+
+    this.activeWorkersGauge = new client.Gauge({
+      name: 'carbonchain_cert_active_workers',
+      help: 'Number of certificate worker threads currently executing',
+    });
+
+    this.queueDepthGauge = new client.Gauge({
+      name: 'carbonchain_cert_queue_depth',
+      help: 'Number of certificate generation jobs currently waiting in the pool queue',
+    });
+
+    this.queueOverflowCounter = new client.Counter({
+      name: 'carbonchain_cert_queue_overflow_total',
+      help: 'Total certificate generation requests rejected because the pool queue was full (429)',
+    });
   }
+
+  // ── Public API ────────────────────────────────────────────────────────────
 
   /**
    * Generates a retirement certificate PDF and pins it to IPFS via Pinata.
    *
-   * Issue #493 fixes:
-   *  - DataCloneError during Worker construction is caught and wrapped in a
-   *    structured InternalServerErrorException.
-   *  - Pinata failures are circuit-broken: if the upload fails the method
-   *    returns { pdfBuffer, ipfsHash: null } instead of throwing, so the
-   *    retirement flow can still succeed with a null certificate hash.
-   *
-   * @returns { pdfBuffer, ipfsHash } — ipfsHash is null when Pinata is unreachable.
+   * Uses the bounded pool — throws 429 if the queue is full.
    */
   async generateAndPin(data: CertificateData): Promise<GenerateAndPinResult> {
     this.logger.log(
@@ -84,7 +157,6 @@ export class CertificateService {
         `Pinata upload failed for retirement ${data.retirementId} — returning null hash. ` +
           `Reason: ${(err as Error).message}`,
       );
-      // Return partial success: PDF was generated, IPFS upload failed.
     }
 
     return { pdfBuffer, ipfsHash };
@@ -101,68 +173,142 @@ export class CertificateService {
     return this.buildPdf(data);
   }
 
-  // ── Private helpers ────────────────────────────────────────────────────────
+  // ── Pool logic ────────────────────────────────────────────────────────────
 
   /**
-   * Runs pdfkit in a worker thread so the event loop is never blocked.
-   *
-   * Issue #493 fix: wraps Worker construction in try/catch to handle
-   * DataCloneError that occurs when workerData contains non-cloneable values
-   * (e.g. circular references from unexpected upstream data).
+   * Enqueues a PDF generation job.
+   * - If a worker slot is free, starts immediately.
+   * - If the queue has capacity, waits in line.
+   * - If the queue is full, throws 429 immediately.
    */
   private buildPdf(data: CertificateData): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      let worker: Worker;
-      try {
-        worker = new Worker(join(__dirname, 'pdf.worker.js'), {
-          workerData: data,
-        });
-      } catch (err) {
-        // DataCloneError (or any synchronous spawn error) — wrap and reject.
-        const detail = err instanceof Error ? err.message : String(err);
-        reject(
+    if (
+      this.activeWorkers >= this.maxPoolSize &&
+      this.queue.length >= this.maxQueueDepth
+    ) {
+      this.queueOverflowCounter.inc();
+      throw new HttpException(
+        `Certificate generation queue is full (max ${this.maxQueueDepth} pending). Retry later.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    return new Promise<Buffer>((resolve, reject) => {
+      const item: QueueItem = { data, resolve, reject };
+
+      if (this.activeWorkers < this.maxPoolSize) {
+        this.runWorker(item);
+      } else {
+        this.queue.push(item);
+        this.queueDepthGauge.set(this.queue.length);
+      }
+    });
+  }
+
+  /**
+   * Spawns a single Worker for the given item.
+   * When it finishes, drains the next queued item (if any).
+   */
+  private runWorker(item: QueueItem): void {
+    this.activeWorkers++;
+    this.activeWorkersGauge.set(this.activeWorkers);
+
+    let worker: Worker;
+    let settled = false;
+
+    const settle = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+      this.activeWorkers--;
+      this.activeWorkersGauge.set(this.activeWorkers);
+      this.drainQueue();
+    };
+
+    try {
+      worker = new Worker(join(__dirname, 'pdf.worker.js'), {
+        workerData: item.data,
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      settle(() =>
+        item.reject(
           new InternalServerErrorException({
             error: 'Certificate generation failed',
             detail,
           }),
-        );
-        return;
-      }
+        ),
+      );
+      return;
+    }
 
-      worker.once('message', (msg: { error?: string } | Buffer) => {
-        // Issue #493 fix: pdf.worker.js may post { error: '...' } instead of
-        // throwing, so the parent can reject the promise cleanly.
-        if (
-          msg &&
-          !Buffer.isBuffer(msg) &&
-          typeof (msg as any).error === 'string'
-        ) {
-          reject(
+    // Per-certificate timeout guard.
+    const timeoutHandle = setTimeout(() => {
+      void worker.terminate();
+      settle(() =>
+        item.reject(
+          new InternalServerErrorException(
+            `Certificate generation timed out after ${this.certTimeoutMs}ms`,
+          ),
+        ),
+      );
+    }, this.certTimeoutMs);
+
+    worker.once('message', (msg: { error?: string } | Buffer) => {
+      clearTimeout(timeoutHandle);
+      if (
+        msg &&
+        !Buffer.isBuffer(msg) &&
+        typeof (msg as { error?: string }).error === 'string'
+      ) {
+        settle(() =>
+          item.reject(
             new InternalServerErrorException({
               error: 'Certificate generation failed',
               detail: (msg as { error: string }).error,
             }),
-          );
-        } else {
-          resolve(msg as Buffer);
-        }
-      });
+          ),
+        );
+      } else {
+        settle(() => item.resolve(msg as Buffer));
+      }
+    });
 
-      worker.once('error', (err) => {
-        reject(
+    worker.once('error', (err) => {
+      clearTimeout(timeoutHandle);
+      settle(() =>
+        item.reject(
           new InternalServerErrorException({
             error: 'Certificate generation failed',
             detail: err.message,
           }),
-        );
-      });
+        ),
+      );
+    });
 
-      worker.once('exit', (code) => {
-        if (code !== 0)
-          reject(new Error(`PDF worker exited with code ${code}`));
-      });
+    worker.once('exit', (code) => {
+      clearTimeout(timeoutHandle);
+      if (code !== 0) {
+        settle(() =>
+          item.reject(new Error(`PDF worker exited with code ${code}`)),
+        );
+      }
     });
   }
+
+  /** Pulls the next item from the FIFO queue and starts a worker for it. */
+  private drainQueue(): void {
+    if (this.queue.length === 0) return;
+    if (this.activeWorkers >= this.maxPoolSize) return;
+
+    const next = this.queue.shift();
+    if (next) {
+      this.queueDepthGauge.set(this.queue.length);
+      this.runWorker(next);
+    }
+  }
+
+  // ── IPFS upload ───────────────────────────────────────────────────────────
 
   private async pinToIpfs(
     pdfBuffer: Buffer,

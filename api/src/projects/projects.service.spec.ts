@@ -43,6 +43,8 @@ describe('ProjectsService', () => {
     jest.clearAllMocks();
   });
 
+  // ── Existing CRUD tests ──────────────────────────────────────────────────
+
   describe('createProject', () => {
     it('creates a project without documents', async () => {
       const project = await service.createProject({
@@ -200,6 +202,193 @@ describe('ProjectsService', () => {
 
       const projects = await service.listProjects();
       expect(projects).toHaveLength(2);
+    });
+  });
+
+  // ── #928 verify / re-pin tests ──────────────────────────────────────────
+
+  describe('verifyProjectCid (#928)', () => {
+    it('returns pinned=true and hashOk=true when CID is active and matches', async () => {
+      const project = await service.createProject({
+        name: 'Pinned Project',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+        documents: { data: 'test' },
+      });
+      // Make createProject use VALID_CID
+      mockedAxios.post = jest
+        .fn()
+        .mockResolvedValue({ data: { IpfsHash: VALID_CID } });
+
+      // Override the repo entry to have a valid CID.
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      // Mock isPinned → pinned.
+      mockedAxios.get = jest
+        .fn()
+        .mockResolvedValue({ data: { count: 1 } });
+
+      const result = await service.verifyProjectCid(project.id, VALID_CID);
+
+      expect(result.pinned).toBe(true);
+      expect(result.cidMatch).toBe(true);
+      expect(result.hashOk).toBe(true);
+      expect(result.cid).toBe(VALID_CID);
+    });
+
+    it('returns hashOk=false when expectedHash does not match stored CID', async () => {
+      const project = await service.createProject({
+        name: 'Mismatch Project',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+      });
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 1 } });
+
+      const result = await service.verifyProjectCid(
+        project.id,
+        'QmDifferentCidThatDoesNotMatchStoredValue',
+      );
+
+      expect(result.cidMatch).toBe(false);
+      expect(result.hashOk).toBe(false);
+    });
+
+    it('returns pinned=false when Pinata says not pinned', async () => {
+      const project = await service.createProject({
+        name: 'Unpinned Project',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+      });
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 0 } });
+
+      const result = await service.verifyProjectCid(project.id);
+      expect(result.pinned).toBe(false);
+    });
+
+    it('throws NotFoundException for an unknown project', async () => {
+      await expect(service.verifyProjectCid('no-such-id')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('returns cached result on repeated calls within TTL', async () => {
+      const project = await service.createProject({
+        name: 'Cache Project',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+      });
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 1 } });
+
+      // First call hits Pinata.
+      await service.verifyProjectCid(project.id);
+      // Second call within TTL must not hit Pinata again.
+      await service.verifyProjectCid(project.id);
+
+      expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('verifyAndRepinAll (#928)', () => {
+    it('re-pins a CID that is not currently pinned', async () => {
+      // Create a project with a valid CID.
+      const project = await service.createProject({
+        name: 'Re-pin Project',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+      });
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      // First call is isPinned check → not pinned.
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 0 } });
+      // Re-pin via pinByHash.
+      mockedAxios.post = jest.fn().mockResolvedValue({ data: {} });
+
+      await service.verifyAndRepinAll();
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        'https://api.pinata.cloud/pinning/pinByHash',
+        { hashToPin: VALID_CID },
+        expect.anything(),
+      );
+    });
+
+    it('does not re-pin a CID that is already pinned', async () => {
+      const project = await service.createProject({
+        name: 'Already Pinned',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+      });
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 1 } });
+      mockedAxios.post = jest.fn();
+
+      await service.verifyAndRepinAll();
+
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('logs an error and continues when re-pin fails', async () => {
+      const project = await service.createProject({
+        name: 'Fail Re-pin',
+        developer: 'Dev',
+        description: 'desc',
+        location: 'NG',
+        methodology: 'VCS',
+      });
+      const entity = await repo.findById(project.id);
+      if (entity) {
+        entity.documentsCid = VALID_CID;
+        await repo.save(entity);
+      }
+
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 0 } });
+      mockedAxios.post = jest.fn().mockRejectedValue(new Error('Pinata down'));
+
+      // Should not throw — errors are logged and swallowed.
+      await expect(service.verifyAndRepinAll()).resolves.not.toThrow();
     });
   });
 });
