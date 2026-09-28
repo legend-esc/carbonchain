@@ -7,8 +7,13 @@ on:
     branches: [main]
 
 jobs:
-  contracts:
-    name: Smart Contracts (Soroban)
+  # ── Issue #972 ─────────────────────────────────────────────────────────────
+  # Build WASM exactly once and upload as an artifact. All downstream jobs that
+  # need the compiled artifacts consume the artifact rather than rebuilding from
+  # scratch. Combined Cargo registry + target cache keyed on Cargo.lock so a
+  # dependency change automatically invalidates the cache.
+  build-contracts:
+    name: Build Contracts (WASM)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -18,12 +23,10 @@ jobs:
           toolchain: "1.91.0"
           targets: wasm32v1-none
           components: rustfmt, clippy
-      # #193 — enforce consistent formatting across all four contracts
-      - name: Check Rust formatting
-        run: cd contracts && cargo fmt --all -- --check
-      # #413 — cache cargo registry, git sources, and WASM build artifacts.
-      # Key includes Cargo.lock hash so any dependency change invalidates the cache.
-      - name: Cache WASM build artifacts
+      # #413 / #972 — unified cargo cache for registry, git sources, and WASM
+      # build artifacts. A single cache entry is shared between this job and the
+      # contracts test job below, so target/ is never rebuilt twice per PR.
+      - name: Cache cargo registry + WASM build artifacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -33,25 +36,68 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
-      # #413 — build all four contracts to WASM before running any tests.
-      # A failed WASM build here will abort the job before tests run.
+      # #193 — enforce consistent formatting before any compilation.
+      - name: Check Rust formatting
+        run: cd contracts && cargo fmt --all -- --check
+      # Build WASM once — test_helpers.rs uses include_bytes! which requires the
+      # wasm32v1-none artifact to exist before clippy or cargo test compiles test targets.
       - name: Build Contracts (WASM)
         run: cd contracts && cargo build --target wasm32v1-none --release
-      # #413 — cargo audit gate: fails the build on high-severity CVEs.
-      # Accepted advisories are listed in .cargo/audit.toml (auto-loaded from the
-      # repo root; `--config` was removed in cargo-audit 0.22).
+      # Upload the built WASM artifacts so the test and deploy jobs can consume
+      # them without a second compilation pass. The artifact retention is kept
+      # short (1 day) since it is only needed within the same workflow run.
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wasm-artifacts
+          path: contracts/target/wasm32v1-none/release/*.wasm
+          retention-days: 1
+
+  contracts:
+    name: Smart Contracts (Soroban)
+    runs-on: ubuntu-latest
+    needs: [build-contracts]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (1.91.0)
+        with:
+          toolchain: "1.91.0"
+          targets: wasm32v1-none
+          components: rustfmt, clippy
+      # Restore the shared cargo + WASM cache written by build-contracts.
+      # On a cache hit, cargo build below is a no-op (artifacts already present).
+      - name: Restore cargo + WASM cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+      # The WASM build should be a no-op on a cache hit, but we run it anyway so
+      # that cargo knows the wasm32v1-none target artifacts exist for include_bytes!.
+      - name: Ensure WASM artifacts present (cache restore)
+        run: cd contracts && cargo build --target wasm32v1-none --release
+      # #972 — cache the cargo-audit binary keyed on its version so `cargo install`
+      # is skipped on every subsequent PR run (was ~30 s of wasted CPU per run).
+      - name: Cache cargo-audit binary
+        id: cache-cargo-audit
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.21.2
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version 0.21.2
       - name: Run cargo audit
         run: cargo audit -f contracts/Cargo.lock
-      # Build WASM first — test_helpers.rs uses include_bytes! which requires the
-      # wasm32v1-none artifact to exist before clippy or cargo test compiles test targets
-      - name: Build Contracts
-        run: cd contracts && cargo build --target wasm32v1-none --release
-      # #192 — zero-warning clippy policy across all four contracts (after WASM build)
+      # #192 — zero-warning clippy policy across all four contracts.
       - name: Clippy
         run: cd contracts && cargo clippy --all-targets -- -D warnings
-      # #47 — run credit_registry tests standalone (avoids workspace feature unification)
+      # #47 — run credit_registry tests standalone (avoids workspace feature unification).
       - name: Run Credit Registry Tests
         run: cd contracts/credit_registry && cargo test
       - name: Run Remaining Contract Tests
@@ -59,6 +105,123 @@ jobs:
           cd contracts && cargo test -p carbonchain-retirement \
                                  -p carbonchain-marketplace \
                                  -p carbonchain-mrv-oracle
+
+  # ── Issue #973 ─────────────────────────────────────────────────────────────
+  # Soroban contract coverage gate. Uses cargo-llvm-cov to generate an LCOV
+  # report, enforces a minimum coverage threshold, and uploads the report as an
+  # artifact. The threshold starts at 70 % and should be ratcheted upward as
+  # coverage improves (update COV_THRESHOLD below).
+  contracts-coverage:
+    name: Contracts Coverage Gate
+    runs-on: ubuntu-latest
+    needs: [build-contracts]
+    env:
+      # Ratchet this value upward as tests improve. CI is red when measured
+      # coverage drops below this percentage.
+      COV_THRESHOLD: "70"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (1.91.0)
+        with:
+          toolchain: "1.91.0"
+          targets: wasm32v1-none
+          components: llvm-tools-preview
+      - name: Restore cargo + WASM cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+      # Cache cargo-llvm-cov keyed on the installed version.
+      - name: Cache cargo-llvm-cov binary
+        id: cache-llvm-cov
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: ${{ runner.os }}-cargo-llvm-cov-0.6.14
+      - name: Install cargo-llvm-cov
+        if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
+        run: cargo install cargo-llvm-cov --locked --version 0.6.14
+      - name: Generate coverage (LCOV)
+        run: |
+          cd contracts
+          cargo llvm-cov --workspace \
+            --lcov --output-path coverage.lcov \
+            --ignore-filename-regex '(test|mock|stub)' \
+            -- --test-threads=1
+      # Extract the overall line-coverage percentage from the LCOV file and fail
+      # if it falls below COV_THRESHOLD. A mismatch prints the measured value so
+      # reviewers can see exactly how far off the threshold is.
+      - name: Enforce coverage threshold
+        run: |
+          set -euo pipefail
+          LCOV="contracts/coverage.lcov"
+          TOTAL_LINES=$(grep -c "^DA:" "$LCOV" || true)
+          HIT_LINES=$(grep "^DA:" "$LCOV" | grep -cv ",0$" || true)
+          if [ "$TOTAL_LINES" -eq 0 ]; then
+            echo "ERROR: No coverage data found in LCOV file."
+            exit 1
+          fi
+          PCT=$(awk "BEGIN { printf \"%.1f\", ($HIT_LINES / $TOTAL_LINES) * 100 }")
+          echo "Coverage: ${PCT}% (${HIT_LINES}/${TOTAL_LINES} lines)"
+          THRESHOLD="${COV_THRESHOLD}"
+          PASS=$(awk "BEGIN { print ($PCT >= $THRESHOLD) ? \"yes\" : \"no\" }")
+          if [ "$PASS" = "no" ]; then
+            echo "::error::Coverage ${PCT}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+          echo "Coverage gate passed: ${PCT}% >= ${THRESHOLD}%"
+      # Add a PR comment with per-crate coverage summary.
+      - name: Post coverage summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const { readFileSync } = require('fs');
+            const lcov = readFileSync('contracts/coverage.lcov', 'utf8');
+
+            // Compute total and per-crate coverage from LCOV SF: / DA: sections.
+            const crates = {};
+            let currentFile = null;
+            for (const line of lcov.split('\n')) {
+              if (line.startsWith('SF:')) {
+                currentFile = line.slice(3);
+                const match = currentFile.match(/contracts\/([^/]+)\//);
+                if (match && !crates[match[1]]) crates[match[1]] = { hit: 0, total: 0 };
+              } else if (line.startsWith('DA:') && currentFile) {
+                const match2 = currentFile.match(/contracts\/([^/]+)\//);
+                if (match2 && crates[match2[1]]) {
+                  crates[match2[1]].total++;
+                  if (!line.endsWith(',0')) crates[match2[1]].hit++;
+                }
+              }
+            }
+
+            let rows = '| Crate | Lines | Covered | % |\n|---|---|---|---|\n';
+            for (const [crate, { hit, total }] of Object.entries(crates)) {
+              const pct = total > 0 ? ((hit / total) * 100).toFixed(1) : '0.0';
+              rows += `| \`${crate}\` | ${total} | ${hit} | ${pct}% |\n`;
+            }
+
+            const threshold = process.env.COV_THRESHOLD;
+            const body = `## 📊 Contracts Coverage Report\n\n${rows}\n_Threshold: ${threshold}%. Ratchet upward in \`.github/workflows/ci.yml\` as coverage improves._`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+      - name: Upload LCOV report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contracts-coverage-lcov
+          path: contracts/coverage.lcov
 
   api:
     name: Backend API (NestJS)
@@ -172,6 +335,12 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: contracts
+      # #972 — reuse the already-built WASM artifacts instead of a second compile.
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: wasm-artifacts
+          path: contracts/target/wasm32v1-none/release/
       - name: Install system deps (for stellar-cli dbus)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev libudev-dev libssl-dev pkg-config
       # #247 — cache stellar-cli binary keyed on version to skip recompilation on cache hit
@@ -219,8 +388,17 @@ jobs:
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (stable)
         with:
           toolchain: stable
+      # #972 — cache cargo-audit in the security scan job too so neither job
+      # reinstalls the binary from crates.io on every run.
+      - name: Cache cargo-audit binary
+        id: cache-cargo-audit-sec
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit-0.21.2
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        if: steps.cache-cargo-audit-sec.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked --version 0.21.2
       - name: Run cargo audit
         run: cargo audit -f contracts/Cargo.lock
 
@@ -229,6 +407,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Issue #971: full history so we can compute a stable short SHA.
+          fetch-depth: 0
+      # ── Issue #971 ────────────────────────────────────────────────────────
+      # Derive a single RELEASE identifier here, once, and pass it to both the
+      # Angular build (`define.__SENTRY_RELEASE__`) and the sentry-cli upload
+      # step. This guarantees the runtime bundle and the uploaded source maps
+      # share exactly the same release string so Sentry can symbolicate stacks.
+      #
+      # Format: "<package.json version>+<7-char git SHA>"  e.g. "1.2.0+a3f2b8c"
+      #
+      # The value is written to $GITHUB_ENV so every subsequent step in this
+      # job can reference it as ${{ env.SENTRY_RELEASE }}.
+      - name: Derive SENTRY_RELEASE
+        id: release
+        run: |
+          PKG_VERSION=$(node -p "require('./frontend/package.json').version")
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          RELEASE="${PKG_VERSION}+${SHORT_SHA}"
+          echo "SENTRY_RELEASE=${RELEASE}" >> "$GITHUB_ENV"
+          echo "value=${RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Sentry release: ${RELEASE}"
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -245,13 +445,29 @@ jobs:
       # #961 — fail the build on untranslated keys in any active locale.
       - name: Check i18n Coverage
         run: cd frontend && npm run i18n:check
+      # Issue #971: pass the same RELEASE value that sentry-cli will use at
+      # upload time. Angular CLI's `define` option injects it into the bundle as
+      # the string literal __SENTRY_RELEASE__ which `sentry-config.ts` reads.
       - name: Build
         run: cd frontend && npm run build
         env:
-          # Issue #543: Inject a unique release ID at build time so Sentry can
-          # correlate uploaded source maps with production error events.
-          # Format: "<npm-version>+<short-sha>" — e.g. "1.0.0+a3f2b8c"
-          SENTRY_RELEASE: ${{ format('{0}+{1}', github.sha, github.sha) }}
+          SENTRY_RELEASE: ${{ env.SENTRY_RELEASE }}
+      # Issue #971: after the build, assert that the release string injected into
+      # the bundle matches what we computed. This step greps the compiled output
+      # for the exact release value; a mismatch (or a missing value) fails CI
+      # before the source maps are ever uploaded to Sentry.
+      - name: Assert runtime release matches computed RELEASE
+        run: |
+          set -euo pipefail
+          RELEASE="${{ env.SENTRY_RELEASE }}"
+          echo "Asserting release '${RELEASE}' is present in the compiled bundle…"
+          # Search all JS chunks in the production output directory.
+          FOUND=$(grep -rl "${RELEASE}" frontend/dist/carbonchain-frontend/browser/*.js 2>/dev/null | wc -l)
+          if [ "$FOUND" -eq "0" ]; then
+            echo "::error::Release '${RELEASE}' not found in compiled bundle. The Sentry release baked into the bundle differs from the value used for source-map upload."
+            exit 1
+          fi
+          echo "OK — release '${RELEASE}' confirmed in ${FOUND} bundle file(s)."
       - name: Run Tests
         run: cd frontend && npm run test:ci
       # Issue #963 — accessibility conformance gate. Runs axe against the primary
@@ -259,23 +475,22 @@ jobs:
       # (WCAG 2.1 AA; AAA is out of scope).
       - name: Accessibility (axe) conformance
         run: cd frontend && npm run test:a11y
-      # Issue #543: Upload source maps to Sentry and associate them with this
-      # release so production errors resolve to original TypeScript lines.
-      # Only runs on pushes to main (i.e. production deployments); skipped on
-      # pull-request builds where SENTRY_AUTH_TOKEN is not available.
+      # Issue #971: upload source maps to Sentry using the same SENTRY_RELEASE
+      # value that was injected at build time and asserted above. The `sentry-cli
+      # releases new` call creates the release under the same ID, so stack traces
+      # from production events resolve to the correct TypeScript source lines.
+      #
+      # Only runs on pushes to main (production deployments); skipped on PR builds
+      # where SENTRY_AUTH_TOKEN is not available.
       - name: Upload source maps to Sentry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.SENTRY_AUTH_TOKEN != ''
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
-          SENTRY_RELEASE: ${{ format('{0}+{1}', github.sha, github.sha) }}
+          # Use the pre-computed value — no re-derivation, no drift.
+          RELEASE: ${{ env.SENTRY_RELEASE }}
         run: |
-          # Derive the same release ID used at build time.
-          PKG_VERSION=$(node -p "require('./frontend/package.json').version")
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          RELEASE="${PKG_VERSION}+${SHORT_SHA}"
-
           npx --yes @sentry/cli@2 releases new "$RELEASE" \
             --org "$SENTRY_ORG" --project "$SENTRY_PROJECT"
 

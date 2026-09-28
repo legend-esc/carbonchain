@@ -60,7 +60,7 @@
                 "hidden": true
               },
               "define": {
-                "__SENTRY_RELEASE__": "\"#{SENTRY_RELEASE}#\""
+                "__SENTRY_RELEASE__": "JSON.stringify(process.env['SENTRY_RELEASE'] || '')"
               }
             },
             "development": {
