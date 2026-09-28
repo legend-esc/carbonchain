@@ -9,6 +9,7 @@
     "test": "ng test",
     "test:ci": "ng test --watch=false --coverage",
     "lint": "ng lint",
+    "i18n:check": "node scripts/check-i18n.mjs",
     "format:check": "prettier --check \"src/**/*.ts\" \"src/**/*.html\" \"src/*.html\""
   },
   "prettier": {

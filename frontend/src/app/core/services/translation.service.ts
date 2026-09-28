@@ -35,7 +35,16 @@ export class TranslationService {
     localStorage.setItem(STORAGE_KEY, locale);
   }
 
-  t(key: string): string {
-    return this.translations[key] ?? key;
+  /**
+   * Resolves a key, substituting `{placeholder}` tokens. Returns the raw key
+   * when missing so the missing-key lint (#961) can detect it in rendered output.
+   */
+  t(key: string, params?: Record<string, string | number>): string {
+    const template = this.translations[key];
+    if (template === undefined) return key;
+    if (!params) return template;
+    return template.replace(/\{(\w+)\}/g, (match, name: string) =>
+      name in params ? String(params[name]) : match,
+    );
   }
 }
