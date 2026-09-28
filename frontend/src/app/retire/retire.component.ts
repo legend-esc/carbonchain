@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, inject, signal, computed, OnInit, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
   AbstractControl,
@@ -19,11 +19,8 @@ import { CreditStore } from '../core/store/credit.store';
 import { ToastService } from '../core/services/toast.service';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
-import {
-  WalletError,
-  WALLET_ERROR_MESSAGES,
-  normalizeWalletError,
-} from '../core/services/wallet-errors';
+import { TranslationService } from '../core/services/translation.service';
+import { RetireDraftStore, WizardStep } from './retire.store';
 
 /** Validates that a tonnes value is a positive multiple of 100,000. */
 export function multipleOf100kValidator(): ValidatorFn {
@@ -35,15 +32,6 @@ export function multipleOf100kValidator(): ValidatorFn {
     return null;
   };
 }
-
-export type WizardStep = 1 | 2 | 3;
-
-/**
- * Issue #960 — a stale envelope (issues #57/#59) is recoverable: rebuild the
- * transaction and re-prompt exactly once. A second failure is surfaced to the
- * user rather than looping.
- */
-const MAX_STALE_RETRIES = 1;
 
 @Component({
   selector: 'app-retire',
@@ -62,28 +50,94 @@ const MAX_STALE_RETRIES = 1;
       } @else {
         @if (wallet.networkMismatch()) {
           <div class="network-warning" role="alert">
-            ⚠ Your wallet is on the wrong network. Please switch to {{ expectedNetwork }} in Freighter before submitting.
+            ⚠ {{ 'retire.wrongNetwork' | translate: { network: expectedNetwork } }}
           </div>
         }
 
-        <!-- Step indicator. Issue #963: aria-live so screen readers announce wizard progress. -->
-        <nav class="step-indicator" aria-label="Retirement wizard steps">
-          <ol class="step-indicator__list" aria-live="polite" aria-atomic="true">
-            @for (s of [1, 2, 3]; track s) {
-              <li
-                class="step"
-                [class.step--active]="currentStep() === s"
-                [class.step--done]="currentStep() > s"
-                [attr.aria-current]="currentStep() === s ? 'step' : null"
-              >
-                <span class="step__num" aria-hidden="true">{{ s }}</span>
-                <span class="step__label">
-                  {{ stepLabel(s) }}
-                  @if (currentStep() === s) {
-                    <span class="visually-hidden">(current step)</span>
-                  }
-                </span>
-              </li>
+        @if (draftNotice()) {
+          <div class="draft-notice" role="status">{{ draftNotice() }}</div>
+        }
+
+        @if (draftRestored()) {
+          <div class="draft-restored" role="status">
+            {{ 'retire.draftRestored' | translate }}
+            <button class="btn btn-outline" type="button" (click)="discardDraft()">
+              {{ 'retire.draftDiscard' | translate }}
+            </button>
+          </div>
+        }
+
+        @if (step() === 'form') {
+          <form class="wizard-form" (ngSubmit)="goConfirm()" #f="ngForm">
+            <label>
+              {{ 'retire.creditId' | translate }}
+              <input name="creditId" [(ngModel)]="creditId" required placeholder="037176a1…" />
+            </label>
+            <label>
+              {{ 'retire.tonnes' | translate }}
+              <input
+                name="tonnes"
+                [(ngModel)]="tonnes"
+                required
+                type="number"
+                min="100000"
+                step="100000"
+                placeholder="1000000"
+              />
+              @if (tonnesError) {
+                <span class="field-error">{{ 'retire.tonnesError' | translate }}</span>
+              }
+            </label>
+            <label>
+              {{ 'retire.reason' | translate }}
+              <input
+                name="reason"
+                [(ngModel)]="reason"
+                required
+                placeholder="2024 Scope 3 offset"
+              />
+            </label>
+            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError || !canSubmit()">
+              {{ 'retire.review' | translate }}
+            </button>
+          </form>
+        }
+
+        @if (step() === 'confirm') {
+          <div class="confirm-box">
+            <h2>{{ 'retire.confirmTitle' | translate }}</h2>
+            <dl>
+              <dt>{{ 'retire.creditId' | translate }}</dt>
+              <dd class="mono">{{ creditId }}</dd>
+              <dt>{{ 'retire.tonnes' | translate }}</dt>
+              <dd>{{ formatTonnes(tonnes) }}</dd>
+              <dt>{{ 'retire.reason' | translate }}</dt>
+              <dd>{{ reason }}</dd>
+              <dt>{{ 'retire.wallet' | translate }}</dt>
+              <dd class="mono">{{ wallet.publicKey() }}</dd>
+            </dl>
+            <div class="actions">
+              <button class="btn btn-outline" (click)="step.set('form')">
+                {{ 'retire.back' | translate }}
+              </button>
+              <button class="btn btn-danger" [disabled]="submitting() || !canSubmit()" (click)="submit()">
+                {{
+                  submitting() ? ('retire.submitting' | translate) : ('retire.confirm' | translate)
+                }}
+        <!-- Step indicator -->
+        <nav class="step-indicator" [attr.aria-label]="'retire.wizardSteps' | translate">
+          @for (s of [1, 2, 3]; track s) {
+            <div
+              class="step"
+              [class.step--active]="currentStep() === s"
+              [class.step--done]="currentStep() > s"
+              [attr.aria-current]="currentStep() === s ? 'step' : null"
+            >
+              <span class="step__num">{{ s }}</span>
+              <span class="step__label">{{ stepLabel(s) }}</span>
+            </div>
+            @if (s < 3) {
+              <div class="step-divider"></div>
             }
           </ol>
         </nav>
@@ -93,18 +147,18 @@ const MAX_STALE_RETRIES = 1;
         <!-- ── Step 1: Select Credits ── -->
         @if (currentStep() === 1) {
           <section class="step-panel" aria-labelledby="step1-heading">
-            <h2 id="step1-heading">Step 1: Select credits to retire</h2>
+            <h2 id="step1-heading">{{ 'retire.step1Title' | translate }}</h2>
 
             @if (store.isLoading()) {
-              <p class="status" role="status">Loading your credits…</p>
+              <p class="status">{{ 'retire.loadingCredits' | translate }}</p>
             } @else if (activeCredits().length === 0) {
-              <p class="status">You have no active credits to retire.</p>
+              <p class="status">{{ 'retire.noActiveCredits' | translate }}</p>
             } @else {
-              <p class="selection-hint">{{ selectedCredits().length }} credit(s) selected</p>
-              <table class="credit-table" aria-label="Your active credits">
-                <caption class="visually-hidden">
-                  Credits you own and can retire. Activate a row checkbox to select it.
-                </caption>
+              <p class="selection-hint">
+                {{ 'retire.selectedCount' | translate: { n: selectedCredits().length } }}
+              </p>
+              <div class="table-scroll">
+              <table class="credit-table" [attr.aria-label]="'retire.col.creditId' | translate">
                 <thead>
                   <tr>
                     <th scope="col">
@@ -112,25 +166,36 @@ const MAX_STALE_RETRIES = 1;
                         type="checkbox"
                         [checked]="allSelected()"
                         (change)="toggleSelectAll()"
-                        aria-label="Select all credits"
+                        [attr.aria-label]="'retire.selectAll' | translate"
                       />
                     </th>
-                    <th scope="col">Credit ID</th>
-                    <th scope="col">Project</th>
-                    <th scope="col">Vintage</th>
-                    <th scope="col">Methodology</th>
-                    <th scope="col">Tonnes</th>
+                    <th scope="col">{{ 'retire.col.creditId' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.project' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.vintage' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.methodology' | translate }}</th>
+                    <th scope="col">{{ 'retire.col.tonnes' | translate }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   @for (credit of activeCredits(); track credit.id) {
-                    <tr class="credit-row" [class.credit-row--selected]="isSelected(credit)">
+                    <tr
+                      class="credit-row"
+                      [class.credit-row--selected]="isSelected(credit)"
+                      (click)="toggleCredit(credit)"
+                      role="button"
+                      tabindex="0"
+                      (keydown.enter)="toggleCredit(credit)"
+                      (keydown.space)="$event.preventDefault(); toggleCredit(credit)"
+                      [attr.aria-selected]="isSelected(credit)"
+                      [attr.aria-label]="'retire.selectCredit' | translate: { id: credit.id }"
+                    >
                       <td>
                         <input
                           type="checkbox"
                           [checked]="isSelected(credit)"
                           (change)="toggleCredit(credit)"
-                          [attr.aria-label]="'Select credit ' + credit.id"
+                          (click)="$event.stopPropagation()"
+                          [attr.aria-label]="'retire.selectCredit' | translate: { id: credit.id }"
                         />
                       </td>
                       <td class="mono">{{ credit.id | slice: 0 : 12 }}…</td>
@@ -142,6 +207,7 @@ const MAX_STALE_RETRIES = 1;
                   }
                 </tbody>
               </table>
+              </div>
             }
 
             <div class="step-actions">
@@ -150,8 +216,9 @@ const MAX_STALE_RETRIES = 1;
                 type="button"
                 [disabled]="selectedCredits().length === 0"
                 (click)="goToStep(2)"
+                [attr.aria-label]="'retire.continueStep2' | translate"
               >
-                Next: Enter Reason ({{ selectedCredits().length }}) →
+                {{ 'retire.nextReason' | translate: { n: selectedCredits().length } }}
               </button>
             </div>
           </section>
@@ -160,42 +227,50 @@ const MAX_STALE_RETRIES = 1;
         <!-- ── Step 2: Enter Retirement Reason ── -->
         @if (currentStep() === 2) {
           <section class="step-panel" aria-labelledby="step2-heading">
-            <h2 id="step2-heading">Step 2: Enter retirement reason</h2>
+            <h2 id="step2-heading">{{ 'retire.step2Title' | translate }}</h2>
 
             <div class="selected-summary">
-              <span>{{ selectedCredits().length }} credit(s) selected</span>
-              <span>· Total: {{ formatTonnes(totalSelectedTonnes()) }}</span>
+              <span>{{ 'retire.selectedCount' | translate: { n: selectedCredits().length } }}</span>
+              <span>
+                {{
+                  'retire.totalTonnes'
+                    | translate: { t: formatTonnes(totalSelectedTonnes()) }
+                }}
+              </span>
             </div>
 
             <label class="reason-label" for="retirement-reason">
-              Retirement reason
+              {{ 'retire.reasonLabel' | translate }}
               <textarea
                 id="retirement-reason"
                 [formControl]="reasonControl"
-                placeholder="e.g. 2024 Scope 3 carbon offset"
+                [placeholder]="'retire.reasonPlaceholder' | translate"
                 rows="4"
                 aria-describedby="reason-hint reason-error"
                 maxlength="200"
               ></textarea>
               <span id="reason-hint" class="hint">
-                {{ reasonControl.value.length }}/200 characters
+                {{ 'retire.reasonHint' | translate: { n: reasonControl.value.length } }}
               </span>
               @if (reasonControl.invalid && (reasonControl.dirty || reasonControl.touched)) {
                 <span id="reason-error" class="field-error" role="alert">
-                  Reason is required and must be 200 characters or fewer.
+                  {{ 'retire.reasonError' | translate }}
                 </span>
               }
             </label>
 
             <div class="step-actions">
-              <button class="btn btn-outline" type="button" (click)="goToStep(1)">← Back</button>
+              <button class="btn btn-outline" type="button" (click)="goToStep(1)">
+                {{ 'retire.backStep' | translate }}
+              </button>
               <button
                 class="btn btn-primary"
                 type="button"
                 [disabled]="reasonControl.invalid"
                 (click)="goToStep(3)"
+                [attr.aria-label]="'retire.continueStep3' | translate"
               >
-                Next: Confirm →
+                {{ 'retire.nextConfirm' | translate }}
               </button>
             </div>
           </section>
@@ -204,7 +279,7 @@ const MAX_STALE_RETRIES = 1;
         <!-- ── Step 3: Confirm & Submit ── -->
         @if (currentStep() === 3) {
           <section class="step-panel" aria-labelledby="step3-heading">
-            <h2 id="step3-heading">Step 3: Confirm and submit</h2>
+            <h2 id="step3-heading">{{ 'retire.step3Title' | translate }}</h2>
 
             @if (signingError()) {
               <p class="field-error" role="alert">{{ signingError() }}</p>
@@ -214,24 +289,22 @@ const MAX_STALE_RETRIES = 1;
             }
 
             @if (tonnesControl.invalid) {
-              <p class="field-error" role="alert">
-                Total tonnes must be a positive multiple of 100,000.
-              </p>
+              <p class="field-error" role="alert">{{ 'retire.tonnesError' | translate }}</p>
             }
 
             <div class="confirm-box">
               <dl>
-                <dt>Credits to Retire</dt>
-                <dd>{{ selectedCredits().length }} credit(s)</dd>
-                <dt>Total Tonnes</dt>
+                <dt>{{ 'retire.creditsToRetire' | translate }}</dt>
+                <dd>{{ 'retire.selectedCount' | translate: { n: selectedCredits().length } }}</dd>
+                <dt>{{ 'retire.col.tonnes' | translate }}</dt>
                 <dd>{{ formatTonnes(totalSelectedTonnes()) }}</dd>
-                <dt>Retirement Reason</dt>
+                <dt>{{ 'retire.reasonLabel' | translate }}</dt>
                 <dd>{{ reasonControl.value }}</dd>
-                <dt>Your Wallet</dt>
+                <dt>{{ 'retire.yourWallet' | translate }}</dt>
                 <dd class="mono">{{ wallet.publicKey() }}</dd>
               </dl>
               <details class="credit-details">
-                <summary>View selected credits</summary>
+                <summary>{{ 'retire.viewSelected' | translate }}</summary>
                 <ul>
                   @for (c of selectedCredits(); track c.id) {
                     <li class="mono">{{ c.id | slice: 0 : 20 }}… — {{ formatTonnes(c.tonnes) }}</li>
@@ -240,9 +313,7 @@ const MAX_STALE_RETRIES = 1;
               </details>
             </div>
 
-            <p class="sign-info">
-              Submitting will ask your wallet to authorise this retirement on the Stellar network.
-            </p>
+            <p class="sign-info">{{ 'retire.signInfo' | translate }}</p>
 
             <div class="step-actions">
               <button
@@ -251,7 +322,7 @@ const MAX_STALE_RETRIES = 1;
                 (click)="goToStep(2)"
                 [disabled]="submitting()"
               >
-                ← Back
+                {{ 'retire.backStep' | translate }}
               </button>
               <button
                 class="btn btn-danger"
@@ -259,8 +330,11 @@ const MAX_STALE_RETRIES = 1;
                 [disabled]="submitting() || tonnesControl.invalid"
                 (click)="submit()"
                 [attr.aria-busy]="submitting()"
+                [attr.aria-label]="'retire.signAndRetire' | translate"
               >
-                {{ submitting() ? 'Submitting…' : 'Retire credits' }}
+                {{
+                  (submitting() ? 'retire.signing' : 'retire.signAndRetire') | translate
+                }}
               </button>
             </div>
           </section>
@@ -385,6 +459,11 @@ const MAX_STALE_RETRIES = 1;
         outline: 3px solid #1b5e20;
         outline-offset: 2px;
       }
+      /* #962 — narrow viewports scroll the table instead of overflowing. */
+      .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
 
       /* Step 2 */
       .selected-summary {
@@ -488,6 +567,19 @@ const MAX_STALE_RETRIES = 1;
       .status {
         color: #595959;
       }
+      .draft-notice,
+      .draft-restored {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+        background: #e3f2fd;
+        border: 1px solid #90caf9;
+        border-radius: 6px;
+        padding: 0.6rem 0.9rem;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+      }
       .btn {
         padding: 0.45rem 1.1rem;
         border-radius: 6px;
@@ -525,11 +617,66 @@ const MAX_STALE_RETRIES = 1;
         opacity: 0.4;
         cursor: not-allowed;
       }
-      @media (prefers-contrast: more) {
-        .field-error { color: #8e0000; }
-        .status, .hint { color: #333333; }
+
+      /* #962 — responsive pass: full-width wizard, stacked steps, 44px
+         touch targets on small screens. */
+      @media (max-width: 768px) {
+        .retire-wizard {
+          max-width: 100%;
+          padding: 1rem 0.75rem;
+        }
+        .step-indicator {
+          flex-wrap: wrap;
+          gap: 0.25rem;
+        }
+        .step-divider {
+          display: none;
+        }
+        .step {
+          flex: 1 1 100%;
+          padding: 0.5rem 0.4rem;
+        }
+        .step-panel h2 {
+          font-size: 1rem;
+        }
+        dl {
+          grid-template-columns: 1fr;
+          gap: 0.15rem 0;
+        }
+        dt {
+          font-size: 0.78rem;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        dd {
+          margin: 0 0 0.5rem 0;
+          word-break: break-word;
+        }
+        .step-actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .btn {
+          min-height: 44px;
+          width: 100%;
+        }
+        .credit-row {
+          min-height: 44px;
+        }
       }
-    `,
+
+      @media (max-width: 480px) {
+        .credit-table {
+          font-size: 0.82rem;
+        }
+        .credit-table th,
+        .credit-table td {
+          padding: 0.5rem 0.6rem;
+        }
+        .step-actions .btn {
+          padding: 0.6rem 1rem;
+        }
+      }
   ],
 })
 export class RetireComponent implements OnInit {
@@ -539,13 +686,16 @@ export class RetireComponent implements OnInit {
   protected readonly store = inject(CreditStore);
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
+  protected readonly draftStore = inject(RetireDraftStore);
 
   readonly currentStep = signal<WizardStep>(1);
   readonly selectedCredits = signal<CreditMetadata[]>([]);
   readonly submitting = signal(false);
   readonly signingError = signal<string | null>(null);
-  /** Issue #963: polite live region for transaction progress. */
-  readonly statusMessage = signal<string | null>(null);
+  /** #959 — surfaced when a stored draft was expired or invalidated. */
+  readonly draftNotice = signal<string | null>(null);
+  /** #959 — true when a draft was restored from localStorage. */
+  readonly draftRestored = signal(false);
 
   readonly reasonControl = new FormControl<string>('', {
     nonNullable: true,
@@ -613,6 +763,52 @@ export class RetireComponent implements OnInit {
     if (pk && this.auth.isAuthenticated()) {
       await this.store.loadByOwner(pk);
     }
+    // #959 — restore a persisted draft once holdings are available.
+    this.restoreDraft();
+  }
+
+  /**
+   * #959 — rehydrates the wizard from the stored draft. Expired or stale
+   * drafts are cleared and surfaced via `draftNotice`.
+   */
+  private restoreDraft(): void {
+    const draft = this.draftStore.restore(this.activeCredits());
+    if (!draft) {
+      const reason = this.draftStore.notice();
+      if (reason) {
+        this.draftNotice.set(
+          reason === 'expired'
+            ? 'Your saved retirement draft expired and was cleared.'
+            : 'Your saved retirement draft was out of date and was cleared.',
+        );
+      }
+      return;
+    }
+    this.selectedCredits.set(this.draftStore.resolve(this.activeCredits()));
+    this.reasonControl.setValue(draft.reason);
+    this.tonnesControl.setValue(Number(draft.tonnes));
+    this.currentStep.set(draft.step);
+    this.draftRestored.set(true);
+  }
+
+  /** #959 — user-initiated discard of a restored draft. */
+  discardDraft(): void {
+    this.draftStore.discard();
+    this.draftNotice.set(null);
+    this.draftRestored.set(false);
+    this.reset();
+  }
+
+  /** #959 — mirrors wizard state into localStorage on every change. */
+  private persistDraft(): void {
+    const credits = this.selectedCredits();
+    if (credits.length === 0) return;
+    this.draftStore.save({
+      step: this.currentStep(),
+      credits,
+      tonnes: this.totalSelectedTonnes(),
+      reason: this.reasonControl.value,
+    });
   }
 
   /** Issue #963: announced when the wizard advances. */
@@ -626,6 +822,18 @@ export class RetireComponent implements OnInit {
 
   isSelected(credit: CreditMetadata): boolean {
     return this.selectedCredits().some((c) => c.id === credit.id);
+  }
+
+  constructor() {
+    // #959 — persist selection/step changes. `reasonControl` is a FormControl,
+    // so its changes are subscribed separately.
+    effect(() => {
+      const credits = this.selectedCredits();
+      this.currentStep();
+      if (credits.length === 0) return;
+      this.persistDraft();
+    });
+    this.reasonControl.valueChanges.subscribe(() => this.persistDraft());
   }
 
   toggleCredit(credit: CreditMetadata): void {
@@ -643,6 +851,20 @@ export class RetireComponent implements OnInit {
     }
   }
 
+  /** True only when the wallet is connected and on the correct network. */
+  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
+
+  /** Exposes the expected network name for display in the template. */
+  get expectedNetwork(): string {
+    return this.wallet.expectedNetwork();
+  }
+
+  /** True when the current tonnes value is not a positive multiple of 100,000. */
+  get tonnesError(): boolean {
+    const v = this.tonnes;
+    return !v || v <= 0 || v % 100_000 !== 0;
+  }
+
   goToStep(step: WizardStep): void {
     if (step === 3) {
       this.reasonControl.markAsTouched();
@@ -652,13 +874,14 @@ export class RetireComponent implements OnInit {
   }
 
   stepLabel(step: number): string {
+    const i18n = inject(TranslationService);
     switch (step) {
       case 1:
-        return 'Select Credits';
+        return i18n.t('retire.step.selectCredits');
       case 2:
-        return 'Reason';
+        return i18n.t('retire.step.reason');
       case 3:
-        return 'Confirm';
+        return i18n.t('retire.step.confirm');
       default:
         return '';
     }
@@ -690,21 +913,48 @@ export class RetireComponent implements OnInit {
     this.statusMessage.set('Submitting your retirement…');
 
     try {
-      await this.dispatchRetirement(credits, reason, pk);
-    } catch (err) {
-      const walletError = normalizeWalletError(err);
+      const token = this.auth.token()!;
 
-      if (walletError.type === 'staleEnvelope') {
-        // Rebuild the request and re-prompt once. The stale envelope is gone,
-        // so a second attempt gets a fresh sequence number.
-        this.statusMessage.set(WALLET_ERROR_MESSAGES.staleEnvelope);
-        try {
-          await this.dispatchRetirement(credits, reason, pk);
-          this.statusMessage.set('Retirement submitted.');
-          return;
-        } catch (retryErr) {
-          this.reportWalletError(retryErr);
-          return;
+      if (credits.length === 1) {
+        const credit = credits[0];
+
+        const { retirementId } = await firstValueFrom(
+          this.api.retireCredit(
+            { buyerPublicKey: pk, creditId: credit.id, tonnes: credit.tonnes, reason },
+            token,
+          ),
+        );
+
+        this.store.loadOne(credit.id).catch(() => {});
+        this.clearDraft();
+        await this.router.navigate(['/certificates', retirementId]);
+      } else {
+        const { succeeded, failed } = await firstValueFrom(
+          this.api.batchRetire(
+            {
+              buyerPublicKey: pk,
+              creditIds: credits.map((c) => c.id),
+              tonnes: credits.map((c) => c.tonnes),
+              reason,
+            },
+            token,
+          ),
+        );
+
+        for (const c of credits) {
+          this.store.loadOne(c.id).catch(() => {});
+        }
+
+        if (failed.length > 0) {
+          this.signingError.set(
+            `${failed.length} credit(s) failed: ${failed.map((f) => f.reason).join(', ')}`,
+          );
+        }
+
+        if (succeeded.length > 0) {
+          this.toast.showSuccess(`${succeeded.length} credit(s) retired successfully`);
+          this.clearDraft();
+          await this.router.navigate(['/certificates', succeeded[0]]);
         }
       }
 
@@ -735,21 +985,15 @@ export class RetireComponent implements OnInit {
       return;
     }
 
-    const { succeeded, failed } = await firstValueFrom(
-      this.api.batchRetire(
-        {
-          buyerPublicKey: pk,
-          creditIds: credits.map((c) => c.id),
-          tonnes: credits.map((c) => c.tonnes),
-          reason,
-        },
-        token,
-      ),
-    );
+  /** #959 — drops the stored draft after a successful retirement. */
+  private clearDraft(): void {
+    this.draftStore.discard();
+    this.draftRestored.set(false);
+  }
 
-    for (const c of credits) {
-      this.store.loadOne(c.id).catch(() => {});
-    }
+  formatTonnes(raw: string): string {
+    return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
+  }
 
     if (failed.length > 0) {
       this.signingError.set(

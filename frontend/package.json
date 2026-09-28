@@ -10,6 +10,7 @@
     "test:ci": "ng test --watch=false --coverage",
     "test:a11y": "ng test --watch=false --include='**/a11y/*.spec.ts'",
     "lint": "ng lint",
+    "i18n:check": "node scripts/check-i18n.mjs",
     "format:check": "prettier --check \"src/**/*.ts\" \"src/**/*.html\" \"src/*.html\""
   },
   "prettier": {

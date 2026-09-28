@@ -242,6 +242,9 @@ jobs:
         run: cd frontend && npm run lint
       - name: Check Formatting
         run: cd frontend && npm run format:check
+      # #961 — fail the build on untranslated keys in any active locale.
+      - name: Check i18n Coverage
+        run: cd frontend && npm run i18n:check
       - name: Build
         run: cd frontend && npm run build
         env:

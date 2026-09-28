@@ -30,9 +30,16 @@ interface PieDatum {
 
 /** Palette for up to 10 slices; cycles if more. */
 const CHART_COLORS = [
-  '#1976d2', '#388e3c', '#f57c00', '#7b1fa2',
-  '#c62828', '#00838f', '#558b2f', '#4527a0',
-  '#ad1457', '#37474f',
+  '#1976d2',
+  '#388e3c',
+  '#f57c00',
+  '#7b1fa2',
+  '#c62828',
+  '#00838f',
+  '#558b2f',
+  '#4527a0',
+  '#ad1457',
+  '#37474f',
 ];
 
 /**
@@ -134,12 +141,20 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
           <div class="summary-card">
             <span class="summary-label">Total Holdings</span>
             <span class="summary-value">{{ totalHoldingsTonnes() | number: '1.4-4' }} t CO₂e</span>
-            <span class="summary-sub">{{ activeCreditsCount() }} active credit{{ activeCreditsCount() !== 1 ? 's' : '' }}</span>
+            <span class="summary-sub"
+              >{{ activeCreditsCount() }} active credit{{
+                activeCreditsCount() !== 1 ? 's' : ''
+              }}</span
+            >
           </div>
           <div class="summary-card summary-card--retired">
             <span class="summary-label">Total Retired</span>
             <span class="summary-value">{{ totalRetiredTonnes() | number: '1.4-4' }} t CO₂e</span>
-            <span class="summary-sub">{{ retiredCreditsCount() }} retired credit{{ retiredCreditsCount() !== 1 ? 's' : '' }}</span>
+            <span class="summary-sub"
+              >{{ retiredCreditsCount() }} retired credit{{
+                retiredCreditsCount() !== 1 ? 's' : ''
+              }}</span
+            >
           </div>
           <div class="summary-card summary-card--neutral">
             <span class="summary-label">Net Balance</span>
@@ -183,14 +198,18 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
                     [attr.y]="barChartHeight - barPaddingBottom + 14"
                     text-anchor="middle"
                     class="bar-label"
-                  >{{ bar.label }}</text>
+                  >
+                    {{ bar.label }}
+                  </text>
                   <!-- Value above bar -->
                   <text
                     [attr.x]="(barWidth - barGap) / 2"
                     [attr.y]="barY(bar.pct) - 4"
                     text-anchor="middle"
                     class="bar-value"
-                  >{{ bar.value < 1 ? bar.value.toFixed(2) : bar.value.toFixed(0) }}</text>
+                  >
+                    {{ bar.value < 1 ? bar.value.toFixed(2) : bar.value.toFixed(0) }}
+                  </text>
                 </g>
               }
               <!-- Y-axis label -->
@@ -200,7 +219,9 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
                 text-anchor="middle"
                 class="axis-label"
                 transform="rotate(-90, -4, 152)"
-              >t CO₂e</text>
+              >
+                t CO₂e
+              </text>
             </svg>
           }
         </section>
@@ -228,7 +249,12 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
                     role="graphics-symbol"
                     [attr.aria-label]="slice.label + ': ' + (slice.share * 100).toFixed(1) + '%'"
                   >
-                    <title>{{ slice.label }}: {{ (slice.share * 100).toFixed(1) }}% ({{ slice.value.toFixed(4) }} t)</title>
+                    <title>
+                      {{ slice.label }}: {{ (slice.share * 100).toFixed(1) }}% ({{
+                        slice.value.toFixed(4)
+                      }}
+                      t)
+                    </title>
                   </path>
                 }
               </svg>
@@ -249,61 +275,185 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
       }
     </div>
   `,
-  styles: [`
-    .portfolio {
-      max-width: 900px;
-      margin: 0 auto;
-      padding: 0 1rem;
-    }
-    h1 { margin: 0 0 1.5rem; }
-    h2 { margin: 0 0 1rem; font-size: 1rem; color: #333; }
-    /* Issue #963: muted text was #888 (3.5:1 on #f9f9f9) — below the 4.5:1
-       AA threshold for body text. Darkened to #595959 (7:1). */
-    .status { color: #595959; }
-    .alert { padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.875rem; }
-    .alert--error { background: #ffebee; color: #a31515; border: 1px solid #ef9a9a; }
+  styles: [
+    `
+      .portfolio {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        margin: 0 0 1.5rem;
+      }
+      h2 {
+        margin: 0 0 1rem;
+        font-size: 1rem;
+        color: #444;
+      }
+      .status {
+        color: #888;
+      }
+      .alert {
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        font-size: 0.875rem;
+      }
+      .alert--error {
+        background: #ffebee;
+        color: #c62828;
+        border: 1px solid #ef9a9a;
+      }
 
-    /* Summary cards */
-    .summary-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-    }
-    .summary-card {
-      background: #e3f2fd;
-      border: 1px solid #90caf9;
-      border-radius: 8px;
-      padding: 1.25rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-    .summary-card--retired { background: #ede7f6; border-color: #ce93d8; }
-    .summary-card--neutral { background: #e8f5e9; border-color: #a5d6a7; }
-    .summary-label { font-size: 0.75rem; font-weight: 600; color: #404040; text-transform: uppercase; }
-    .summary-value { font-size: 1.5rem; font-weight: 700; color: #1a1a1a; }
-    .summary-sub { font-size: 0.8rem; color: #4a4a4a; }
+      /* Summary cards */
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .summary-card {
+        background: #e3f2fd;
+        border: 1px solid #90caf9;
+        border-radius: 8px;
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+      .summary-card--retired {
+        background: #ede7f6;
+        border-color: #ce93d8;
+      }
+      .summary-card--neutral {
+        background: #e8f5e9;
+        border-color: #a5d6a7;
+      }
+      .summary-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #555;
+        text-transform: uppercase;
+      }
+      .summary-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #1a1a1a;
+      }
+      .summary-sub {
+        font-size: 0.8rem;
+        color: #666;
+      }
 
-    /* Chart cards */
-    .card { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.25rem; }
-    .chart-card { overflow-x: auto; }
+      /* Chart cards */
+      .card {
+        background: #f9f9f9;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
+      }
+      .chart-card {
+        overflow-x: auto;
+      }
 
-    /* Bar chart */
-    .bar-chart { display: block; overflow: visible; }
-    .bar-label { font-size: 10px; fill: #404040; }
-    .bar-value { font-size: 9px; fill: #1a1a1a; }
-    .axis-label { font-size: 9px; fill: #404040; }
+      /* Bar chart */
+      .bar-chart {
+        display: block;
+        overflow: visible;
+      }
+      .bar-label {
+        font-size: 10px;
+        fill: #555;
+      }
+      .bar-value {
+        font-size: 9px;
+        fill: #333;
+      }
+      .axis-label {
+        font-size: 9px;
+        fill: #666;
+      }
 
-    /* Pie chart */
-    .pie-layout { display: flex; align-items: flex-start; gap: 2rem; flex-wrap: wrap; }
-    .pie-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-    .pie-legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
-    .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
-    .legend-label { flex: 1; }
-    .legend-pct { font-weight: 600; min-width: 40px; text-align: right; }
-    .legend-val { color: #4a4a4a; font-size: 0.8rem; min-width: 80px; }
-  `],
+      /* Pie chart */
+      .pie-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 2rem;
+        flex-wrap: wrap;
+      }
+      .pie-legend {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .pie-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+      }
+      .legend-swatch {
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        flex-shrink: 0;
+      }
+      .legend-label {
+        flex: 1;
+      }
+      .legend-pct {
+        font-weight: 600;
+        min-width: 40px;
+        text-align: right;
+      }
+      .legend-val {
+        color: #666;
+        font-size: 0.8rem;
+        min-width: 80px;
+      }
+
+      /* #962 — responsive pass: single-column summary cards and charts that
+       scroll instead of overflowing on narrow viewports. */
+      @media (max-width: 768px) {
+        .portfolio {
+          max-width: 100%;
+          padding: 0 0.75rem;
+        }
+        .summary-grid {
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 0.75rem;
+        }
+        .summary-card {
+          padding: 0.9rem;
+        }
+        .summary-value {
+          font-size: 1.25rem;
+        }
+        .card {
+          padding: 0.9rem;
+        }
+        .chart-card {
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+        .pie-layout {
+          gap: 1rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .summary-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+        .pie-legend {
+          width: 100%;
+        }
+      }
+    `,
+  ],
 })
 export class PortfolioComponent implements OnInit {
   protected readonly wallet = inject(StellarWalletService);
@@ -331,7 +481,11 @@ export class PortfolioComponent implements OnInit {
     const credits = this.store.activeCredits();
     let total = 0n;
     for (const c of credits) {
-      try { total += BigInt(c.tonnes); } catch { /* skip malformed */ }
+      try {
+        total += BigInt(c.tonnes);
+      } catch {
+        /* skip malformed */
+      }
     }
     return Number(total) / Number(TONNES_SCALE);
   });
@@ -343,7 +497,11 @@ export class PortfolioComponent implements OnInit {
   readonly totalRetiredTonnes = computed(() => {
     let total = 0n;
     for (const r of this.retirements()) {
-      try { total += BigInt(r.tonnes_retired); } catch { /* skip */ }
+      try {
+        total += BigInt(r.tonnes_retired);
+      } catch {
+        /* skip */
+      }
     }
     return Number(total) / Number(TONNES_SCALE);
   });
@@ -446,9 +604,7 @@ export class PortfolioComponent implements OnInit {
     const retiredCredits = this.store.retiredCredits();
     if (retiredCredits.length === 0) return;
     const records = await Promise.all(
-      retiredCredits.map((c) =>
-        firstValueFrom(this.api.getRetirement(c.id)).catch(() => null),
-      ),
+      retiredCredits.map((c) => firstValueFrom(this.api.getRetirement(c.id)).catch(() => null)),
     );
     this.retirements.set(records.filter((r): r is RetirementRecord => r !== null));
   }

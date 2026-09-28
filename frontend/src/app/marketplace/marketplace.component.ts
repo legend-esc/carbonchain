@@ -175,10 +175,8 @@ const FOCUSABLE =
         } @else if (visibleOffers().length === 0) {
           <p class="status">No active listings.</p>
         } @else {
-          <table class="offer-table">
-            <caption class="visually-hidden">
-              Marketplace listings. Use the Buy button in a row to purchase that credit.
-            </caption>
+          <div class="table-scroll">
+          <table class="offer-table" aria-label="Marketplace listings">
             <thead>
               <tr>
                 <th scope="col">Credit ID</th>
@@ -233,6 +231,7 @@ const FOCUSABLE =
               }
             </tbody>
           </table>
+          </div>
 
           <!-- Load More -->
           <div class="load-more-area" aria-live="polite">
@@ -278,6 +277,40 @@ const FOCUSABLE =
       }
     </div>
   `,
+  styles: [
+    `
+      .marketplace {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 1rem;
+      }
+      h1 {
+        margin-bottom: 1.5rem;
+      }
+      .network-warning {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        color: #856404;
+        font-size: 0.9rem;
+      }
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 10;
+      }
+      .modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 11;
+      }
+    `,
+  ],
   styles: [
     `
       .marketplace {
@@ -544,21 +577,45 @@ const FOCUSABLE =
         cursor: pointer;
       }
 
-      /* Dialog */
-      .overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.4);
-        z-index: 10;
+      /* #962 — responsive pass: scroll the wide table, stack the filter bar
+         and enlarge touch targets on small screens. */
+      .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
       }
-      .modal {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 11;
-        max-height: 90vh;
-        overflow-y: auto;
+
+      @media (max-width: 768px) {
+        .offer-table {
+          min-width: 720px;
+        }
+        .load-more-btn {
+          min-width: 100%;
+          min-height: 44px;
+        }
+        .btn-sm {
+          min-height: 44px;
+          padding: 0.5rem 0.9rem;
+        }
+        .asset-picker-inline {
+          margin-left: 0;
+          margin-top: 0.25rem;
+          display: flex;
+        }
+        .asset-picker-inline select {
+          min-height: 44px;
+          font-size: 0.85rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .offer-table {
+          min-width: 640px;
+          font-size: 0.82rem;
+        }
+        .offer-table th,
+        .offer-table td {
+          padding: 0.5rem 0.6rem;
+        }
       }
     `,
   ],
@@ -599,6 +656,24 @@ export class MarketplaceComponent implements OnInit {
     minTonnes: '',
     maxTonnes: '',
   };
+
+  onOfferSelected(offer: Offer): void {
+    this.selectedOffer.set(offer);
+  }
+
+  onBuyComplete(offer: Offer): void {
+    this.selectedOffer.set(null);
+    // Reload listings after a successful purchase
+    const pk = this.wallet.publicKey();
+    if (pk) void this.store.loadOffersBySeller(pk);
+  }
+
+  onCancelled(offer: Offer): void {
+    this.selectedOffer.set(null);
+    // Reload listings after cancellation
+    const pk = this.wallet.publicKey();
+    if (pk) void this.store.loadOffersBySeller(pk);
+  }
 
   /** Selected payment asset for the Buy action. Defaults to XLM. */
   readonly selectedPaymentAsset = signal(this.paymentAssets[0]);
