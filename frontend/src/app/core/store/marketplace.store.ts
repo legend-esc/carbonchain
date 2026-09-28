@@ -3,6 +3,7 @@ import { firstValueFrom } from 'rxjs';
 
 import { Offer } from '@shared';
 import { ApiService } from '../services/api.service';
+import { WalletScopedStore } from './wallet-scope';
 
 export type LoadingState = 'idle' | 'loading' | 'loaded' | 'error';
 
@@ -13,7 +14,7 @@ export interface MarketplaceFilters {
 }
 
 @Injectable({ providedIn: 'root' })
-export class MarketplaceStore {
+export class MarketplaceStore extends WalletScopedStore {
   private readonly api = inject(ApiService);
 
   readonly pageSize = 20;
@@ -24,6 +25,13 @@ export class MarketplaceStore {
   private readonly _page = signal(1);
   private readonly _total = signal(0);
   private readonly _filters = signal<MarketplaceFilters>({});
+
+  constructor() {
+    super();
+    // Issue #965: "my listings" are account data. Drop them the moment the
+    // connected (network, address) changes so user B never sees user A's rows.
+    this.watchScope(() => this.reset());
+  }
 
   readonly offers = this._offers.asReadonly();
   readonly state = this._state.asReadonly();
@@ -39,6 +47,7 @@ export class MarketplaceStore {
   readonly activeOffers = this._offers.asReadonly();
 
   async loadListings(page = 1, filters?: MarketplaceFilters): Promise<void> {
+    const scope = this.beginWrite();
     this._state.set('loading');
     this._error.set(null);
     if (filters) this._filters.set(filters);
@@ -50,17 +59,29 @@ export class MarketplaceStore {
           ...this._filters(),
         }),
       );
+      if (!this.commitWrite(`page=${page} rows=${result.data.length}`, scope)) {
+        this._state.set('idle');
+        return;
+      }
       this._offers.set(result.data);
       this._total.set(result.total);
       this._page.set(result.page);
       this._state.set('loaded');
     } catch (err) {
+      this.discardWrite();
       this._error.set(err instanceof Error ? err.message : 'Failed to load listings.');
       this._state.set('error');
     }
   }
 
+  /**
+   * Load every offer listed by `seller`.
+   *
+   * Issue #965 — this is account data. The result is filed under the active
+   * `(network, address)` and dropped if the wallet changes mid-flight.
+   */
   async loadOffersBySeller(seller: string): Promise<void> {
+    const scope = this.beginWrite();
     this._state.set('loading');
     this._error.set(null);
     try {
@@ -68,28 +89,42 @@ export class MarketplaceStore {
       const offers = await Promise.all(
         ids.map((id) => firstValueFrom(this.api.getOffer(Number(id)))),
       );
-      this._offers.set(offers);
-      this._total.set(offers.length);
+      // Defence in depth: never let another seller's rows into the cache.
+      const own = offers.filter((o) => o.seller === seller);
+
+      if (!this.commitWrite(`seller=${seller} rows=${own.length}`, scope)) {
+        this._state.set('idle');
+        return;
+      }
+      this._offers.set(own);
+      this._total.set(own.length);
       this._state.set('loaded');
       this._page.set(1);
     } catch (err) {
+      this.discardWrite();
       this._error.set(err instanceof Error ? err.message : 'Failed to load offers.');
       this._state.set('error');
     }
   }
 
   async loadOffer(id: number): Promise<void> {
+    const scope = this.beginWrite();
     this._state.set('loading');
     this._error.set(null);
     try {
       const offer = await firstValueFrom(this.api.getOffer(id));
+      if (!this.commitWrite(`offer=${id}`, scope)) {
+        this._state.set('idle');
+        return;
+      }
       this._offers.update((list) => {
         const idx = list.findIndex((o) => o.id === String(id));
         return idx >= 0 ? [...list.slice(0, idx), offer, ...list.slice(idx + 1)] : [...list, offer];
       });
       this._state.set('loaded');
     } catch (err) {
-      this._error.set(err instanceof Error ? err.message : `Failed to load offer ${id}.`);
+      this.discardWrite();
+      this._error.set(err instanceof Error ? err.message : `Failed to load offer ${id}.`;
       this._state.set('error');
     }
   }
@@ -117,5 +152,6 @@ export class MarketplaceStore {
     this._page.set(1);
     this._total.set(0);
     this._filters.set({});
+    this.clearCacheKey();
   }
 }

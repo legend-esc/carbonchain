@@ -251,6 +251,11 @@ jobs:
           SENTRY_RELEASE: ${{ format('{0}+{1}', github.sha, github.sha) }}
       - name: Run Tests
         run: cd frontend && npm run test:ci
+      # Issue #963 — accessibility conformance gate. Runs axe against the primary
+      # flows and fails the build on any serious or critical violation
+      # (WCAG 2.1 AA; AAA is out of scope).
+      - name: Accessibility (axe) conformance
+        run: cd frontend && npm run test:a11y
       # Issue #543: Upload source maps to Sentry and associate them with this
       # release so production errors resolve to original TypeScript lines.
       # Only runs on pushes to main (i.e. production deployments); skipped on

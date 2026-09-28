@@ -1,18 +1,23 @@
-import { Component, inject, signal, computed, OnInit, HostListener } from '@angular/core';
+import { Component, inject, signal, computed, OnInit, ElementRef, viewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { Offer } from '@shared';
+
 import { ApiService } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ToastService } from '../core/services/toast.service';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { MarketplaceStore } from '../core/store/marketplace.store';
+import { MarketEventsStore } from '../core/store/market-events.store';
+import { WatchlistStore, defaultOfferKey } from '../core/store/watchlist.store';
 import { MarketplaceListComponent } from './marketplace-list.component';
 import { OfferDetailComponent } from './offer-detail.component';
-import { Offer } from '@shared';
+import { PriceHistoryChartComponent } from './price-history-chart.component';
+import { WatchlistComponent } from './watchlist.component';
 
 interface FilterState {
   methodology: string;
@@ -22,17 +27,23 @@ interface FilterState {
   maxTonnes: string;
 }
 
+/** Focusable selector used for the dialog's focus trap (issue #963). */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 @Component({
   selector: 'app-marketplace',
   standalone: true,
   imports: [
     CommonModule,
+    FormsModule,
     ConnectWalletComponent,
     TranslatePipe,
     MarketplaceListComponent,
     OfferDetailComponent,
+    PriceHistoryChartComponent,
+    WatchlistComponent,
   ],
-  imports: [CommonModule, FormsModule, ConnectWalletComponent, TranslatePipe],
   template: `
     <div class="marketplace">
       <h1>{{ 'marketplace.title' | translate }}</h1>
@@ -51,15 +62,6 @@ interface FilterState {
 
         <app-marketplace-list (offerSelected)="onOfferSelected($event)" />
 
-        @if (selectedOffer()) {
-          <div class="overlay" (click)="selectedOffer.set(null)" role="presentation"></div>
-          <div class="modal" role="dialog" aria-modal="true">
-            <app-offer-detail
-              [offer]="selectedOffer()!"
-              (closed)="selectedOffer.set(null)"
-              (buy)="onBuyComplete($event)"
-              (cancelled)="onCancelled($event)"
-            />
         <!-- Filter controls -->
         <section class="filters" aria-label="Filter marketplace listings">
           <div class="filters__grid">
@@ -69,7 +71,6 @@ interface FilterState {
                 id="filter-methodology"
                 [(ngModel)]="filters.methodology"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by methodology"
               >
                 <option value="">All methodologies</option>
                 @for (m of methodologies; track m) {
@@ -86,7 +87,6 @@ interface FilterState {
                 placeholder="e.g. NG, BR, US"
                 [(ngModel)]="filters.geography"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by geography"
               />
             </label>
 
@@ -98,7 +98,6 @@ interface FilterState {
                 placeholder="e.g. 2024"
                 [(ngModel)]="filters.vintageYear"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by vintage year"
               />
             </label>
 
@@ -110,7 +109,6 @@ interface FilterState {
                 placeholder="e.g. 1"
                 [(ngModel)]="filters.minTonnes"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by minimum tonnes"
                 min="0"
               />
             </label>
@@ -123,7 +121,6 @@ interface FilterState {
                 placeholder="e.g. 1000"
                 [(ngModel)]="filters.maxTonnes"
                 (ngModelChange)="applyFilters()"
-                aria-label="Filter by maximum tonnes"
                 min="0"
               />
             </label>
@@ -133,22 +130,39 @@ interface FilterState {
               type="button"
               (click)="resetFilters()"
               [disabled]="!hasActiveFilters()"
-              aria-label="Reset all filters"
             >
               Reset Filters
             </button>
           </div>
         </section>
 
+        <!-- Issue #958: watchlist + client-side target-price alerts -->
+        <app-watchlist [offers]="visibleOffers()" (alertSelected)="onAlertSelected($event)" />
+
+        <!-- Issue #958: price history fed by the indexed event log -->
+        @if (historyKey()) {
+          <section class="card chart-card" aria-label="Price history">
+            <app-price-history-chart
+              [series]="eventsStore.historyFor(historyKey())"
+              [projectLabel]="historyKey()!"
+            />
+            <button class="btn btn-outline" type="button" (click)="toggleWatch(historyKey()!)">
+              {{ watchlist.isWatching(historyKey()!) ? 'Stop watching' : 'Watch' }}
+              {{ historyKey() }}
+            </button>
+          </section>
+        }
+
         <!-- Loading skeleton (initial load) -->
         @if (isLoading() && visibleOffers().length === 0) {
-          <div class="skeleton-wrapper" aria-busy="true" aria-label="Loading listings">
+          <div class="skeleton-wrapper" aria-busy="true" role="status" aria-label="Loading listings">
             @for (i of skeletonRows; track i) {
-              <div class="skeleton-row">
+              <div class="skeleton-row" aria-hidden="true">
                 <div class="skeleton-cell wide"></div>
                 <div class="skeleton-cell"></div>
                 <div class="skeleton-cell narrow"></div>
                 <div class="skeleton-cell"></div>
+                <div class="skeleton-cell narrow"></div>
                 <div class="skeleton-cell narrow"></div>
                 <div class="skeleton-cell narrow"></div>
                 <div class="skeleton-cell narrow"></div>
@@ -161,41 +175,41 @@ interface FilterState {
         } @else if (visibleOffers().length === 0) {
           <p class="status">No active listings.</p>
         } @else {
-          <table class="offer-table" aria-label="Marketplace listings">
+          <table class="offer-table">
+            <caption class="visually-hidden">
+              Marketplace listings. Use the Buy button in a row to purchase that credit.
+            </caption>
             <thead>
               <tr>
                 <th scope="col">Credit ID</th>
                 <th scope="col">Project</th>
-                <th scope="col">Vintage</th>
-                <th scope="col">Methodology</th>
                 <th scope="col">Tonnes</th>
+                <th scope="col">Methodology</th>
                 <th scope="col">Price</th>
                 <th scope="col">Asset</th>
                 <th scope="col">Status</th>
                 <th scope="col">
-                  Action
                   <label class="asset-picker-inline" for="global-asset-picker">
-                    <select
-                      id="global-asset-picker"
-                      aria-label="Select payment asset"
-                      (change)="onAssetChange($event)"
-                    >
+                    Payment asset
+                    <select id="global-asset-picker" (change)="onAssetChange($event)">
                       @for (a of paymentAssets; track a.label) {
-                        <option [value]="a.label">{{ a.label }}</option>
+                        <option [value]="a.label" [selected]="a.label === selectedPaymentAsset().label">
+                          {{ a.label }}
+                        </option>
                       }
                     </select>
                   </label>
                 </th>
+                <th scope="col">Action</th>
               </tr>
             </thead>
             <tbody>
               @for (offer of visibleOffers(); track offer.id) {
                 <tr class="offer-row">
                   <td class="mono">{{ offer.credit_id | slice: 0 : 12 }}…</td>
-                  <td>{{ offer.credit_id | slice: 0 : 8 }}</td>
-                  <td>—</td>
-                  <td>{{ offer.methodology ?? '—' }}</td>
+                  <td>{{ projectOf(offer) }}</td>
                   <td>{{ formatTonnes(offer.tonnes_available) }}</td>
+                  <td>{{ offer.methodology ?? '—' }}</td>
                   <td>{{ formatPrice(offer) }}</td>
                   <td>
                     <span class="badge badge-asset">{{ offer.price_asset_label ?? 'XLM' }}</span>
@@ -209,7 +223,7 @@ interface FilterState {
                       type="button"
                       [disabled]="offer.status !== 'open' || buying() === offer.id"
                       (click)="buy(offer)"
-                      [attr.aria-label]="'Buy credit ' + offer.credit_id"
+                      [attr.aria-label]="'Buy credit ' + offer.credit_id + ' for ' + formatPrice(offer)"
                       [attr.aria-busy]="buying() === offer.id"
                     >
                       {{ buying() === offer.id ? 'Buying…' : 'Buy' }}
@@ -220,7 +234,7 @@ interface FilterState {
             </tbody>
           </table>
 
-          <!-- Infinite scroll sentinel + Load More button -->
+          <!-- Load More -->
           <div class="load-more-area" aria-live="polite">
             @if (isLoadingMore()) {
               <div class="spinner" role="status" aria-label="Loading more listings">
@@ -229,42 +243,41 @@ interface FilterState {
                 <span class="spinner-dot"></span>
               </div>
             } @else if (hasMore()) {
-              <button
-                class="btn btn-outline load-more-btn"
-                type="button"
-                (click)="loadMore()"
-                aria-label="Load more listings"
-              >
+              <button class="btn btn-outline load-more-btn" type="button" (click)="loadMore()">
                 Load More ({{ visibleOffers().length }} loaded)
               </button>
             } @else {
               <p class="end-of-list">
-                All {{ visibleOffers().length }} listing{{
-                  visibleOffers().length === 1 ? '' : 's'
-                }}
+                All {{ visibleOffers().length }} listing{{ visibleOffers().length === 1 ? '' : 's' }}
                 loaded
               </p>
             }
           </div>
         }
+
+        <!-- Offer detail dialog. Issue #963: focus is trapped and restored. -->
+        @if (selectedOffer()) {
+          <div class="overlay" (click)="closeOffer()" role="presentation"></div>
+          <div
+            #offerDialog
+            class="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="marketplace-offer-dialog"
+            (keydown)="onDialogKeydown($event)"
+          >
+            <h2 id="marketplace-offer-dialog" class="visually-hidden">Offer details</h2>
+            <app-offer-detail
+              [offer]="selectedOffer()!"
+              (closed)="closeOffer()"
+              (buy)="onBuyComplete($event)"
+              (cancelled)="onCancelled($event)"
+            />
+          </div>
+        }
       }
     </div>
   `,
-  styles: [`
-    .marketplace { max-width: 960px; margin: 0 auto; padding: 1rem; }
-    h1 { margin-bottom: 1.5rem; }
-    .network-warning {
-      background: #fff3cd;
-      border: 1px solid #ffc107;
-      border-radius: 6px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-      color: #856404;
-      font-size: 0.9rem;
-    }
-    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; }
-    .modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 11; }
-  `],
   styles: [
     `
       .marketplace {
@@ -274,6 +287,18 @@ interface FilterState {
       }
       h1 {
         margin-bottom: 1.5rem;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
       }
       .auth-prompt {
         display: flex;
@@ -307,13 +332,27 @@ interface FilterState {
       .filter-field input,
       .filter-field select {
         padding: 0.4rem 0.6rem;
-        border: 1px solid #ccc;
+        border: 1px solid #767676;
         border-radius: 6px;
         font-size: 0.9rem;
         background: #fff;
       }
+      .filter-field input:focus-visible,
+      .filter-field select:focus-visible {
+        outline: 3px solid #1565c0;
+        outline-offset: 1px;
+      }
       .filter-reset {
         align-self: flex-end;
+      }
+
+      /* Cards */
+      .card {
+        background: #f9f9f9;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
       }
 
       /* Skeleton */
@@ -354,10 +393,10 @@ interface FilterState {
 
       /* Table */
       .status {
-        color: #888;
+        color: #595959;
       }
       .error {
-        color: #e53935;
+        color: #a31515;
         font-weight: 500;
       }
       .offer-table {
@@ -372,7 +411,7 @@ interface FilterState {
         text-align: left;
       }
       .offer-table th {
-        background: #f5f5f5;
+        background: #f0f0f0;
         font-weight: 600;
         white-space: nowrap;
       }
@@ -391,22 +430,22 @@ interface FilterState {
       }
       .badge-open {
         background: #e8f5e9;
-        color: #2e7d32;
+        color: #1b5e20;
       }
       .badge-filled {
         background: #e3f2fd;
-        color: #1565c0;
+        color: #0d47a1;
       }
       .badge-cancelled {
         background: #fce4ec;
-        color: #c62828;
+        color: #a31515;
       }
       .badge-asset {
         background: #f3e5f5;
         color: #6a1b9a;
       }
 
-      /* Load More / Infinite scroll */
+      /* Load More */
       .load-more-area {
         display: flex;
         justify-content: center;
@@ -419,7 +458,7 @@ interface FilterState {
       }
       .end-of-list {
         font-size: 0.85rem;
-        color: #999;
+        color: #595959;
         margin: 0;
       }
       .spinner {
@@ -431,7 +470,7 @@ interface FilterState {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: #4caf50;
+        background: #2e7d32;
         animation: bounce 1s infinite ease-in-out;
       }
       .spinner-dot:nth-child(2) {
@@ -463,21 +502,21 @@ interface FilterState {
         font-weight: 500;
       }
       .btn:focus-visible {
-        outline: 2px solid #4caf50;
+        outline: 3px solid #1565c0;
         outline-offset: 2px;
       }
       .btn-primary {
-        background: #4caf50;
+        background: #2e7d32;
         color: #fff;
       }
       .btn-primary:disabled {
-        opacity: 0.6;
+        background: #9c9c9c;
         cursor: not-allowed;
       }
       .btn-outline {
         background: transparent;
-        border: 1px solid #ccc;
-        color: #333;
+        border: 1px solid #767676;
+        color: #262626;
       }
       .btn-outline:disabled {
         opacity: 0.4;
@@ -492,17 +531,34 @@ interface FilterState {
       .asset-picker-inline {
         display: inline-flex;
         align-items: center;
-        margin-left: 0.4rem;
+        gap: 0.35rem;
         font-weight: 400;
         font-size: 0.75rem;
       }
       .asset-picker-inline select {
         padding: 0.15rem 0.3rem;
-        border: 1px solid #ccc;
+        border: 1px solid #767676;
         border-radius: 4px;
         font-size: 0.75rem;
         background: #fff;
         cursor: pointer;
+      }
+
+      /* Dialog */
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 10;
+      }
+      .modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 11;
+        max-height: 90vh;
+        overflow-y: auto;
       }
     `,
   ],
@@ -510,6 +566,9 @@ interface FilterState {
 export class MarketplaceComponent implements OnInit {
   protected readonly auth = inject(AuthService);
   protected readonly wallet = inject(StellarWalletService);
+  protected readonly store = inject(MarketplaceStore);
+  protected readonly eventsStore = inject(MarketEventsStore);
+  protected readonly watchlist = inject(WatchlistStore);
   private readonly api = inject(ApiService);
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
@@ -541,22 +600,6 @@ export class MarketplaceComponent implements OnInit {
     maxTonnes: '',
   };
 
-  onOfferSelected(offer: Offer): void {
-    this.selectedOffer.set(offer);
-  }
-
-  onBuyComplete(offer: Offer): void {
-    this.selectedOffer.set(null);
-    // Reload listings after a successful purchase
-    const pk = this.wallet.publicKey();
-    if (pk) void this.store.loadOffersBySeller(pk);
-  }
-
-  onCancelled(offer: Offer): void {
-    this.selectedOffer.set(null);
-    // Reload listings after cancellation
-    const pk = this.wallet.publicKey();
-    if (pk) void this.store.loadOffersBySeller(pk);
   /** Selected payment asset for the Buy action. Defaults to XLM. */
   readonly selectedPaymentAsset = signal(this.paymentAssets[0]);
 
@@ -567,22 +610,116 @@ export class MarketplaceComponent implements OnInit {
   readonly isLoadingMore = signal(false);
   readonly error = signal<string | null>(null);
   readonly buying = signal<string | null>(null);
-  /** Cursor for the next page; null means no more results. */
+  /** The offer shown in the modal dialog. */
+  readonly selectedOffer = signal<Offer | null>(null);
+
   private nextCursor: string | null = null;
 
-  hasMore(): boolean {
-    return this.nextCursor !== null;
-  }
+  private readonly offerDialog = viewChild<ElementRef<HTMLElement>>('offerDialog');
+  /** Focus returns here when the dialog closes. */
+  private lastFocused: HTMLElement | null = null;
+
+  readonly hasMore = computed(() => this.nextCursor !== null);
 
   readonly hasActiveFilters = computed(() => {
     const f = this.filters;
     return !!(f.methodology || f.geography || f.vintageYear || f.minTonnes || f.maxTonnes);
   });
 
+  /**
+   * Issue #958 — the project whose price history is shown: the one owning the
+   * first listing, or the watched key with the most history. Null when there is
+   * nothing worth charting yet.
+   */
+  readonly historyKey = computed(() => {
+    const first = this.visibleOffers()[0];
+    return first ? defaultOfferKey(first) : null;
+  });
+
   async ngOnInit(): Promise<void> {
     if (this.auth.isAuthenticated()) {
       await this.load();
+      void this.eventsStore.load();
     }
+  }
+
+  onOfferSelected(offer: Offer): void {
+    this.lastFocused = document.activeElement as HTMLElement | null;
+    this.selectedOffer.set(offer);
+    // Issue #963: move focus into the dialog so keyboard users are not stranded.
+    queueMicrotask(() => this.focusFirstInDialog());
+  }
+
+  onAlertSelected(alert: { key: string; offer: Offer }): void {
+    this.lastFocused = document.activeElement as HTMLElement | null;
+    this.selectedOffer.set(alert.offer);
+    queueMicrotask(() => this.focusFirstInDialog());
+  }
+
+  /**
+   * Issue #963 — Escape closes the dialog and Tab cycles inside it. Implemented
+   * as a `(keydown)` handler on the dialog element rather than a document
+   * listener so the trap only exists while the dialog is open.
+   */
+  onDialogKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      this.closeOffer();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+
+    const focusable = this.dialogFocusable();
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+
+    if (event.shiftKey && (active === first || !this.dialogContains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  closeOffer(): void {
+    this.selectedOffer.set(null);
+    // Issue #963: return focus to whatever opened the dialog.
+    this.lastFocused?.focus();
+    this.lastFocused = null;
+  }
+
+  private focusFirstInDialog(): void {
+    this.dialogFocusable()[0]?.focus();
+  }
+
+  private dialogFocusable(): HTMLElement[] {
+    const host = this.offerDialog()?.nativeElement;
+    if (!host) return [];
+    return [...host.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+      (el) => el.offsetParent !== null || el === document.activeElement,
+    );
+  }
+
+  private dialogContains(el: Element | null): boolean {
+    return !!el && !!this.offerDialog()?.nativeElement.contains(el);
+  }
+
+  onBuyComplete(offer: Offer): void {
+    this.closeOffer();
+    // Reload listings after a successful purchase
+    const pk = this.wallet.publicKey();
+    if (pk) void this.store.loadOffersBySeller(pk);
+  }
+
+  onCancelled(offer: Offer): void {
+    this.closeOffer();
+    // Reload listings after cancellation
+    const pk = this.wallet.publicKey();
+    if (pk) void this.store.loadOffersBySeller(pk);
   }
 
   /** Load (or reload) the first page of results, resetting state. */
@@ -596,6 +733,8 @@ export class MarketplaceComponent implements OnInit {
       const result = await firstValueFrom(this.api.getListingsCursor(this.buildParams()));
       this.visibleOffers.set(result.data);
       this.nextCursor = result.next_cursor ?? null;
+      // Issue #958: re-run watchlist alerts against the fresh listings.
+      this.watchlist.evaluate(result.data);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load listings.';
       this.error.set(msg);
@@ -619,6 +758,7 @@ export class MarketplaceComponent implements OnInit {
       );
       this.visibleOffers.update((prev) => [...prev, ...result.data]);
       this.nextCursor = result.next_cursor ?? null;
+      this.watchlist.evaluate(this.visibleOffers());
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load more listings.';
       this.toast.show(msg, 'error');
@@ -649,6 +789,20 @@ export class MarketplaceComponent implements OnInit {
     if (found) this.selectedPaymentAsset.set(found);
   }
 
+  /** Issue #958 — add/remove a project from the local watchlist. */
+  toggleWatch(key: string): void {
+    if (this.watchlist.isWatching(key)) {
+      this.watchlist.unwatch(key);
+    } else {
+      this.watchlist.watch(key, key);
+      this.watchlist.evaluate(this.visibleOffers());
+    }
+  }
+
+  projectOf(offer: Offer): string {
+    return (offer as { project_id?: string }).project_id ?? '—';
+  }
+
   async buy(offer: Offer): Promise<void> {
     const pk = this.wallet.publicKey();
     if (!pk) {
@@ -658,8 +812,8 @@ export class MarketplaceComponent implements OnInit {
 
     this.buying.set(offer.id);
     try {
-      const { networkPassphrase } = await this.wallet.getNetworkDetails();
-      // The buy flow: build a transaction XDR client-side then sign via Freighter.
+      // The buy flow: the offer-detail dialog builds the XDR client-side and
+      // has the wallet sign it (see OfferDetailComponent.executeBuy).
       await firstValueFrom(this.api.buyOffer(offer.id, this.auth.token() ?? ''));
       this.toast.show('Purchase submitted successfully!', 'success');
       await this.load();
@@ -677,8 +831,7 @@ export class MarketplaceComponent implements OnInit {
 
   formatXlm(stroops: string): string {
     return (
-      (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
-      ' XLM'
+      (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' XLM'
     );
   }
 
@@ -687,8 +840,8 @@ export class MarketplaceComponent implements OnInit {
    * Offers may have price_xlm (legacy) or price_amount + price_asset (new).
    */
   formatPrice(offer: Offer): string {
-    if ((offer as any).price_amount !== undefined) {
-      const amount = Number((offer as any).price_amount) / 10_000_000;
+    if (offer.price_amount !== undefined) {
+      const amount = Number(offer.price_amount) / 10_000_000;
       return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
     // Legacy XLM-only offer

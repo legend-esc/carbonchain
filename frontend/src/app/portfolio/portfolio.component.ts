@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal, computed } from '@angular/core';
+import { Component, inject, OnInit, signal, computed, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -256,10 +256,12 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
       padding: 0 1rem;
     }
     h1 { margin: 0 0 1.5rem; }
-    h2 { margin: 0 0 1rem; font-size: 1rem; color: #444; }
-    .status { color: #888; }
+    h2 { margin: 0 0 1rem; font-size: 1rem; color: #333; }
+    /* Issue #963: muted text was #888 (3.5:1 on #f9f9f9) — below the 4.5:1
+       AA threshold for body text. Darkened to #595959 (7:1). */
+    .status { color: #595959; }
     .alert { padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.875rem; }
-    .alert--error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+    .alert--error { background: #ffebee; color: #a31515; border: 1px solid #ef9a9a; }
 
     /* Summary cards */
     .summary-grid {
@@ -279,9 +281,9 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
     }
     .summary-card--retired { background: #ede7f6; border-color: #ce93d8; }
     .summary-card--neutral { background: #e8f5e9; border-color: #a5d6a7; }
-    .summary-label { font-size: 0.75rem; font-weight: 600; color: #555; text-transform: uppercase; }
+    .summary-label { font-size: 0.75rem; font-weight: 600; color: #404040; text-transform: uppercase; }
     .summary-value { font-size: 1.5rem; font-weight: 700; color: #1a1a1a; }
-    .summary-sub { font-size: 0.8rem; color: #666; }
+    .summary-sub { font-size: 0.8rem; color: #4a4a4a; }
 
     /* Chart cards */
     .card { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.25rem; }
@@ -289,9 +291,9 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 
     /* Bar chart */
     .bar-chart { display: block; overflow: visible; }
-    .bar-label { font-size: 10px; fill: #555; }
-    .bar-value { font-size: 9px; fill: #333; }
-    .axis-label { font-size: 9px; fill: #666; }
+    .bar-label { font-size: 10px; fill: #404040; }
+    .bar-value { font-size: 9px; fill: #1a1a1a; }
+    .axis-label { font-size: 9px; fill: #404040; }
 
     /* Pie chart */
     .pie-layout { display: flex; align-items: flex-start; gap: 2rem; flex-wrap: wrap; }
@@ -300,7 +302,7 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
     .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
     .legend-label { flex: 1; }
     .legend-pct { font-weight: 600; min-width: 40px; text-align: right; }
-    .legend-val { color: #666; font-size: 0.8rem; min-width: 80px; }
+    .legend-val { color: #4a4a4a; font-size: 0.8rem; min-width: 80px; }
   `],
 })
 export class PortfolioComponent implements OnInit {
@@ -402,13 +404,36 @@ export class PortfolioComponent implements OnInit {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
+  constructor() {
+    // Issue #965 — the store clears itself on an account/network switch, so the
+    // derived analytics go empty rather than showing the previous account's
+    // numbers. Reload for the new account so the correct holdings appear
+    // immediately rather than after a manual refresh.
+    effect(() => {
+      const pk = this.wallet.publicKey();
+      if (!pk) {
+        this.retirements.set([]);
+        this.loadError.set(null);
+        return;
+      }
+      void this.loadFor(pk);
+    });
+  }
+
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
-    if (!pk) return;
+    if (pk) await this.loadFor(pk);
+  }
+
+  private async loadFor(owner: string): Promise<void> {
     this.loading.set(true);
     this.loadError.set(null);
     try {
-      await this.store.loadByProject(pk);
+      // Issue #965: this used to call loadByProject(pk) — the wallet address was
+      // being passed as a project id, which is how one account's holdings could
+      // be attributed to another. The owner endpoint is the correct source.
+      await this.store.loadByOwner(owner);
+      this.retirements.set([]);
       await this.loadRetirements();
     } catch (err) {
       this.loadError.set(err instanceof Error ? err.message : 'Failed to load portfolio data.');

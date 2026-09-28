@@ -58,6 +58,21 @@ export interface CertificateVerification {
   certificate_ipfs_hash?: string;
 }
 
+/**
+ * A row from the indexed contract-event log (issue #958).
+ * Mirrors `SorobanEvent` in api/src/events/events.service.ts.
+ */
+export interface SorobanEvent {
+  id: string;
+  /** Event topic, e.g. 'OfferListed' / 'OfferPriceChanged' / 'OfferFilled'. */
+  type: string;
+  contractId: string;
+  ledger: number;
+  /** Unix seconds. */
+  timestamp: number;
+  data: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -207,8 +222,19 @@ export class ApiService {
     );
   }
 
-  /** POST /marketplace/offer/:id/buy with signed XDR from user wallet */
-  buyOffer(offerId: number, buyerPublicKey: string, signedXdr: string, token: string): Observable<void> {
+  /**
+   * POST /marketplace/offer/:id/buy with signed XDR from user wallet.
+   *
+   * `buyerPublicKey` and `signedXdr` are optional so the offer-detail flow
+   * (client-built + Freighter-signed XDR) and the simplified marketplace buy
+   * flow (server-side signing) can share one endpoint method.
+   */
+  buyOffer(
+    offerId: number,
+    buyerPublicKey?: string,
+    signedXdr?: string,
+    token = '',
+  ): Observable<void> {
     return this.http.post<void>(
       `${this.baseUrl}/marketplace/offer/${offerId}/buy`,
       { buyerPublicKey, signedXdr },
@@ -290,7 +316,7 @@ export class ApiService {
   }
 
   /** GET /retirement/certificates/:id/download — returns PDF blob (requires JWT) */
-  downloadCertificate(id: string, token: string): Observable<Blob> {
+  downloadRetirementCertificate(id: string, token: string): Observable<Blob> {
     return this.http.get(`${this.baseUrl}/retirement/certificates/${id}/download`, {
       headers: this.authHeaders(token),
       responseType: 'blob',
@@ -298,15 +324,35 @@ export class ApiService {
   }
 
   /** GET /retirement/certificates/:id/verify — on-chain verification (public) */
-  verifyCertificate(id: string): Observable<import('@shared').CertificateVerification> {
+  verifyCertificateById(id: string): Observable<import('@shared').CertificateVerification> {
     return this.http.get<import('@shared').CertificateVerification>(
       `${this.baseUrl}/retirement/certificates/${id}/verify`,
-  /** POST /marketplace/offer/:id/buy — fill an existing offer (buyer side) */
-  buyOffer(id: number | string, token: string): Observable<void> {
-    return this.http.post<void>(
-      `${this.baseUrl}/marketplace/offer/${id}/buy`,
-      {},
-      { headers: this.authHeaders(token) },
+    );
+  }
+
+  // ── Events ─────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /events — indexed contract events, keyset-paginated (issue #931).
+   *
+   * Issue #958 — the price-history chart and the watchlist alerts are both fed
+   * from this index. Pass `eventType` to narrow to a single topic and
+   * `beforeCursor` to walk backwards through history.
+   */
+  getEvents(params?: {
+    contractId?: string;
+    eventType?: string;
+    limit?: number;
+    beforeCursor?: string;
+  }): Observable<{ events: SorobanEvent[]; nextCursor: string | null }> {
+    const httpParams: Record<string, string> = {};
+    if (params?.contractId) httpParams['contractId'] = params.contractId;
+    if (params?.eventType) httpParams['eventType'] = params.eventType;
+    if (params?.limit !== undefined) httpParams['limit'] = String(params.limit);
+    if (params?.beforeCursor) httpParams['beforeCursor'] = params.beforeCursor;
+    return this.http.get<{ events: SorobanEvent[]; nextCursor: string | null }>(
+      `${this.baseUrl}/events`,
+      { params: httpParams },
     );
   }
 

@@ -1,4 +1,3 @@
-import { Component, inject, signal, computed } from '@angular/core';
 import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
@@ -20,6 +19,11 @@ import { CreditStore } from '../core/store/credit.store';
 import { ToastService } from '../core/services/toast.service';
 import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
+import {
+  WalletError,
+  WALLET_ERROR_MESSAGES,
+  normalizeWalletError,
+} from '../core/services/wallet-errors';
 
 /** Validates that a tonnes value is a positive multiple of 100,000. */
 export function multipleOf100kValidator(): ValidatorFn {
@@ -33,6 +37,13 @@ export function multipleOf100kValidator(): ValidatorFn {
 }
 
 export type WizardStep = 1 | 2 | 3;
+
+/**
+ * Issue #960 — a stale envelope (issues #57/#59) is recoverable: rebuild the
+ * transaction and re-prompt exactly once. A second failure is surfaced to the
+ * user rather than looping.
+ */
+const MAX_STALE_RETRIES = 1;
 
 @Component({
   selector: 'app-retire',
@@ -55,80 +66,29 @@ export type WizardStep = 1 | 2 | 3;
           </div>
         }
 
-        @if (step() === 'form') {
-          <form class="wizard-form" (ngSubmit)="goConfirm()" #f="ngForm">
-            <label>
-              {{ 'retire.creditId' | translate }}
-              <input name="creditId" [(ngModel)]="creditId" required placeholder="037176a1…" />
-            </label>
-            <label>
-              {{ 'retire.tonnes' | translate }}
-              <input
-                name="tonnes"
-                [(ngModel)]="tonnes"
-                required
-                type="number"
-                min="100000"
-                step="100000"
-                placeholder="1000000"
-              />
-              @if (tonnesError) {
-                <span class="field-error">Must be a positive multiple of 100,000</span>
-              }
-            </label>
-            <label>
-              {{ 'retire.reason' | translate }}
-              <input
-                name="reason"
-                [(ngModel)]="reason"
-                required
-                placeholder="2024 Scope 3 offset"
-              />
-            </label>
-            <button class="btn btn-primary" type="submit" [disabled]="f.invalid || tonnesError || !canSubmit()">
-              {{ 'retire.review' | translate }}
-            </button>
-          </form>
-        }
-
-        @if (step() === 'confirm') {
-          <div class="confirm-box">
-            <h2>{{ 'retire.confirmTitle' | translate }}</h2>
-            <dl>
-              <dt>{{ 'retire.creditId' | translate }}</dt>
-              <dd class="mono">{{ creditId }}</dd>
-              <dt>{{ 'retire.tonnes' | translate }}</dt>
-              <dd>{{ formatTonnes(tonnes) }}</dd>
-              <dt>{{ 'retire.reason' | translate }}</dt>
-              <dd>{{ reason }}</dd>
-              <dt>{{ 'retire.wallet' | translate }}</dt>
-              <dd class="mono">{{ wallet.publicKey() }}</dd>
-            </dl>
-            <div class="actions">
-              <button class="btn btn-outline" (click)="step.set('form')">
-                {{ 'retire.back' | translate }}
-              </button>
-              <button class="btn btn-danger" [disabled]="submitting() || !canSubmit()" (click)="submit()">
-                {{
-                  submitting() ? ('retire.submitting' | translate) : ('retire.confirm' | translate)
-                }}
-        <!-- Step indicator -->
+        <!-- Step indicator. Issue #963: aria-live so screen readers announce wizard progress. -->
         <nav class="step-indicator" aria-label="Retirement wizard steps">
-          @for (s of [1, 2, 3]; track s) {
-            <div
-              class="step"
-              [class.step--active]="currentStep() === s"
-              [class.step--done]="currentStep() > s"
-              [attr.aria-current]="currentStep() === s ? 'step' : null"
-            >
-              <span class="step__num">{{ s }}</span>
-              <span class="step__label">{{ stepLabel(s) }}</span>
-            </div>
-            @if (s < 3) {
-              <div class="step-divider"></div>
+          <ol class="step-indicator__list" aria-live="polite" aria-atomic="true">
+            @for (s of [1, 2, 3]; track s) {
+              <li
+                class="step"
+                [class.step--active]="currentStep() === s"
+                [class.step--done]="currentStep() > s"
+                [attr.aria-current]="currentStep() === s ? 'step' : null"
+              >
+                <span class="step__num" aria-hidden="true">{{ s }}</span>
+                <span class="step__label">
+                  {{ stepLabel(s) }}
+                  @if (currentStep() === s) {
+                    <span class="visually-hidden">(current step)</span>
+                  }
+                </span>
+              </li>
             }
-          }
+          </ol>
         </nav>
+
+        <p class="visually-hidden" role="status">{{ stepAnnouncement() }}</p>
 
         <!-- ── Step 1: Select Credits ── -->
         @if (currentStep() === 1) {
@@ -136,12 +96,15 @@ export type WizardStep = 1 | 2 | 3;
             <h2 id="step1-heading">Step 1: Select credits to retire</h2>
 
             @if (store.isLoading()) {
-              <p class="status">Loading your credits…</p>
+              <p class="status" role="status">Loading your credits…</p>
             } @else if (activeCredits().length === 0) {
               <p class="status">You have no active credits to retire.</p>
             } @else {
               <p class="selection-hint">{{ selectedCredits().length }} credit(s) selected</p>
               <table class="credit-table" aria-label="Your active credits">
+                <caption class="visually-hidden">
+                  Credits you own and can retire. Activate a row checkbox to select it.
+                </caption>
                 <thead>
                   <tr>
                     <th scope="col">
@@ -161,23 +124,12 @@ export type WizardStep = 1 | 2 | 3;
                 </thead>
                 <tbody>
                   @for (credit of activeCredits(); track credit.id) {
-                    <tr
-                      class="credit-row"
-                      [class.credit-row--selected]="isSelected(credit)"
-                      (click)="toggleCredit(credit)"
-                      role="button"
-                      tabindex="0"
-                      (keydown.enter)="toggleCredit(credit)"
-                      (keydown.space)="$event.preventDefault(); toggleCredit(credit)"
-                      [attr.aria-selected]="isSelected(credit)"
-                      [attr.aria-label]="'Select credit ' + credit.id"
-                    >
+                    <tr class="credit-row" [class.credit-row--selected]="isSelected(credit)">
                       <td>
                         <input
                           type="checkbox"
                           [checked]="isSelected(credit)"
                           (change)="toggleCredit(credit)"
-                          (click)="$event.stopPropagation()"
                           [attr.aria-label]="'Select credit ' + credit.id"
                         />
                       </td>
@@ -198,7 +150,6 @@ export type WizardStep = 1 | 2 | 3;
                 type="button"
                 [disabled]="selectedCredits().length === 0"
                 (click)="goToStep(2)"
-                aria-label="Continue to step 2"
               >
                 Next: Enter Reason ({{ selectedCredits().length }}) →
               </button>
@@ -243,7 +194,6 @@ export type WizardStep = 1 | 2 | 3;
                 type="button"
                 [disabled]="reasonControl.invalid"
                 (click)="goToStep(3)"
-                aria-label="Continue to step 3"
               >
                 Next: Confirm →
               </button>
@@ -251,13 +201,16 @@ export type WizardStep = 1 | 2 | 3;
           </section>
         }
 
-        <!-- ── Step 3: Confirm & Sign ── -->
+        <!-- ── Step 3: Confirm & Submit ── -->
         @if (currentStep() === 3) {
           <section class="step-panel" aria-labelledby="step3-heading">
-            <h2 id="step3-heading">Step 3: Confirm and sign</h2>
+            <h2 id="step3-heading">Step 3: Confirm and submit</h2>
 
             @if (signingError()) {
               <p class="field-error" role="alert">{{ signingError() }}</p>
+            }
+            @if (statusMessage()) {
+              <p class="status-message" role="status">{{ statusMessage() }}</p>
             }
 
             @if (tonnesControl.invalid) {
@@ -288,8 +241,7 @@ export type WizardStep = 1 | 2 | 3;
             </div>
 
             <p class="sign-info">
-              Clicking <strong>Sign &amp; Retire</strong> will open your Freighter wallet to
-              authorise this retirement on the Stellar network.
+              Submitting will ask your wallet to authorise this retirement on the Stellar network.
             </p>
 
             <div class="step-actions">
@@ -307,9 +259,8 @@ export type WizardStep = 1 | 2 | 3;
                 [disabled]="submitting() || tonnesControl.invalid"
                 (click)="submit()"
                 [attr.aria-busy]="submitting()"
-                aria-label="Sign and retire credits"
               >
-                {{ submitting() ? 'Signing…' : 'Sign & Retire' }}
+                {{ submitting() ? 'Submitting…' : 'Retire credits' }}
               </button>
             </div>
           </section>
@@ -327,7 +278,19 @@ export type WizardStep = 1 | 2 | 3;
       h1 {
         margin-bottom: 1.5rem;
       }
-
+      /* Issue #963: visually hidden but announced by assistive tech. */
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
       .auth-prompt {
         display: flex;
         flex-direction: column;
@@ -340,17 +303,17 @@ export type WizardStep = 1 | 2 | 3;
         border-radius: 6px;
         padding: 0.75rem 1rem;
         margin-bottom: 1rem;
-        color: #856404;
+        color: #6b4f00;
         font-size: 0.9rem;
       }
-      .wizard-form {
 
       /* Step indicator */
-      .step-indicator {
+      .step-indicator__list {
         display: flex;
         align-items: center;
-        gap: 0;
-        margin-bottom: 2rem;
+        list-style: none;
+        margin: 0 0 2rem;
+        padding: 0;
       }
       .step {
         display: flex;
@@ -359,14 +322,14 @@ export type WizardStep = 1 | 2 | 3;
         padding: 0.4rem 0.6rem;
         border-radius: 6px;
         font-size: 0.85rem;
-        color: #888;
+        color: #595959;
       }
       .step--active {
-        color: #2e7d32;
+        color: #1b5e20;
         font-weight: 600;
       }
       .step--done {
-        color: #4caf50;
+        color: #2e7d32;
       }
       .step__num {
         width: 24px;
@@ -379,12 +342,6 @@ export type WizardStep = 1 | 2 | 3;
         font-size: 0.75rem;
         font-weight: 700;
         flex-shrink: 0;
-      }
-      .step-divider {
-        flex: 1;
-        height: 2px;
-        background: #e0e0e0;
-        min-width: 24px;
       }
 
       /* Step panel */
@@ -406,30 +363,33 @@ export type WizardStep = 1 | 2 | 3;
       .credit-table th,
       .credit-table td {
         padding: 0.6rem 0.8rem;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid #e0e0e0;
         text-align: left;
       }
       .credit-table th {
-        background: #f5f5f5;
+        background: #f0f0f0;
         font-weight: 600;
-      }
-      .credit-row {
-        cursor: pointer;
-      }
-      .credit-row:hover {
-        background: #f9f9f9;
       }
       .credit-row--selected {
         background: #e8f5e9;
       }
-      .credit-row:focus {
-        outline: 2px solid #4caf50;
+      /* Issue #963: rows are not click targets any more (the checkbox is), so
+         the interactive styling moved onto the checkbox itself. */
+      input[type='checkbox'] {
+        width: 1.1rem;
+        height: 1.1rem;
+        cursor: pointer;
+        accent-color: #2e7d32;
+      }
+      input[type='checkbox']:focus-visible {
+        outline: 3px solid #1b5e20;
+        outline-offset: 2px;
       }
 
       /* Step 2 */
       .selected-summary {
         font-size: 0.85rem;
-        color: #555;
+        color: #4a4a4a;
         margin-bottom: 1rem;
         display: flex;
         gap: 0.5rem;
@@ -444,29 +404,35 @@ export type WizardStep = 1 | 2 | 3;
       }
       textarea {
         padding: 0.5rem 0.75rem;
-        border: 1px solid #ccc;
+        border: 1px solid #8c8c8c;
         border-radius: 6px;
         font-size: 0.9rem;
         font-family: inherit;
         resize: vertical;
       }
-      textarea:focus {
-        outline: 2px solid #4caf50;
+      textarea:focus-visible {
+        outline: 3px solid #1b5e20;
         outline-offset: 1px;
       }
       .hint {
         font-size: 0.78rem;
-        color: #888;
+        color: #595959;
       }
       .field-error {
         font-size: 0.83rem;
-        color: #e53935;
+        color: #c62828;
+        font-weight: 500;
+      }
+      .status-message {
+        font-size: 0.85rem;
+        color: #1b5e20;
+        font-weight: 500;
       }
 
       /* Step 3 */
       .confirm-box {
         background: #f9f9f9;
-        border: 1px solid #ddd;
+        border: 1px solid #d0d0d0;
         border-radius: 8px;
         padding: 1.25rem;
         margin-bottom: 1rem;
@@ -480,7 +446,7 @@ export type WizardStep = 1 | 2 | 3;
       }
       dt {
         font-weight: 600;
-        color: #555;
+        color: #4a4a4a;
       }
       .mono {
         font-family: monospace;
@@ -488,7 +454,7 @@ export type WizardStep = 1 | 2 | 3;
       }
       .sign-info {
         font-size: 0.85rem;
-        color: #666;
+        color: #4a4a4a;
         margin-bottom: 1rem;
         background: #fff8e1;
         border: 1px solid #ffe082;
@@ -505,7 +471,7 @@ export type WizardStep = 1 | 2 | 3;
       }
       .selection-hint {
         font-size: 0.85rem;
-        color: #555;
+        color: #4a4a4a;
         margin-bottom: 0.5rem;
       }
       .credit-details {
@@ -520,7 +486,7 @@ export type WizardStep = 1 | 2 | 3;
         line-height: 1.6;
       }
       .status {
-        color: #888;
+        color: #595959;
       }
       .btn {
         padding: 0.45rem 1.1rem;
@@ -531,33 +497,37 @@ export type WizardStep = 1 | 2 | 3;
         font-weight: 500;
       }
       .btn:focus-visible {
-        outline: 2px solid #4caf50;
+        outline: 3px solid #1b5e20;
         outline-offset: 2px;
       }
       .btn-primary {
-        background: #4caf50;
+        background: #2e7d32;
         color: #fff;
       }
       .btn-primary:disabled {
-        opacity: 0.6;
+        background: #9c9c9c;
         cursor: not-allowed;
       }
       .btn-danger {
-        background: #e53935;
+        background: #c62828;
         color: #fff;
       }
       .btn-danger:disabled {
-        opacity: 0.6;
+        background: #a8a8a8;
         cursor: not-allowed;
       }
       .btn-outline {
         background: transparent;
-        border: 1px solid #ccc;
-        color: #333;
+        border: 1px solid #767676;
+        color: #262626;
       }
       .btn-outline:disabled {
         opacity: 0.4;
         cursor: not-allowed;
+      }
+      @media (prefers-contrast: more) {
+        .field-error { color: #8e0000; }
+        .status, .hint { color: #333333; }
       }
     `,
   ],
@@ -574,6 +544,8 @@ export class RetireComponent implements OnInit {
   readonly selectedCredits = signal<CreditMetadata[]>([]);
   readonly submitting = signal(false);
   readonly signingError = signal<string | null>(null);
+  /** Issue #963: polite live region for transaction progress. */
+  readonly statusMessage = signal<string | null>(null);
 
   readonly reasonControl = new FormControl<string>('', {
     nonNullable: true,
@@ -586,12 +558,17 @@ export class RetireComponent implements OnInit {
     validators: [multipleOf100kValidator()],
   });
 
-  /** Only Active credits owned by the connected wallet. */
-  readonly activeCredits = computed(() =>
-    this.store
-      .credits()
-      .filter((c) => c.status === CreditStatus.Active && c.owner === this.wallet.publicKey()),
-  );
+  /**
+   * Only Active credits owned by the connected wallet.
+   *
+   * Issue #965 — the store is (network, address)-scoped, so this list can only
+   * ever contain the current account's rows; the `owner` check is kept as a
+   * belt-and-braces guard against a project-wide load leaking in.
+   */
+  readonly activeCredits = computed(() => {
+    const owner = this.wallet.publicKey();
+    return this.store.credits().filter((c) => c.status === CreditStatus.Active && c.owner === owner);
+  });
 
   readonly allSelected = computed(
     () =>
@@ -605,11 +582,46 @@ export class RetireComponent implements OnInit {
       .toString(),
   );
 
+  /** True only when the wallet is connected and on the correct network. */
+  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
+
+  /** Exposes the expected network name for display in the template. */
+  get expectedNetwork(): string {
+    return this.wallet.expectedNetwork();
+  }
+
+  /** True when the current tonnes value is not a positive multiple of 100,000. */
+  get tonnesError(): boolean {
+    const v = this.tonnes;
+    return !v || v <= 0 || v % 100_000 !== 0;
+  }
+
+  private get tonnes(): number {
+    return Number(this.selectedCredits()[0]?.tonnes ?? 1_000_000);
+  }
+
+  /**
+   * Load the connected account's own credits.
+   *
+   * Issue #965 — this used to call `loadByProject(pk)`, i.e. it treated the
+   * wallet address as a project id. Combined with a store that never reset on
+   * an account switch, that surfaced another account's holdings. The owner
+   * endpoint is the correct source for "my credits".
+   */
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
-    if (pk && this.auth.isAuthenticated() && this.store.credits().length === 0) {
-      await this.store.loadByProject(pk);
+    if (pk && this.auth.isAuthenticated()) {
+      await this.store.loadByOwner(pk);
     }
+  }
+
+  /** Issue #963: announced when the wizard advances. */
+  stepAnnouncement(): string {
+    const step = this.currentStep();
+    const label = this.stepLabel(step);
+    return step === 3
+      ? `Step 3 of 3, ${label}. Review and submit your retirement.`
+      : `Step ${step} of 3, ${label}.`;
   }
 
   isSelected(credit: CreditMetadata): boolean {
@@ -631,18 +643,6 @@ export class RetireComponent implements OnInit {
     }
   }
 
-  /** True only when the wallet is connected and on the correct network. */
-  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
-
-  /** Exposes the expected network name for display in the template. */
-  get expectedNetwork(): string {
-    return this.wallet.expectedNetwork();
-  }
-
-  /** True when the current tonnes value is not a positive multiple of 100,000. */
-  get tonnesError(): boolean {
-    const v = this.tonnes;
-    return !v || v <= 0 || v % 100_000 !== 0;
   goToStep(step: WizardStep): void {
     if (step === 3) {
       this.reasonControl.markAsTouched();
@@ -664,6 +664,13 @@ export class RetireComponent implements OnInit {
     }
   }
 
+  /**
+   * Submit the retirement.
+   *
+   * Issue #960 — wallet failures are classified rather than stringified. A
+   * `staleEnvelope` (issues #57/#59) is retried exactly once with a freshly
+   * built request so the user gets a clean re-prompt instead of a dead end.
+   */
   async submit(): Promise<void> {
     const credits = this.selectedCredits();
     const reason = this.reasonControl.value;
@@ -680,57 +687,88 @@ export class RetireComponent implements OnInit {
 
     this.submitting.set(true);
     this.signingError.set(null);
+    this.statusMessage.set('Submitting your retirement…');
 
     try {
-      const token = this.auth.token()!;
+      await this.dispatchRetirement(credits, reason, pk);
+    } catch (err) {
+      const walletError = normalizeWalletError(err);
 
-      if (credits.length === 1) {
-        const credit = credits[0];
-
-        const { retirementId } = await firstValueFrom(
-          this.api.retireCredit(
-            { buyerPublicKey: pk, creditId: credit.id, tonnes: credit.tonnes, reason },
-            token,
-          ),
-        );
-
-        this.store.loadOne(credit.id).catch(() => {});
-        await this.router.navigate(['/certificates', retirementId]);
-      } else {
-        const { succeeded, failed } = await firstValueFrom(
-          this.api.batchRetire(
-            {
-              buyerPublicKey: pk,
-              creditIds: credits.map((c) => c.id),
-              tonnes: credits.map((c) => c.tonnes),
-              reason,
-            },
-            token,
-          ),
-        );
-
-        for (const c of credits) {
-          this.store.loadOne(c.id).catch(() => {});
-        }
-
-        if (failed.length > 0) {
-          this.signingError.set(
-            `${failed.length} credit(s) failed: ${failed.map((f) => f.reason).join(', ')}`,
-          );
-        }
-
-        if (succeeded.length > 0) {
-          this.toast.showSuccess(`${succeeded.length} credit(s) retired successfully`);
-          await this.router.navigate(['/certificates', succeeded[0]]);
+      if (walletError.type === 'staleEnvelope') {
+        // Rebuild the request and re-prompt once. The stale envelope is gone,
+        // so a second attempt gets a fresh sequence number.
+        this.statusMessage.set(WALLET_ERROR_MESSAGES.staleEnvelope);
+        try {
+          await this.dispatchRetirement(credits, reason, pk);
+          this.statusMessage.set('Retirement submitted.');
+          return;
+        } catch (retryErr) {
+          this.reportWalletError(retryErr);
+          return;
         }
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Retirement failed.';
-      this.signingError.set(msg);
-      this.currentStep.set(3);
+
+      this.reportWalletError(walletError);
     } finally {
       this.submitting.set(false);
     }
+  }
+
+  private async dispatchRetirement(
+    credits: CreditMetadata[],
+    reason: string,
+    pk: string,
+  ): Promise<void> {
+    const token = this.auth.token()!;
+
+    if (credits.length === 1) {
+      const credit = credits[0];
+      const { retirementId } = await firstValueFrom(
+        this.api.retireCredit(
+          { buyerPublicKey: pk, creditId: credit.id, tonnes: credit.tonnes, reason },
+          token,
+        ),
+      );
+      this.store.loadOne(credit.id).catch(() => {});
+      this.toast.showSuccess('Credit retired successfully');
+      await this.router.navigate(['/certificates', retirementId]);
+      return;
+    }
+
+    const { succeeded, failed } = await firstValueFrom(
+      this.api.batchRetire(
+        {
+          buyerPublicKey: pk,
+          creditIds: credits.map((c) => c.id),
+          tonnes: credits.map((c) => c.tonnes),
+          reason,
+        },
+        token,
+      ),
+    );
+
+    for (const c of credits) {
+      this.store.loadOne(c.id).catch(() => {});
+    }
+
+    if (failed.length > 0) {
+      this.signingError.set(
+        `${failed.length} credit(s) failed: ${failed.map((f) => f.reason).join(', ')}`,
+      );
+    }
+
+    if (succeeded.length > 0) {
+      this.toast.showSuccess(`${succeeded.length} credit(s) retired successfully`);
+      await this.router.navigate(['/certificates', succeeded[0]]);
+    }
+  }
+
+  /** Issue #960 — one actionable message per failure type, never a bare string. */
+  private reportWalletError(err: WalletError | unknown): void {
+    const walletError = normalizeWalletError(err);
+    this.signingError.set(walletError.displayMessage);
+    this.statusMessage.set(null);
+    this.currentStep.set(3);
   }
 
   reset(): void {
@@ -738,52 +776,10 @@ export class RetireComponent implements OnInit {
     this.selectedCredits.set([]);
     this.reasonControl.reset('');
     this.signingError.set(null);
+    this.statusMessage.set(null);
   }
 
   formatTonnes(raw: string): string {
     return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
-  }
-
-  get creditId(): string {
-    return this.selectedCredits()[0]?.id ?? '';
-  }
-  set creditId(v: string) {
-    /* no-op */
-  }
-
-  get tonnes(): number {
-    return Number(this.selectedCredits()[0]?.tonnes ?? 1_000_000);
-  }
-  set tonnes(_: number) {
-    /* no-op */
-  }
-
-  get reason(): string {
-    return this.reasonControl.value;
-  }
-  set reason(v: string) {
-    this.reasonControl.setValue(v);
-  }
-
-  get step(): { (): string; set: (s: string) => void } {
-    const fn = () => {
-      const s = this.currentStep();
-      if (s === 1) return 'form';
-      if (s === 2) return 'form';
-      if (s === 3) return 'confirm';
-      return 'form';
-    };
-    fn.set = (v: string) => {
-      if (v === 'form') this.currentStep.set(1);
-      else if (v === 'confirm') this.currentStep.set(3);
-    };
-    return fn as any;
-  }
-
-  retirementId(): string | null {
-    return null;
-  }
-  errorMsg(): string | null {
-    return this.signingError();
   }
 }

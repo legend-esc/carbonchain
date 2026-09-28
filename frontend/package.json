@@ -8,6 +8,7 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "test:ci": "ng test --watch=false --coverage",
+    "test:a11y": "ng test --watch=false --include='**/a11y/*.spec.ts'",
     "lint": "ng lint",
     "format:check": "prettier --check \"src/**/*.ts\" \"src/**/*.html\" \"src/*.html\""
   },
@@ -48,6 +49,7 @@
     "@angular/compiler-cli": "^21.2.22",
     "@types/jasmine": "^6.0.0",
     "@vitest/coverage-v8": "4.1.8",
+    "axe-core": "4.11.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
