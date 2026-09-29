@@ -10,7 +10,7 @@ CarbonChain is a Soroban-native platform for issuing, trading, and retiring toke
 
 - Credit issuance with verifier multi-sig approval
 - Permanent on-chain retirement with tamper-proof certificates
-- Stellar DEX integration for liquid secondary market trading
+- On-chain offer-book marketplace for secondary market trading (Stellar DEX AMM integration is a Phase 3 roadmap item)
 - MRV oracle interface for real-time carbon sequestration monitoring
 - IPFS-anchored project documentation (methodology, satellite imagery, audits)
 - Session-based audit trail for all credit lifecycle operations
@@ -99,7 +99,7 @@ See `docs/guides/DOCTOR_COMMAND.md` for CLI environment diagnostics.
 
 - **Credit Registry:** Register projects, submit credits, enforce verifier approval before minting
 - **Retirement Engine:** Permanently burn tokens with an immutable on-chain retirement record
-- **Marketplace:** Native Stellar DEX listings with fractional credit support
+- **Marketplace:** On-chain offer-book listings with fractional credit support (Stellar DEX AMM integration is a Phase 3 roadmap item)
 - **MRV Oracle:** Authenticated data ingestion from IoT/satellite feeds with anomaly flagging
 - **Session Traceability:** Group operations into auditable sessions for compliance
 - **Audit Trail:** Immutable record of all lifecycle events
@@ -158,7 +158,7 @@ carbonchain/
 │   │   │   └── errors.rs       # Stable error codes
 │   │   └── Cargo.toml
 │   ├── retirement/             # Burn + retirement certificate logic
-│   ├── marketplace/            # Offer creation, Stellar DEX integration
+│   ├── marketplace/            # Offer creation, on-chain offer book (DEX AMM is Phase 3)
 │   └── mrv_oracle/             # Oracle interface for MRV data updates
 │
 ├── api/                        # NestJS backend
@@ -166,7 +166,7 @@ carbonchain/
 │   │   ├── stellar/            # Stellar SDK service layer
 │   │   ├── credits/            # Credit CRUD, issuance flow
 │   │   ├── retirement/         # Retirement endpoint + certificate gen
-│   │   ├── marketplace/        # Order book, DEX bridge
+│   │   ├── marketplace/        # Order book, DEX bridge (AMM is Phase 3)
 │   │   ├── projects/           # Project profiles, IPFS uploads
 │   │   ├── verifiers/          # Verifier registry, co-sign requests
 │   │   └── oracle/             # MRV data ingestion webhooks
@@ -362,13 +362,9 @@ cargo build --target wasm32-unknown-unknown --release
 
 | Contract | Stable Error Codes | Description |
 |---|---|---|
-| `credit_registry` | 100–125 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
-| `retirement` | 110–118 | Burn tokens on retirement, write immutable retirement records |
-| `marketplace` | 115–130 | Manage offer listings, integrate with Stellar DEX |
-| `mrv_oracle` | 119–129 | Accept MRV data updates, flag anomalies for re-verification |
 | `credit_registry` | 100–126 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
 | `retirement` | 200–209 | Burn tokens on retirement, write immutable retirement records |
-| `marketplace` | 300–309 | Manage offer listings, integrate with Stellar DEX |
+| `marketplace` | 300–309 | Manage offer listings via on-chain offer book (Stellar DEX AMM is Phase 3) |
 | `mrv_oracle` | 400–409 | Accept MRV data updates, flag anomalies for re-verification |
 
 See `docs/features/ERROR_CODES_REFERENCE.md` for the full error code reference.

@@ -46,6 +46,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512m
 
   # ── PostgreSQL (streaming read replica) ────────────────────────────────────
   # #559 — read-scaling replica. Clones `postgres` via pg_basebackup on first
@@ -78,6 +83,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384m
 
   # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
@@ -94,6 +104,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128m
 
   # ── Redis Replica 1 ────────────────────────────────────────────────────────
   redis-replica-1:
@@ -109,6 +124,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64m
 
   # ── Redis Replica 2 ────────────────────────────────────────────────────────
   redis-replica-2:
@@ -124,6 +144,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64m
 
   # ── Redis Sentinel 1 ───────────────────────────────────────────────────────
   # Three sentinel instances provide a quorum of 2 — the minimum required to
@@ -154,6 +179,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32m
 
   # ── Redis Sentinel 2 ───────────────────────────────────────────────────────
   redis-sentinel-2:
@@ -182,6 +212,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32m
 
   # ── Redis Sentinel 3 ───────────────────────────────────────────────────────
   redis-sentinel-3:
@@ -210,6 +245,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 32m
 
   # ── NestJS API ─────────────────────────────────────────────────────────────
   api:
@@ -248,6 +288,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512m
 
   # ── Angular Frontend ───────────────────────────────────────────────────────
   frontend:
@@ -266,6 +311,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64m
 
 volumes:
   postgres_data:

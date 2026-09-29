@@ -12,6 +12,8 @@ services:
 
   api:
     command: npm run start:dev
+    env_file:
+      - ./secrets/.env.secrets
     environment:
       - NODE_ENV=development
     volumes:

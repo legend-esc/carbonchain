@@ -1,21 +1,31 @@
 name: Backup Restore Verification
 
-# Weekly automated restore-test of the latest PostgreSQL S3 backup.
-# Backups are written daily via pg_dump but were never actually restored,
-# so corruption/incompleteness would only be discovered during a real
-# incident. This job downloads the newest backup, restores it into a
-# throwaway container, runs smoke queries, and alerts Slack on failure.
+# Nightly automated restore-test of the latest PostgreSQL S3 backup.
+# Also triggered on pushes to main that touch migration files, so every
+# schema change is proven restorable before it reaches production.
+#
+# Flow:
+#   1. Download latest S3 pg_dump backup
+#   2. Restore into a clean postgres:16-alpine throwaway container
+#   3. Run NestJS migrations against the restored DB
+#   4. Assert pre/post-migration row counts (no data loss)
+#   5. Alert Slack on any failure
 
 on:
   schedule:
-    - cron: '0 6 * * 1' # Every Monday at 06:00 UTC
+    - cron: '0 2 * * *' # Nightly at 02:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - 'api/src/migrations/**'
   workflow_dispatch: {}
 
 jobs:
   verify-backup-restore:
     name: Verify latest backup restores cleanly
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -25,6 +35,10 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
           role-to-assume: ${{ secrets.BACKUP_VERIFY_AWS_ROLE_ARN }}
 
+      # ── Step 1: Restore backup into throwaway container ────────────────────
+      # The script writes /tmp/restore-connection.env with connection details
+      # and intentionally does NOT remove the container on exit so subsequent
+      # steps can connect.
       - name: Run backup restore verification
         env:
           BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
@@ -33,3 +47,125 @@ jobs:
         run: |
           chmod +x scripts/verify-backup-restore.sh
           ./scripts/verify-backup-restore.sh
+
+      # ── Step 2: Run migrations against the restored DB ────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API dependencies
+        run: cd api && npm ci --prefer-offline
+
+      - name: Run migrations against restored database
+        run: |
+          # Load connection details written by the restore script
+          source /tmp/restore-connection.env
+
+          echo "  [migrations] Running migrations against restored DB at ${DATABASE_RESTORE_URL}"
+          cd api
+          DATABASE_URL="${DATABASE_RESTORE_URL}" npm run migration:run
+          echo "  ✅ Migrations completed successfully"
+
+      # ── Step 3: Post-migration integrity assertions ────────────────────────
+      - name: Assert post-migration data integrity
+        run: |
+          source /tmp/restore-connection.env
+
+          CONTAINER="${RESTORE_CONTAINER_NAME}"
+          DB="${RESTORE_DB_NAME}"
+
+          echo "  [integrity] Verifying post-migration row counts and sample row fidelity"
+
+          # Read pre-migration counts written by the restore script
+          PRE_COUNTS_FILE="/tmp/restore-counts.txt"
+          if [[ -f "$PRE_COUNTS_FILE" ]]; then
+            source "$PRE_COUNTS_FILE"
+          else
+            echo "  ⚠️  Pre-migration counts file not found; skipping delta check"
+            PRE_CREDITS=0
+            PRE_PROJECTS=0
+            PRE_VERIFIERS=0
+            PRE_RETIREMENT_RECORDS=0
+          fi
+
+          # Re-count rows after migrations
+          get_count() {
+            local table="$1"
+            docker exec "$CONTAINER" psql -U postgres -d "$DB" -tAc \
+              "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='${table}';" \
+              | grep -q '^1$' \
+              && docker exec "$CONTAINER" psql -U postgres -d "$DB" -tAc "SELECT count(*) FROM ${table};" \
+              || echo "0"
+          }
+
+          POST_CREDITS=$(get_count credits)
+          POST_PROJECTS=$(get_count projects)
+          POST_VERIFIERS=$(get_count verifiers)
+          POST_RETIREMENT_RECORDS=$(get_count retirement_records)
+
+          echo "  [integrity] Post-migration counts:"
+          echo "    credits:            ${POST_CREDITS}  (pre: ${PRE_CREDITS:-0})"
+          echo "    projects:           ${POST_PROJECTS}  (pre: ${PRE_PROJECTS:-0})"
+          echo "    verifiers:          ${POST_VERIFIERS}  (pre: ${PRE_VERIFIERS:-0})"
+          echo "    retirement_records: ${POST_RETIREMENT_RECORDS}  (pre: ${PRE_RETIREMENT_RECORDS:-0})"
+
+          # Assert no data loss: post counts must be >= pre counts
+          assert_no_loss() {
+            local table="$1" pre="$2" post="$3"
+            pre="${pre:-0}"
+            post="${post:-0}"
+            if [[ "$post" -lt "$pre" ]]; then
+              echo "  ❌ Data loss detected in '${table}': pre=${pre} post=${post}" >&2
+              exit 1
+            fi
+          }
+
+          assert_no_loss credits          "${PRE_CREDITS:-0}"             "$POST_CREDITS"
+          assert_no_loss projects         "${PRE_PROJECTS:-0}"            "$POST_PROJECTS"
+          assert_no_loss verifiers        "${PRE_VERIFIERS:-0}"           "$POST_VERIFIERS"
+          assert_no_loss retirement_records "${PRE_RETIREMENT_RECORDS:-0}" "$POST_RETIREMENT_RECORDS"
+
+          # Sample row fidelity: if credits table has rows, verify a row is readable
+          if [[ "$POST_CREDITS" -gt 0 ]]; then
+            SAMPLE=$(docker exec "$CONTAINER" psql -U postgres -d "$DB" -tAc \
+              "SELECT 1 FROM credits LIMIT 1;")
+            [[ "$SAMPLE" == "1" ]] \
+              || { echo "  ❌ Sample row read from credits failed" >&2; exit 1; }
+            echo "  ✅ Sample row from credits is readable"
+          else
+            echo "  ℹ️  credits table is empty after restore — skipping sample row check"
+          fi
+
+          echo "  ✅ Post-migration integrity checks passed"
+
+      # ── Step 4: Cleanup throwaway container ───────────────────────────────
+      - name: Cleanup restore container
+        if: always()
+        run: |
+          if [[ -f /tmp/restore-connection.env ]]; then
+            source /tmp/restore-connection.env
+            docker rm -f "${RESTORE_CONTAINER_NAME}" >/dev/null 2>&1 || true
+            echo "  [cleanup] Container ${RESTORE_CONTAINER_NAME} removed"
+          fi
+
+  # ── Failure notification job ─────────────────────────────────────────────
+  notify-failure:
+    name: Notify Slack on failure
+    runs-on: ubuntu-latest
+    needs: [verify-backup-restore]
+    if: failure()
+    steps:
+      - name: Post failure alert to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          [[ -n "${SLACK_WEBHOOK_URL:-}" ]] || { echo "SLACK_WEBHOOK_URL not set; skipping"; exit 0; }
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TRIGGER="${{ github.event_name }}"
+          curl -sf -X POST -H 'Content-type: application/json' \
+            --data "{\"text\": \"🔴 [backup-verify] FAILED on \`${TRIGGER}\` trigger — <${RUN_URL}|View run>\"}" \
+            "$SLACK_WEBHOOK_URL" \
+            || echo "Slack notification failed (non-fatal)"

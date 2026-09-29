@@ -2,10 +2,19 @@
 # CarbonChain Post-Deploy Smoke Tests
 # Verifies that all four contracts are live and respond correctly after deployment.
 # Exits non-zero on any failure so the deployment pipeline fails fast.
+#
+# Issue #978: replaced fragile `sleep 6` calls with deterministic ledger-finality
+# waits (wait_for_account, wait_for_tx) so the script no longer races the network.
 
 set -euo pipefail
 
+SMOKE_START=$(date +%s)
+
 CONTRACTS_FILE="${1:-$(dirname "$0")/contract-ids.testnet.json}"
+
+# Network endpoints (override via environment)
+HORIZON_URL="${HORIZON_URL:-https://horizon-testnet.stellar.org}"
+SOROBAN_RPC_URL="${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -13,9 +22,76 @@ log()  { echo "  [smoke] $*"; }
 pass() { echo "  ✅ $*"; }
 fail() { echo "  ❌ $*" >&2; exit 1; }
 
-# Retry a command up to 3 times with exponential back-off (5s, 10s, 20s).
-# Handles transient testnet RPC timeouts and TxBadSeq races.
-# Usage: retry_invoke <label> <command...>
+# wait_for_account <address> [timeout_seconds]
+# Polls the Horizon API every 2 seconds until the account appears on-chain.
+# Logs the actual time taken. Fails if the account does not appear within timeout.
+wait_for_account() {
+  local address="$1"
+  local timeout="${2:-60}"
+  local start elapsed
+
+  start=$(date +%s)
+  log "Waiting for account ${address} to appear on-chain (timeout: ${timeout}s)…"
+
+  while true; do
+    elapsed=$(( $(date +%s) - start ))
+    if curl -sf "${HORIZON_URL}/accounts/${address}" > /dev/null 2>&1; then
+      log "  Account ${address} confirmed on-chain in ${elapsed}s"
+      return 0
+    fi
+    if [[ $elapsed -ge $timeout ]]; then
+      fail "Account ${address} did not appear on Horizon within ${timeout}s"
+    fi
+    sleep 2
+  done
+}
+
+# wait_for_tx <tx_hash> [timeout_seconds]
+# Polls `stellar tx status` every 2 seconds until the transaction reaches
+# SUCCESS or FAILED status (not PENDING / NOT_FOUND).
+# Returns 0 on SUCCESS, exits non-zero on FAILED or timeout.
+# Logs the actual close latency.
+wait_for_tx() {
+  local tx_hash="$1"
+  local timeout="${2:-60}"
+  local start elapsed status
+
+  start=$(date +%s)
+  log "Waiting for tx ${tx_hash} to finalise (timeout: ${timeout}s)…"
+
+  while true; do
+    elapsed=$(( $(date +%s) - start ))
+
+    # `stellar tx status` prints a JSON blob; extract the status field.
+    # Fall back gracefully if the command or jq is unavailable.
+    status=$(stellar tx status \
+      --network testnet \
+      --id "$tx_hash" 2>/dev/null \
+      | grep -oP '"status"\s*:\s*"\K[^"]+' \
+      | head -1 \
+      || echo "NOT_FOUND")
+
+    case "$status" in
+      SUCCESS)
+        log "  tx ${tx_hash} SUCCESS in ${elapsed}s"
+        return 0
+        ;;
+      FAILED)
+        fail "tx ${tx_hash} reached FAILED status after ${elapsed}s"
+        ;;
+      *)
+        # PENDING, NOT_FOUND, or any transient state — keep polling
+        if [[ $elapsed -ge $timeout ]]; then
+          fail "tx ${tx_hash} did not finalise within ${timeout}s (last status: ${status})"
+        fi
+        sleep 2
+        ;;
+    esac
+  done
+}
+
+# Retry a command up to 3 times with short back-off (2s, 4s).
+# Delays are intentionally short now that we use proper finality waits upstream.
 retry_invoke() {
   local label="$1"; shift
   local attempt delay
@@ -24,7 +100,7 @@ retry_invoke() {
       return 0
     fi
     if [[ $attempt -lt 3 ]]; then
-      delay=$(( 5 * (1 << (attempt - 1)) ))   # 5s, 10s
+      delay=$(( 2 * (1 << (attempt - 1)) ))   # 2s, 4s
       log "  ⚠️  $label failed (attempt $attempt/3), retrying in ${delay}s…"
       sleep "$delay"
     fi
@@ -86,6 +162,7 @@ log "  credit_registry : $CREDIT_REGISTRY_ID"
 log "  retirement      : $RETIREMENT_ID"
 log "  marketplace     : $MARKETPLACE_ID"
 log "  mrv_oracle      : $MRV_ORACLE_ID"
+log "Horizon URL : $HORIZON_URL"
 
 # Derive the admin public key from the secret key
 ADMIN_ADDRESS=$(stellar keys address "$ADMIN_SECRET_KEY" 2>/dev/null || \
@@ -94,7 +171,7 @@ ADMIN_ADDRESS=$(stellar keys address "$ADMIN_SECRET_KEY" 2>/dev/null || \
 log "Admin address: $ADMIN_ADDRESS"
 
 echo ""
-echo "🔬 Running smoke tests..."
+echo "🔬 Running smoke tests…"
 echo ""
 
 # ── 1. credit_registry ────────────────────────────────────────────────────────
@@ -116,8 +193,8 @@ VERIFIER_SECRET=$(stellar keys show smoke-verifier 2>/dev/null)
 VERIFIER_ADDRESS=$(stellar keys address smoke-verifier 2>/dev/null)
 [[ -n "$VERIFIER_ADDRESS" ]] || fail "Could not generate smoke-verifier keypair"
 stellar keys fund "$VERIFIER_ADDRESS" --network testnet 2>/dev/null || true
-# Give Horizon a moment to propagate the funded account before transacting.
-sleep 6
+# Wait for the funded account to be visible on Horizon before transacting.
+wait_for_account "$VERIFIER_ADDRESS"
 
 # Issue #565: register_verifier now requires the verifier to have locked at
 # least get_min_stake() via deposit_stake. This pipeline does not deploy a
@@ -147,8 +224,8 @@ ISSUER_SECRET=$(stellar keys show smoke-issuer 2>/dev/null)
 ISSUER_ADDRESS=$(stellar keys address smoke-issuer 2>/dev/null)
 [[ -n "$ISSUER_ADDRESS" ]] || fail "Could not generate smoke-issuer keypair"
 stellar keys fund "$ISSUER_ADDRESS" --network testnet 2>/dev/null || true
-# Give Horizon a moment to propagate the funded account before transacting.
-sleep 6
+# Wait for the funded account to be visible on Horizon before transacting.
+wait_for_account "$ISSUER_ADDRESS"
 
 NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 retry_invoke "register_issuer" invoke "$CREDIT_REGISTRY_ID" register_issuer \
@@ -171,7 +248,7 @@ NONCE=$(invoke "$CREDIT_REGISTRY_ID" get_nonce --address "$ADMIN_ADDRESS")
 pass "credit_registry.register_methodology() succeeded (or already registered)"
 
 # Use a run-specific suffix to avoid collisions with prior smoke-test runs on
-# the shared testnet state.  $RANDOM alone is 0-32767; combine two values for
+# the shared testnet state.  $RANDOM alone is 0–32767; combine two values for
 # a larger space and format to a fixed width so the project-id length stays
 # within contract limits.
 RUN_ID=$(printf '%05d%05d' "$RANDOM" "$RANDOM")
@@ -260,4 +337,7 @@ echo ""
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
-echo "🌿 All smoke tests passed."
+SMOKE_END=$(date +%s)
+SMOKE_ELAPSED=$(( SMOKE_END - SMOKE_START ))
+
+echo "🌿 All smoke tests passed in ${SMOKE_ELAPSED}s."

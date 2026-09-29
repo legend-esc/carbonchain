@@ -379,6 +379,53 @@ jobs:
           name: contract-ids-testnet
           path: scripts/contract-ids.testnet.json
 
+  # ── Issue #979 ─────────────────────────────────────────────────────────────
+  # Docs-drift guard: every ✅ claim in IMPLEMENTATION_SUMMARY.md must cite a
+  # file reference on the same line using `(see path/to/file)`. This prevents
+  # aspirational or unverified claims from silently accumulating. The job runs
+  # in parallel and does NOT gate the deploy job.
+  #
+  # Rules enforced:
+  #   PASS — every ✅ line contains `(see `
+  #   FAIL — any ✅ line lacks a `(see ` reference  (requires a citation)
+  #   WARN — lines with ⚠️ **Not Yet Implemented** are printed as advisories
+  docs-drift:
+    name: Docs Drift Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check for uncited ✅ claims in IMPLEMENTATION_SUMMARY.md
+        run: |
+          set -euo pipefail
+          FILE="IMPLEMENTATION_SUMMARY.md"
+
+          # Find every ✅ line that lacks a (see ...) file citation.
+          UNCITED=$(grep -n '✅' "$FILE" | grep -v '(see ' || true)
+
+          if [ -n "$UNCITED" ]; then
+            echo "::error::Found ✅ claims without a file citation in $FILE."
+            echo "Every ✅ line must include '(see path/to/file)' on the same line."
+            echo ""
+            echo "Offending lines:"
+            echo "$UNCITED"
+            exit 1
+          fi
+
+          echo "✅ All claims in $FILE are cited — docs-drift check passed."
+
+      - name: Report ⚠️ Not Yet Implemented items (advisory)
+        run: |
+          FILE="IMPLEMENTATION_SUMMARY.md"
+          UNIMPLEMENTED=$(grep -n '⚠️ \*\*Not Yet Implemented\*\*' "$FILE" || true)
+
+          if [ -n "$UNIMPLEMENTED" ]; then
+            echo "::warning::The following items are marked as not yet implemented in $FILE:"
+            echo "$UNIMPLEMENTED"
+          else
+            echo "No unimplemented items flagged in $FILE."
+          fi
+
   security:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest
