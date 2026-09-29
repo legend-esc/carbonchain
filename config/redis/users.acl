@@ -1,0 +1,23 @@
+# config/redis/users.acl
+#
+# Redis ACL configuration for CarbonChain (#975)
+#
+# This file is mounted read-only into the Redis container and loaded via
+# `--aclfile /etc/redis/users.acl`. The password for the default user must
+# be set here. For local development this is the value of REDIS_PASSWORD
+# from your .env / docker-compose environment.
+#
+# DO NOT commit real production passwords. In a production environment,
+# inject this file from a secrets manager (AWS Secrets Manager, Vault, etc.)
+# or use Docker Secrets.
+#
+# To regenerate a strong password:
+#   openssl rand -hex 32
+#
+# ACL rules reference: https://redis.io/docs/management/security/acl/
+#
+# Default user — full access, password required.
+# Replace `changeme-local-dev` with the value of REDIS_PASSWORD in your .env.
+# The docker-compose.yml command uses --requirepass ${REDIS_PASSWORD} so this
+# file acts as the on-disk record; both must match.
+user default on >changeme-local-dev ~* &* +@all

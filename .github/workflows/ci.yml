@@ -254,6 +254,10 @@ jobs:
           cache-dependency-path: api/package-lock.json
       - name: Install Dependencies
         run: cd api && npm ci --legacy-peer-deps
+      # #974 — audit production dependencies; fail on high/critical, annotate moderate.
+      # Allowlisted exceptions live in api/.audit-allowlist.json and must be reviewed in PR.
+      - name: npm audit (api)
+        run: node scripts/npm-audit-gate.mjs api
       # #564 — only test migration rollback when the migrations directory actually changed
       - name: Check for migration changes
         id: migration-check
@@ -484,6 +488,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install Dependencies
         run: cd frontend && npm ci --legacy-peer-deps
+      # #974 — audit production dependencies; fail on high/critical, annotate moderate.
+      # Allowlisted exceptions live in frontend/.audit-allowlist.json and must be reviewed in PR.
+      - name: npm audit (frontend)
+        run: node scripts/npm-audit-gate.mjs frontend
       # #194 — enforce lint and format
       - name: Lint
         run: cd frontend && npm run lint

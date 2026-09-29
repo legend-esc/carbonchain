@@ -103,6 +103,10 @@ pids/
 *.seed
 *.pid.lock
 
+# Production Redis ACL files with real passwords (local dev placeholder is committed).
+# In production, inject config/redis/users.acl from a secrets manager.
+config/redis/*.prod.acl
+
 # ── Profiling ─────────────────────────────────────────────────────────────────
 *.heapsnapshot
 *.cpuprofile

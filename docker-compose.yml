@@ -90,16 +90,40 @@ services:
           memory: 384m
 
   # ── Redis ──────────────────────────────────────────────────────────────────
+  # #975 — persistence: AOF (appendonly yes) ensures every write is fsynced to
+  # disk so idempotency claims, nonce locks, and revocation entries survive a
+  # container restart. RDB snapshots (save 60 1) complement AOF as a faster
+  # cold-start recovery option. Together they give us both durability (AOF) and
+  # restore speed (RDB).
+  #
+  # Authentication: --requirepass reads the REDIS_PASSWORD env var, which must
+  # be set in api/.env (or docker-compose.override.yml for local dev). The same
+  # password is reflected in the api REDIS_URL below.
+  #
+  # Durability tradeoff: AOF with appendfsync everysec loses at most one second
+  # of writes on a crash. For stronger guarantees (zero data loss), set
+  # appendfsync always — at the cost of ~10× write throughput. The Postgres-
+  # backed webhook store (issue #54) provides an independent durable record for
+  # webhook events so one-second AOF lag is acceptable here.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1
+      --save 300 10
+      --loglevel warning
+      --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
     volumes:
       - redis_data:/data
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -114,12 +138,19 @@ services:
   redis-replica-1:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --replicaof redis 6379 --loglevel warning
+    command: >
+      redis-server
+      --replicaof redis 6379
+      --masterauth ${REDIS_PASSWORD}
+      --requirepass ${REDIS_PASSWORD}
+      --loglevel warning
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
     depends_on:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -134,12 +165,19 @@ services:
   redis-replica-2:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --replicaof redis 6379 --loglevel warning
+    command: >
+      redis-server
+      --replicaof redis 6379
+      --masterauth ${REDIS_PASSWORD}
+      --requirepass ${REDIS_PASSWORD}
+      --loglevel warning
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
     depends_on:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -156,9 +194,12 @@ services:
   redis-sentinel-1:
     image: redis:7-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
     command: >
       sh -c "
         echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel auth-pass mymaster '\"$$REDIS_PASSWORD\" >> /tmp/sentinel.conf &&
         echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
         echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
         echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
@@ -189,9 +230,12 @@ services:
   redis-sentinel-2:
     image: redis:7-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
     command: >
       sh -c "
         echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel auth-pass mymaster '\"$$REDIS_PASSWORD\" >> /tmp/sentinel.conf &&
         echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
         echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
         echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
@@ -222,9 +266,12 @@ services:
   redis-sentinel-3:
     image: redis:7-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
     command: >
       sh -c "
         echo 'sentinel monitor mymaster redis 6379 2' > /tmp/sentinel.conf &&
+        echo 'sentinel auth-pass mymaster '\"$$REDIS_PASSWORD\" >> /tmp/sentinel.conf &&
         echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
         echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
         echo 'sentinel parallel-syncs mymaster 1' >> /tmp/sentinel.conf &&
@@ -263,9 +310,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/carbonchain
       # #559 — route reads from @UseReplicaForRead() endpoints here.
       DATABASE_REPLICA_URLS: postgresql://postgres:postgres@postgres-replica:5432/carbonchain
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       REDIS_SENTINEL_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-local-dev}
       PORT: 3000
     ports:
       - "3000:3000"

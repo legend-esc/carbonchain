@@ -332,6 +332,11 @@ JWT_EXPIRES_IN=7d
 IPFS_API_URL=https://api.pinata.cloud
 IPFS_API_KEY=your-pinata-api-key
 IPFS_SECRET_KEY=your-pinata-secret
+
+# Redis (#975 — password required; matches REDIS_PASSWORD in docker-compose.yml)
+# Generate a strong secret for production: openssl rand -hex 32
+REDIS_PASSWORD=changeme-local-dev
+REDIS_URL=redis://:changeme-local-dev@localhost:6379
 ```
 
 ### `frontend/src/environments/environment.ts`
