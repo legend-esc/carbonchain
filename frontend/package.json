@@ -36,7 +36,7 @@
     "@angular/platform-browser": "^21.2.22",
     "@angular/router": "^21.2.22",
     "@angular/service-worker": "^21.2.22",
-    "@sentry/browser": "^10.61.0",
+    "@sentry/browser": "^11.4.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
