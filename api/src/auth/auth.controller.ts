@@ -43,9 +43,11 @@ export class AuthController {
   @UseGuards(ThrottlerGuard)
   @AccountThrottle({ accountLimit: 10, ipLimit: 50, ttl: 300_000 })
   @Post('token')
-  async getToken(
-    @Body() body: AuthTokenDto,
-  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+  async getToken(@Body() body: AuthTokenDto): Promise<{
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  }> {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 
@@ -54,13 +56,17 @@ export class AuthController {
    * Issue #933 — returns access_token (15m) + refresh_token (7d).
    * Issue #932 — enforces one-time server nonce with account binding.
    */
-  @ApiOperation({ summary: 'Verify signed challenge and receive JWT + refresh token' })
+  @ApiOperation({
+    summary: 'Verify signed challenge and receive JWT + refresh token',
+  })
   @UseGuards(ThrottlerGuard)
   @AccountThrottle({ accountLimit: 10, ipLimit: 50, ttl: 300_000 })
   @Post('verify')
-  async verify(
-    @Body() body: AuthTokenDto,
-  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+  async verify(@Body() body: AuthTokenDto): Promise<{
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  }> {
     return this.authService.verifyAndIssueToken(body.transaction);
   }
 
@@ -70,14 +76,18 @@ export class AuthController {
    * The old refresh token is invalidated (rotation).  If a previously rotated
    * token is replayed the entire family is revoked (theft detection).
    */
-  @ApiOperation({ summary: 'Rotate refresh token and receive new token pair (Issue #933)' })
+  @ApiOperation({
+    summary: 'Rotate refresh token and receive new token pair (Issue #933)',
+  })
   @UseGuards(ThrottlerGuard)
   @Throttle({ limit: 30, ttl: 60_000 })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(
-    @Body() body: { refresh_token: string },
-  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+  async refresh(@Body() body: { refresh_token: string }): Promise<{
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  }> {
     if (!body.refresh_token) {
       throw new Error('refresh_token is required');
     }
@@ -104,8 +114,7 @@ export class AuthController {
     const token = authHeader.startsWith('Bearer ')
       ? authHeader.slice(7)
       : authHeader;
-    const refreshToken = (req.body as { refresh_token?: string } | undefined)
-      ?.refresh_token;
+    const refreshToken = req.body?.refresh_token;
     await this.authService.logout(token, refreshToken);
     return { message: 'Logged out successfully' };
   }

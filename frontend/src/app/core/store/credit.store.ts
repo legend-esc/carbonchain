@@ -207,7 +207,11 @@ export class CreditStore extends WalletScopedStore {
    * On success, replaces temporary IDs with real IDs from the API response.
    * On failure, rolls back the optimistic update and shows an error toast.
    */
-  async splitCredit(creditId: string, splitTonnes: string, token: string): Promise<{ childCredit1: string; childCredit2: string }> {
+  async splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
     const scope = this.beginWrite();
     const parent = this._credits().find((c) => c.id === creditId);
     if (!parent) {
@@ -308,9 +312,7 @@ export class CreditStore extends WalletScopedStore {
       this.annotate('merge reconcile', scope, `credits=${creditIds.join(',')}`);
 
       // Remove merged credits from local store
-      this._credits.update((list) =>
-        list.filter((c) => !creditIds.includes(c.id)),
-      );
+      this._credits.update((list) => list.filter((c) => !creditIds.includes(c.id)));
 
       await this.invalidateSwCache();
 

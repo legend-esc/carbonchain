@@ -20,7 +20,9 @@ export class EventsController {
    * Deprecated offset mode (backward-compatible):
    *   Pass `skip` + `take` as before; cursor params take precedence.
    */
-  @ApiOperation({ summary: 'List contract events — keyset cursor pagination (Issue #931)' })
+  @ApiOperation({
+    summary: 'List contract events — keyset cursor pagination (Issue #931)',
+  })
   @ApiResponse({ status: 200, description: 'Paginated list of events' })
   @ApiQuery({ name: 'contractId', required: false })
   @ApiQuery({ name: 'eventType', required: false })

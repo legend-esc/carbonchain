@@ -8,10 +8,7 @@
  *  - A challenge issued for account A cannot be verified as account B.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import {
-  BadRequestException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import {
   Account,
   Keypair,
@@ -92,7 +89,9 @@ describe('SEP-10 replay protection (Issue #932)', () => {
           provide: JwtService,
           useValue: {
             sign: jest.fn().mockReturnValue('mock-access-token'),
-            decode: jest.fn().mockReturnValue({ jti: 'jti-1', exp: 9999999999 }),
+            decode: jest
+              .fn()
+              .mockReturnValue({ jti: 'jti-1', exp: 9999999999 }),
           },
         },
         {
@@ -114,9 +113,11 @@ describe('SEP-10 replay protection (Issue #932)', () => {
         {
           provide: CacheService,
           useValue: {
-            get: jest.fn().mockImplementation((key: string) =>
-              Promise.resolve(cacheStore.get(key) ?? null),
-            ),
+            get: jest
+              .fn()
+              .mockImplementation((key: string) =>
+                Promise.resolve(cacheStore.get(key) ?? null),
+              ),
             set: jest.fn().mockImplementation((key: string, value: unknown) => {
               cacheStore.set(key, value);
               return Promise.resolve();
@@ -193,7 +194,13 @@ describe('SEP-10 replay protection (Issue #932)', () => {
     it('rejects an expired challenge (no nonce in cache)', async () => {
       const nonce = 'expired-nonce';
       // Do NOT seed the cache — simulates TTL expiry
-      const xdr = buildSignedChallenge(serverKp, clientKp, nonce, DOMAIN, NETWORK);
+      const xdr = buildSignedChallenge(
+        serverKp,
+        clientKp,
+        nonce,
+        DOMAIN,
+        NETWORK,
+      );
 
       await expect(service.verifyAndIssueToken(xdr)).rejects.toThrow(
         UnauthorizedException,
@@ -211,7 +218,13 @@ describe('SEP-10 replay protection (Issue #932)', () => {
         account: clientKp.publicKey(), // bound to clientKp
       });
       // otherKp signs — its account won't match the nonce binding
-      const xdr = buildSignedChallenge(serverKp, otherKp, nonce, DOMAIN, NETWORK);
+      const xdr = buildSignedChallenge(
+        serverKp,
+        otherKp,
+        nonce,
+        DOMAIN,
+        NETWORK,
+      );
 
       await expect(service.verifyAndIssueToken(xdr)).rejects.toThrow(
         UnauthorizedException,

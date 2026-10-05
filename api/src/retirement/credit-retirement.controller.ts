@@ -34,7 +34,11 @@ export class CreditRetirementController {
     @Param('id') creditId: string,
     @Body() dto: RetireDto,
     @Request() req: { user: { account: string } },
-  ): Promise<{ retirementId: string; certificateIpfsHash: string; estimatedFeeStroops?: number }> {
+  ): Promise<{
+    retirementId: string;
+    certificateIpfsHash: string;
+    estimatedFeeStroops?: number;
+  }> {
     return this.retirementService.retireCredit(creditId, dto, req.user.account);
   }
 }

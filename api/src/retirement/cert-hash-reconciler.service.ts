@@ -211,7 +211,7 @@ export class CertHashReconciler {
 
     // Confirm finality (#918) — the hash write must also reach SUCCESS
     const txHash =
-      (response! as unknown as Record<string, unknown>).hash as string ?? '';
+      ((response! as unknown as Record<string, unknown>).hash as string) ?? '';
     if (txHash) {
       const confirmation = await this.stellarService.confirmTransaction(txHash);
       if (confirmation.status !== 'SUCCESS') {

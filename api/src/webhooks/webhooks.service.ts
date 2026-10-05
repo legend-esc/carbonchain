@@ -126,9 +126,7 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
       this.configService.get<string>('NODE_ENV') === 'production';
 
     if (isProduction && parsed.protocol !== 'https:') {
-      throw new BadRequestException(
-        'Webhook URL must use https in production',
-      );
+      throw new BadRequestException('Webhook URL must use https in production');
     }
 
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
@@ -269,9 +267,7 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
    *         point and never reconstructed on retry.
    */
   async triggerWebhooks(eventType: string, eventData: unknown): Promise<void> {
-    const webhooks = await this.dataSource.query<
-      { id: string; url: string }[]
-    >(
+    const webhooks = await this.dataSource.query<{ id: string; url: string }[]>(
       `SELECT id, url
          FROM webhooks
         WHERE active = TRUE
@@ -283,10 +279,12 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
       const deliveryId = `delivery_${Date.now()}_${randomBytes(4).toString('hex')}`;
       const eventId =
         (eventData as Record<string, unknown>)?.['id'] ?? 'unknown';
+      const eventIdStr =
+        typeof eventId === 'string' ? eventId : JSON.stringify(eventId);
 
       const payload = {
         id: deliveryId,
-        eventId: String(eventId),
+        eventId: eventIdStr,
         eventType,
         data: eventData,
         timestamp: new Date().toISOString(),
@@ -296,11 +294,11 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         `INSERT INTO webhook_deliveries
            (id, webhook_id, event_id, event_type, payload_json,
             status, attempts, next_retry_at, created_at)
-         VALUES ($1, $2, $3, $4, $5, 'pending', 0, NOW(), NOW())`,
+        VALUES ($1, $2, $3, $4, $5, 'pending', 0, NOW(), NOW())`,
         [
           deliveryId,
           webhook.id,
-          String(eventId),
+          eventIdStr,
           eventType,
           JSON.stringify(payload),
         ],
@@ -379,10 +377,9 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         secret: string;
         failure_count: number;
       }[]
-    >(
-      `SELECT id, url, secret, failure_count FROM webhooks WHERE id = $1`,
-      [row.webhook_id],
-    );
+    >(`SELECT id, url, secret, failure_count FROM webhooks WHERE id = $1`, [
+      row.webhook_id,
+    ]);
 
     if (webhookRows.length === 0) {
       // Webhook was deleted while delivery was queued — discard.

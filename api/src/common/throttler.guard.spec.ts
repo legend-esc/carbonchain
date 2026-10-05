@@ -714,8 +714,8 @@ describe('ThrottlerGuard (issue #945 — TRUST_PROXY policy)', () => {
       // With TRUST_PROXY=0 the socket IP is always used — spoof has no effect.
       const ctx = makeXffContext(
         guard,
-        '5.5.5.5',       // attacker's real socket IP
-        '1.2.3.4',       // spoofed VIP address in XFF
+        '5.5.5.5', // attacker's real socket IP
+        '1.2.3.4', // spoofed VIP address in XFF
         { limit: 1, ttl: 60_000 },
       );
 
@@ -792,12 +792,10 @@ describe('ThrottlerGuard (issue #945 — TRUST_PROXY policy)', () => {
 
     it('uses the rightmost untrusted hop from XFF when connecting via trusted proxy', async () => {
       // Socket is 127.0.0.1 (trusted proxy), XFF has client 203.0.113.5.
-      const ctx = makeXffContext(
-        guard,
-        '127.0.0.1',
-        '203.0.113.5, 127.0.0.1',
-        { limit: 1, ttl: 60_000 },
-      );
+      const ctx = makeXffContext(guard, '127.0.0.1', '203.0.113.5, 127.0.0.1', {
+        limit: 1,
+        ttl: 60_000,
+      });
 
       await expect(guard.canActivate(ctx)).resolves.toBe(true);
       // Second request from same client (203.0.113.5) is throttled.
@@ -808,7 +806,7 @@ describe('ThrottlerGuard (issue #945 — TRUST_PROXY policy)', () => {
       // Socket is a public IP, not in the trusted CIDR list.
       const ctx = makeXffContext(
         guard,
-        '8.8.8.8',             // not trusted
+        '8.8.8.8', // not trusted
         '10.0.0.1, 127.0.0.1', // spoofed XFF pretending to come via loopback
         { limit: 1, ttl: 60_000 },
       );
@@ -843,13 +841,21 @@ describe('ThrottlerGuard (issue #945 — TRUST_PROXY policy)', () => {
       };
 
       // Client A gets their one allowed request.
-      await expect(guard.canActivate(makeCtxForClient('203.0.113.1'))).resolves.toBe(true);
+      await expect(
+        guard.canActivate(makeCtxForClient('203.0.113.1')),
+      ).resolves.toBe(true);
       // Client B gets their own independent counter.
-      await expect(guard.canActivate(makeCtxForClient('203.0.113.2'))).resolves.toBe(true);
+      await expect(
+        guard.canActivate(makeCtxForClient('203.0.113.2')),
+      ).resolves.toBe(true);
       // Client A is now throttled.
-      await expect(guard.canActivate(makeCtxForClient('203.0.113.1'))).rejects.toThrow(HttpException);
+      await expect(
+        guard.canActivate(makeCtxForClient('203.0.113.1')),
+      ).rejects.toThrow(HttpException);
       // Client B is also throttled on their second request.
-      await expect(guard.canActivate(makeCtxForClient('203.0.113.2'))).rejects.toThrow(HttpException);
+      await expect(
+        guard.canActivate(makeCtxForClient('203.0.113.2')),
+      ).rejects.toThrow(HttpException);
     });
   });
 });

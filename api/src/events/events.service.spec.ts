@@ -176,10 +176,9 @@ describe('EventsService', () => {
       mockRepository.createQueryBuilder.mockReturnValue(qb);
 
       await service.getEvents('C1', undefined);
-      expect(qb.andWhere).toHaveBeenCalledWith(
-        'e.contractId = :contractId',
-        { contractId: 'C1' },
-      );
+      expect(qb.andWhere).toHaveBeenCalledWith('e.contractId = :contractId', {
+        contractId: 'C1',
+      });
     });
 
     it('applies eventType filter via andWhere', async () => {
@@ -187,10 +186,9 @@ describe('EventsService', () => {
       mockRepository.createQueryBuilder.mockReturnValue(qb);
 
       await service.getEvents(undefined, 'CreditMinted');
-      expect(qb.andWhere).toHaveBeenCalledWith(
-        'e.eventType = :eventType',
-        { eventType: 'CreditMinted' },
-      );
+      expect(qb.andWhere).toHaveBeenCalledWith('e.eventType = :eventType', {
+        eventType: 'CreditMinted',
+      });
     });
 
     it('applies keyset WHERE clause when beforeCursor is provided', async () => {

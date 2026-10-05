@@ -338,7 +338,8 @@ describe('StellarService - sequence number integration', () => {
     });
 
     it('does not emit CONTRACT_INVOCATION_COMPLETED success event when transaction is FAILED', async () => {
-      const { EventEmitter } = jest.requireActual<typeof import('events')>('events');
+      const { EventEmitter } =
+        jest.requireActual<typeof import('events')>('events');
       const emitter = new EventEmitter();
       const emitSpy = jest.spyOn(emitter, 'emit');
 
@@ -366,8 +367,9 @@ describe('StellarService - sequence number integration', () => {
 
       const svcWithEmitter =
         moduleWithEmitter.get<StellarService>(StellarService);
-      const seqMgrWithEmitter =
-        moduleWithEmitter.get<SequenceNumberManager>(SequenceNumberManager);
+      const seqMgrWithEmitter = moduleWithEmitter.get<SequenceNumberManager>(
+        SequenceNumberManager,
+      );
       svcWithEmitter.onModuleInit();
       seqMgrWithEmitter.cacheSequenceNumber(signerKeypair.publicKey(), 20);
 
@@ -447,8 +449,7 @@ describe('StellarService - sequence number integration', () => {
       >('@stellar/stellar-sdk');
 
       const mainnetModule = await buildModule({ STELLAR_NETWORK: 'mainnet' });
-      const mainnetService =
-        mainnetModule.get<StellarService>(StellarService);
+      const mainnetService = mainnetModule.get<StellarService>(StellarService);
       mainnetService.onModuleInit();
 
       expect(mainnetService.getNetworkPassphrase()).toBe(Networks.PUBLIC);
@@ -472,8 +473,7 @@ describe('StellarService - sequence number integration', () => {
       >('@stellar/stellar-sdk');
 
       const testnetModule = await buildModule({ STELLAR_NETWORK: 'testnet' });
-      const testnetService =
-        testnetModule.get<StellarService>(StellarService);
+      const testnetService = testnetModule.get<StellarService>(StellarService);
       testnetService.onModuleInit();
 
       expect(testnetService.getNetworkPassphrase()).toBe(Networks.TESTNET);
@@ -495,8 +495,7 @@ describe('StellarService - sequence number integration', () => {
       const unknownModule = await buildModule({
         STELLAR_NETWORK: 'staging-private',
       });
-      const unknownService =
-        unknownModule.get<StellarService>(StellarService);
+      const unknownService = unknownModule.get<StellarService>(StellarService);
 
       expect(() => unknownService.onModuleInit()).toThrow(
         'Unknown STELLAR_NETWORK value',

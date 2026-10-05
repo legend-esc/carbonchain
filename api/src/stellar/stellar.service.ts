@@ -153,10 +153,10 @@ export class StellarService implements OnModuleInit {
 
     switch (network.toUpperCase()) {
       case 'PUBLIC':
-      // Bug fix: 'mainnet' (and 'MAINNET') must map to Networks.PUBLIC, not
-      // fall through to TESTNET.  The canonical Stellar name for mainnet is
-      // 'PUBLIC', but operators commonly write 'mainnet' in their .env files.
       case 'MAINNET':
+        // Bug fix: 'mainnet' (and 'MAINNET') must map to Networks.PUBLIC, not
+        // fall through to TESTNET.  The canonical Stellar name for mainnet is
+        // 'PUBLIC', but operators commonly write 'mainnet' in their .env files.
         this.networkPassphrase = Networks.PUBLIC;
         break;
       case 'FUTURENET':
@@ -260,7 +260,9 @@ export class StellarService implements OnModuleInit {
     args: xdr.ScVal[] = [],
     signerKeypair: Keypair,
     retries = BAD_SEQ_MAX_RETRIES,
-  ): Promise<rpc.Api.GetTransactionResponse & { estimatedFeeStroops?: number }> {
+  ): Promise<
+    rpc.Api.GetTransactionResponse & { estimatedFeeStroops?: number }
+  > {
     const startTime = Date.now();
 
     try {
@@ -301,7 +303,9 @@ export class StellarService implements OnModuleInit {
     retries = BAD_SEQ_MAX_RETRIES,
     startTime: number,
     badSeqAttempt = 0,
-  ): Promise<rpc.Api.GetTransactionResponse & { estimatedFeeStroops?: number }> {
+  ): Promise<
+    rpc.Api.GetTransactionResponse & { estimatedFeeStroops?: number }
+  > {
     const pk = signerKeypair.publicKey();
     const seq = await this.getNextSequenceNumber(pk);
     const account = new Account(pk, seq.toString());
@@ -382,10 +386,7 @@ export class StellarService implements OnModuleInit {
             // Bug fix: FAILED transactions must not be reported as successful.
             // Throw here so the catch block in invokeContract emits the failure
             // event and the caller receives an error rather than a FAILED result.
-            if (
-              (result.status as string) ===
-              rpc.Api.GetTransactionStatus.FAILED
-            ) {
+            if (String(result.status) === 'FAILED') {
               throw new Error(
                 `Transaction failed on-chain: ${result.status} (hash: ${response.hash})`,
               );
@@ -612,17 +613,15 @@ export class StellarService implements OnModuleInit {
   async submitTransaction(signedXdr: string): Promise<unknown> {
     this.logger.log('Submitting pre-signed transaction');
     return this.sorobanRpcServer.sendTransaction(
-      TransactionBuilder.fromXDR(
-        signedXdr,
-        this.networkPassphrase,
-      ) as Transaction,
+      TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase),
     );
   }
 
   async getContractData(
     contractId: string,
     key: xdr.ScVal,
-    durability: xdr.ContractDataDurability = xdr.ContractDataDurability.persistent,
+    durability: xdr.ContractDataDurability = xdr.ContractDataDurability
+      .persistent,
   ): Promise<xdr.ScVal | null> {
     const ledgerKey = xdr.LedgerKey.contractData(
       new xdr.LedgerKeyContractData({
@@ -669,8 +668,8 @@ export class StellarService implements OnModuleInit {
         'getTransaction',
       );
       if (
-        response.status !== rpc.Api.GetTransactionStatus.NOT_FOUND &&
-        (response.status as any) !== 'PENDING'
+        String(response.status) !== 'NOT_FOUND' &&
+        String(response.status) !== 'PENDING'
       ) {
         return response;
       }
@@ -854,7 +853,7 @@ export class StellarService implements OnModuleInit {
     for (let i = 0; i < maxPolls; i++) {
       const response = await this.sorobanRpcServer.getTransaction(hash);
 
-      if (response.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+      if (String(response.status) === 'SUCCESS') {
         const latencyMs = Date.now() - start;
         this.logger.log(
           `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] ` +
@@ -863,7 +862,7 @@ export class StellarService implements OnModuleInit {
         return { status: 'SUCCESS', hash, latencyMs };
       }
 
-      if (response.status === rpc.Api.GetTransactionStatus.FAILED) {
+      if (String(response.status) === 'FAILED') {
         const latencyMs = Date.now() - start;
         const errorMessage = this.extractTxErrorMessage(response);
         this.logger.warn(

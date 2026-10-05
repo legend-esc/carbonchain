@@ -1,6 +1,4 @@
-import {
-  NotFoundException,
-} from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { MarketplaceController } from './marketplace.controller';
 import { MarketplaceService } from './marketplace.service';
@@ -65,7 +63,9 @@ describe('MarketplaceController', () => {
       mockMarketplaceService.getListingsKeyset.mockResolvedValueOnce(
         keysetResult,
       );
-      const cursor = Buffer.from(JSON.stringify({ offset: 50 })).toString('base64url');
+      const cursor = Buffer.from(JSON.stringify({ offset: 50 })).toString(
+        'base64url',
+      );
       await controller.getListings(cursor, '50');
       expect(mockMarketplaceService.getListingsKeyset).toHaveBeenCalledWith(
         expect.objectContaining({ cursor, limit: 50 }),

@@ -17,23 +17,18 @@ import { AdminAuditEntity } from './admin-audit.entity';
 import { CreditStatus } from '../../../shared';
 
 /** Pull IP + UA + request-id from the Express request for audit context. */
-function buildAuditCtx(
-  req: {
-    user?: { account?: string; publicKey?: string };
-    headers?: Record<string, string | string[] | undefined>;
-    ip?: string;
-    socket?: { remoteAddress?: string };
-  },
-): AuditContext {
-  const actor =
-    (req.user as { account?: string; publicKey?: string } | undefined)
-      ?.account ??
-    (req.user as { account?: string; publicKey?: string } | undefined)
-      ?.publicKey ??
-    'unknown';
+function buildAuditCtx(req: {
+  user?: { account?: string; publicKey?: string };
+  headers?: Record<string, string | string[] | undefined>;
+  ip?: string;
+  socket?: { remoteAddress?: string };
+}): AuditContext {
+  const actor = req.user?.account ?? req.user?.publicKey ?? 'unknown';
 
   const rawIp =
-    (req.headers?.['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+    (req.headers?.['x-forwarded-for'] as string | undefined)
+      ?.split(',')[0]
+      ?.trim() ??
     req.ip ??
     req.socket?.remoteAddress ??
     null;
@@ -103,7 +98,7 @@ export class AdminController {
     @Body() body: { address: string },
     @Request() req: object,
   ): Promise<{ registered: boolean; address: string }> {
-    return this.adminService.registerVerifier(body.address, buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]));
+    return this.adminService.registerVerifier(body.address, buildAuditCtx(req));
   }
 
   /**
@@ -114,13 +109,16 @@ export class AdminController {
    * Consumes one admin nonce.
    */
   @ApiOperation({ summary: 'Suspend (remove) a verifier on-chain' })
-  @ApiResponse({ status: 200, description: 'Verifier suspended (removed on-chain)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Verifier suspended (removed on-chain)',
+  })
   @Post('verifiers/:id/suspend')
   suspendVerifier(
     @Param('id') id: string,
     @Request() req: object,
   ): Promise<{ suspended: boolean }> {
-    return this.adminService.suspendVerifier(id, buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]));
+    return this.adminService.suspendVerifier(id, buildAuditCtx(req));
   }
 
   /**
@@ -132,15 +130,21 @@ export class AdminController {
    *
    * Returns 501 so the UI knows to hide this feature for admin sessions.
    */
-  @ApiOperation({ summary: 'Configure verifier capabilities (NOT IMPLEMENTED — requires verifier signature)' })
-  @ApiResponse({ status: 501, description: 'Not implemented — requires verifier signature, not admin' })
+  @ApiOperation({
+    summary:
+      'Configure verifier capabilities (NOT IMPLEMENTED — requires verifier signature)',
+  })
+  @ApiResponse({
+    status: 501,
+    description: 'Not implemented — requires verifier signature, not admin',
+  })
   @Post('verifiers/:id/configure')
   configureVerifier(
     @Param('id') id: string,
     @Body() body: VerifierCapabilities,
     @Request() req: object,
   ): Promise<{ configured: boolean; verifierId: string }> {
-    return this.adminService.configureVerifier(id, body, buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]));
+    return this.adminService.configureVerifier(id, body, buildAuditCtx(req));
   }
 
   /**
@@ -152,14 +156,20 @@ export class AdminController {
    *
    * Returns 501 so the UI knows to hide this feature.
    */
-  @ApiOperation({ summary: 'Flag a credit for review (NOT IMPLEMENTED — requires verifier signature)' })
-  @ApiResponse({ status: 501, description: 'Not implemented — requires verifier signature, not admin' })
+  @ApiOperation({
+    summary:
+      'Flag a credit for review (NOT IMPLEMENTED — requires verifier signature)',
+  })
+  @ApiResponse({
+    status: 501,
+    description: 'Not implemented — requires verifier signature, not admin',
+  })
   @Post('credits/:id/flag')
   flagCredit(
     @Param('id') id: string,
     @Request() req: object,
   ): Promise<{ flagged: boolean; creditId: string; status: CreditStatus }> {
-    return this.adminService.flagCredit(id, buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]));
+    return this.adminService.flagCredit(id, buildAuditCtx(req));
   }
 
   /**
@@ -173,7 +183,7 @@ export class AdminController {
     return this.adminService.registerMethodology(
       body.name,
       body.description,
-      buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]),
+      buildAuditCtx(req),
     );
   }
 
@@ -197,7 +207,7 @@ export class AdminController {
   ): Promise<{ requiredApprovals: number }> {
     return this.adminService.setRequiredApprovals(
       body.threshold,
-      buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]),
+      buildAuditCtx(req),
     );
   }
 
@@ -206,7 +216,7 @@ export class AdminController {
    */
   @Post('pause')
   pause(@Request() req: object): Promise<{ paused: boolean }> {
-    return this.adminService.pauseContract(buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]));
+    return this.adminService.pauseContract(buildAuditCtx(req));
   }
 
   /**
@@ -214,7 +224,7 @@ export class AdminController {
    */
   @Post('unpause')
   unpause(@Request() req: object): Promise<{ paused: boolean }> {
-    return this.adminService.unpauseContract(buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]));
+    return this.adminService.unpauseContract(buildAuditCtx(req));
   }
 
   @ApiOperation({ summary: 'Set minimum verifier stake requirement' })
@@ -227,7 +237,7 @@ export class AdminController {
     return this.adminService.setMinStake(
       body.amount,
       body.nonce,
-      buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]),
+      buildAuditCtx(req),
     );
   }
 
@@ -246,7 +256,7 @@ export class AdminController {
       address,
       body.creditId,
       body.nonce,
-      buildAuditCtx(req as Parameters<typeof buildAuditCtx>[0]),
+      buildAuditCtx(req),
     );
   }
 }

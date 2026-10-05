@@ -72,7 +72,9 @@ export class CreditsService {
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
   }
 
-  async issueCredit(dto: IssueCreditDto): Promise<{ creditId: string; estimatedFeeStroops?: number }> {
+  async issueCredit(
+    dto: IssueCreditDto,
+  ): Promise<{ creditId: string; estimatedFeeStroops?: number }> {
     this.logger.log(`Issuing credit for project ${dto.projectId}`);
 
     // ── #415: API-layer nonce deduplication ───────────────────────────────────
@@ -125,9 +127,14 @@ export class CreditsService {
 
     // Issue #917 — include the simulated fee in the response so the client
     // can display a non-constant, accurate fee estimate.
-    const estimatedFeeStroops = (response as unknown as { estimatedFeeStroops?: number }).estimatedFeeStroops;
+    const estimatedFeeStroops = (
+      response as unknown as { estimatedFeeStroops?: number }
+    ).estimatedFeeStroops;
 
-    return { creditId, ...(estimatedFeeStroops !== undefined ? { estimatedFeeStroops } : {}) };
+    return {
+      creditId,
+      ...(estimatedFeeStroops !== undefined ? { estimatedFeeStroops } : {}),
+    };
   }
 
   async getCredit(creditId: string): Promise<CreditMetadata> {

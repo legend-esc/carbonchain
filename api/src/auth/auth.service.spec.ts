@@ -125,13 +125,16 @@ describe('AuthService', () => {
     it('caches the nonce bound to the client account for replay protection', async () => {
       const result = await service.generateChallenge(VALID_CLIENT.publicKey());
       const tx = new Transaction(result.transaction, result.network_passphrase);
-      const opValue = (tx.operations.find((op) => op.type === 'manageData') as any)
-        .value as Uint8Array | Buffer;
+      const opValue = (
+        tx.operations.find((op) => op.type === 'manageData') as any
+      ).value as Uint8Array | Buffer;
       const nonce =
         opValue instanceof Buffer
           ? opValue.toString('base64')
           : Buffer.from(opValue).toString('base64');
-      const cached = await cache.get<{ account: string }>(`sep10:nonce:${nonce}`);
+      const cached = await cache.get<{ account: string }>(
+        `sep10:nonce:${nonce}`,
+      );
       expect(cached).toEqual({ account: VALID_CLIENT.publicKey() });
     });
 
@@ -189,13 +192,16 @@ describe('AuthService', () => {
       const { transaction, network_passphrase } =
         await service.generateChallenge(VALID_CLIENT.publicKey());
       const tx = new Transaction(transaction, network_passphrase);
-      const opValue = (tx.operations.find((op) => op.type === 'manageData') as any)
-        .value as Uint8Array | Buffer;
+      const opValue = (
+        tx.operations.find((op) => op.type === 'manageData') as any
+      ).value as Uint8Array | Buffer;
       const nonce =
         opValue instanceof Buffer
           ? opValue.toString('base64')
           : Buffer.from(opValue).toString('base64');
-      const before = await cache.get<{ account: string }>(`sep10:nonce:${nonce}`);
+      const before = await cache.get<{ account: string }>(
+        `sep10:nonce:${nonce}`,
+      );
       expect(before).toEqual({ account: VALID_CLIENT.publicKey() });
 
       tx.sign(VALID_CLIENT);

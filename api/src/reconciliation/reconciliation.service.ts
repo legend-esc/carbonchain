@@ -98,7 +98,7 @@ export class ReconciliationService {
               // Could not read on-chain — skip this credit silently.
               continue;
             }
-            if (chainStatus !== credit.status) {
+            if (chainStatus !== String(credit.status)) {
               driftCount++;
               this.driftDetectedCounter.labels(chainStatus).inc();
               this.logger.warn(
@@ -125,9 +125,7 @@ export class ReconciliationService {
         `Reconciliation complete — detected: ${driftCount}, corrected: ${correctedCount}`,
       );
     } catch (err) {
-      this.logger.error(
-        `Reconciliation run failed: ${(err as Error).message}`,
-      );
+      this.logger.error(`Reconciliation run failed: ${(err as Error).message}`);
     }
   }
 
@@ -184,7 +182,7 @@ export class ReconciliationService {
       const chainStatus = await this.fetchChainStatus(id);
       if (chainStatus === null) continue;
 
-      if (chainStatus !== credit.status) {
+      if (chainStatus !== String(credit.status)) {
         await this.correctDrift(credit, chainStatus as CreditStatus);
         drifts.push({
           creditId: id,

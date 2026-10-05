@@ -232,9 +232,7 @@ describe('ProjectsService', () => {
       }
 
       // Mock isPinned → pinned.
-      mockedAxios.get = jest
-        .fn()
-        .mockResolvedValue({ data: { count: 1 } });
+      mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 1 } });
 
       const result = await service.verifyProjectCid(project.id, VALID_CID);
 

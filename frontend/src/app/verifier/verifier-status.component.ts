@@ -237,8 +237,15 @@ export class VerifierStatusComponent implements OnInit {
               stakeAmount: result.stakeAmount,
               status: result.status,
               reviewedBy: result.reviewedBy,
-              createdAt: typeof result.createdAt === "number" ? result.createdAt : (result.createdAt as any).getTime()/1000,
-              updatedAt: result.updatedAt ? (typeof result.updatedAt === "number" ? result.updatedAt : (result.updatedAt as any).getTime()/1000) : null,
+              createdAt:
+                typeof result.createdAt === 'number'
+                  ? result.createdAt
+                  : (result.createdAt as any).getTime() / 1000,
+              updatedAt: result.updatedAt
+                ? typeof result.updatedAt === 'number'
+                  ? result.updatedAt
+                  : (result.updatedAt as any).getTime() / 1000
+                : null,
             }
           : null,
       );

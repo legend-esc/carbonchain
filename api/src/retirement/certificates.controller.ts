@@ -33,10 +33,16 @@ export class CertificatesController {
    * pre-date the field.
    */
   @ApiOperation({ summary: 'Get retirement certificate record' })
-  @ApiResponse({ status: 200, description: 'Retirement record with ledger anchor', type: CertificateResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Retirement record with ledger anchor',
+    type: CertificateResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Get(':id')
-  async getCertificate(@Param('id') id: string): Promise<CertificateResponseDto> {
+  async getCertificate(
+    @Param('id') id: string,
+  ): Promise<CertificateResponseDto> {
     const record = await this.retirementService.getRetirement(id);
 
     // Map the shared RetirementRecord → CertificateResponseDto, surfacing
@@ -53,7 +59,8 @@ export class CertificatesController {
     dto.certificate_ipfs_hash = record.certificate_ipfs_hash ?? '';
     dto.vintage_year = record.vintage_year ?? null;
     // Issue #943 — expose the ledger anchor; null for legacy records (ledger_seq absent / 0).
-    dto.ledgerSeq = record.ledger_seq && record.ledger_seq > 0 ? record.ledger_seq : null;
+    dto.ledgerSeq =
+      record.ledger_seq && record.ledger_seq > 0 ? record.ledger_seq : null;
     return dto;
   }
 

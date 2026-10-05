@@ -231,12 +231,9 @@ describe('VerifiersService.approveCredit', () => {
       spyListVerifiers([VERIFIER_ADDR]);
       mockStellarService.readContract.mockImplementation(
         async (_c: string, method: string) => {
-          if (method === 'get_nonce')
-            return 42;
-          if (method === 'get_required_approvals')
-            return 0;
-          if (method === 'get_approval_count')
-            return 0;
+          if (method === 'get_nonce') return 42;
+          if (method === 'get_required_approvals') return 0;
+          if (method === 'get_approval_count') return 0;
           return null;
         },
       );

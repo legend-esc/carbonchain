@@ -11,7 +11,10 @@ import {
 } from './verifier.repository';
 import { AuthModule } from '../auth/auth.module';
 import { VerifierApplicationEntity } from './verifier-application.entity';
-import { VerifierApplicationRepository, verifierApplicationRepositoryProvider } from './verifier-application.repository';
+import {
+  VerifierApplicationRepository,
+  verifierApplicationRepositoryProvider,
+} from './verifier-application.repository';
 
 @Module({
   imports: [

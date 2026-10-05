@@ -119,7 +119,9 @@ export class AdminService {
       contractPauseStatus = isPaused ? 'paused' : 'unpaused';
     } catch (err: unknown) {
       probeError = (err as Error)?.message ?? 'contract probe failed';
-      this.logger.warn(`Pause probe failed — surfacing as unknown: ${probeError}`);
+      this.logger.warn(
+        `Pause probe failed — surfacing as unknown: ${probeError}`,
+      );
       // contractPauseStatus stays 'unknown'
     }
     const [totalCredits, retirements] = await Promise.all([
@@ -209,13 +211,10 @@ export class AdminService {
     address: string,
     ctx: AuditContext = { actor: 'system' },
   ): Promise<{ registered: boolean; address: string }> {
-    await this.writeAudit(
-      ctx,
-      'register_verifier',
+    await this.writeAudit(ctx, 'register_verifier', address, null, {
+      registered: true,
       address,
-      null,
-      { registered: true, address },
-    );
+    });
     return { registered: true, address };
   }
 
@@ -240,7 +239,13 @@ export class AdminService {
       admin,
     );
     this.logger.log(`Verifier ${id} suspended by admin`);
-    await this.writeAudit(ctx, 'suspend_verifier', id, { verifier }, { suspended: true });
+    await this.writeAudit(
+      ctx,
+      'suspend_verifier',
+      id,
+      { verifier },
+      { suspended: true },
+    );
     return { suspended: true };
   }
 
@@ -349,13 +354,11 @@ export class AdminService {
     this.logger.log(
       `Slashed verifier ${verifierAddress} for credit ${creditId}`,
     );
-    await this.writeAudit(
-      ctx,
-      'slash_verifier',
-      verifierAddress,
-      null,
-      { slashed: true, verifier: verifierAddress, creditId },
-    );
+    await this.writeAudit(ctx, 'slash_verifier', verifierAddress, null, {
+      slashed: true,
+      verifier: verifierAddress,
+      creditId,
+    });
     return { slashed: true, verifier: verifierAddress, creditId };
   }
 
@@ -368,13 +371,11 @@ export class AdminService {
     ctx: AuditContext = { actor: 'system' },
   ): { registered: boolean; name: string; description: string } {
     // Fire-and-forget — sync method; audit write is async but non-blocking
-    void this.writeAudit(
-      ctx,
-      'register_methodology',
+    void this.writeAudit(ctx, 'register_methodology', name, null, {
+      registered: true,
       name,
-      null,
-      { registered: true, name, description },
-    );
+      description,
+    });
     this.logger.log(`Registering methodology: ${name}`);
     return { registered: true, name, description };
   }

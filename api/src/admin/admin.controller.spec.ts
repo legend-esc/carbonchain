@@ -28,11 +28,17 @@ describe('AdminController', () => {
               activeVerifiers: 3,
               paused: false,
             }),
-            registerVerifier: jest.fn().mockResolvedValue({ registered: true, address: 'GVER1' }),
+            registerVerifier: jest
+              .fn()
+              .mockResolvedValue({ registered: true, address: 'GVER1' }),
             suspendVerifier: jest.fn().mockResolvedValue({ suspended: true }),
             // #924 — flagCredit and configureVerifier throw 501
-            flagCredit: jest.fn().mockRejectedValue(new NotImplementedException()),
-            configureVerifier: jest.fn().mockRejectedValue(new NotImplementedException()),
+            flagCredit: jest
+              .fn()
+              .mockRejectedValue(new NotImplementedException()),
+            configureVerifier: jest
+              .fn()
+              .mockRejectedValue(new NotImplementedException()),
             registerMethodology: jest.fn().mockReturnValue({
               registered: true,
               name: 'VCS',
@@ -58,9 +64,7 @@ describe('AdminController', () => {
             configureVerifier: jest
               .fn()
               .mockResolvedValue({ configured: true, verifierId: 'GVER1' }),
-            getAuditLog: jest
-              .fn()
-              .mockResolvedValue({ rows: [], total: 0 }),
+            getAuditLog: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
           },
         },
       ],
@@ -154,7 +158,10 @@ describe('AdminController', () => {
   });
 
   it('POST /admin/required-approvals calls setRequiredApprovals with audit ctx', async () => {
-    const result = await controller.setRequiredApprovals({ threshold: 2 }, mockReq);
+    const result = await controller.setRequiredApprovals(
+      { threshold: 2 },
+      mockReq,
+    );
     expect(result).toEqual({ requiredApprovals: 2 });
     expect(service.setRequiredApprovals).toHaveBeenCalledWith(
       2,

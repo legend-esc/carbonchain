@@ -148,7 +148,10 @@ export class RetirementService {
     }
 
     const tonnesToRetire = dto.tonnes ? dto.tonnes : credit.tonnes;
-    if (BigInt(tonnesToRetire) <= 0n || BigInt(tonnesToRetire) > BigInt(credit.tonnes)) {
+    if (
+      BigInt(tonnesToRetire) <= 0n ||
+      BigInt(tonnesToRetire) > BigInt(credit.tonnes)
+    ) {
       throw new BadRequestException(
         `Invalid retirement tonnes: ${tonnesToRetire}. Must be between 1 and ${credit.tonnes}`,
       );
@@ -166,7 +169,9 @@ export class RetirementService {
     });
 
     if (isPartial) {
-      credit.tonnes = (BigInt(credit.tonnes) - BigInt(tonnesToRetire)).toString();
+      credit.tonnes = (
+        BigInt(credit.tonnes) - BigInt(tonnesToRetire)
+      ).toString();
     } else {
       credit.status = CreditStatus.Retired;
     }
@@ -232,8 +237,7 @@ export class RetirementService {
       // Check status — must be Active (numeric 1 in the contract enum)
       const onChainStatus = onChain.status;
       const isOnChainActive =
-        onChainStatus === 1 ||
-        String(onChainStatus).toLowerCase() === 'active';
+        onChainStatus === 1 || String(onChainStatus).toLowerCase() === 'active';
 
       if (!isOnChainActive) {
         throw new ConflictException({
@@ -245,7 +249,7 @@ export class RetirementService {
       }
 
       // Check owner — must match the buyer (the one submitting the retire call)
-      const onChainOwner = String(onChain.owner ?? '');
+      const onChainOwner = onChain.owner ?? '';
       if (onChainOwner && onChainOwner !== buyerPublicKey) {
         throw new ConflictException({
           error:
@@ -319,7 +323,7 @@ export class RetirementService {
       );
       // invokeContract returns the final GetTransactionResponse; extract hash
       txHash =
-        (response as unknown as Record<string, unknown>).hash as string ?? '';
+        ((response as unknown as Record<string, unknown>).hash as string) ?? '';
     } catch (error: unknown) {
       // #919 — map contract errors via ContractErrorMapper; no magic strings
       mapContractError(error, 'retirement');
@@ -338,8 +342,7 @@ export class RetirementService {
     // response so the retirement record carries a tamper-proof on-chain anchor.
     // The `ledger` field is present on a SUCCESS response; it may be absent for
     // error/not-found shapes so we default to 0 for legacy compatibility.
-    const ledgerSeq =
-      (response as unknown as { ledger?: number })?.ledger ?? 0;
+    const ledgerSeq = (response as unknown as { ledger?: number })?.ledger ?? 0;
 
     // ── Step 1: Persist to off-chain index ───────────────────────────────────
     // The record MUST be written before the CreditRetired event is emitted.
@@ -458,7 +461,9 @@ export class RetirementService {
 
     // Issue #917 — surface the simulated fee so the caller and DTOs can show
     // an accurate, non-constant fee estimate driven by minResourceFee × multiplier.
-    const estimatedFeeStroops = (response as unknown as { estimatedFeeStroops?: number }).estimatedFeeStroops;
+    const estimatedFeeStroops = (
+      response as unknown as { estimatedFeeStroops?: number }
+    ).estimatedFeeStroops;
 
     return {
       retirementId,
@@ -529,7 +534,7 @@ export class RetirementService {
         signer,
       );
       txHash =
-        (response as unknown as Record<string, unknown>).hash as string ?? '';
+        ((response as unknown as Record<string, unknown>).hash as string) ?? '';
     } catch (error: unknown) {
       // #919 — map contract errors via ContractErrorMapper
       mapContractError(error, 'retirement');
@@ -542,7 +547,8 @@ export class RetirementService {
         // The whole batch reverted on-chain — no DB writes and no events.
         // Surface every credit as failed so callers can reconcile.
         const msg =
-          confirmation.errorMessage ?? `Contract reverted (${confirmation.status})`;
+          confirmation.errorMessage ??
+          `Contract reverted (${confirmation.status})`;
         this.logger.error(
           `Batch retire tx ${txHash.slice(0, 16)}... closed as ${confirmation.status}: ${msg}. No records persisted.`,
         );
@@ -752,8 +758,7 @@ export class RetirementService {
     const [entities, total] = await this.retirementRepo.findPaginated(dto);
     const data = entities.map((e) => this.entityToRecord(e));
 
-    const nextCursor =
-      page * pageSize < total ? String(page + 1) : null;
+    const nextCursor = page * pageSize < total ? String(page + 1) : null;
 
     return { data, total, page, pageSize, nextCursor };
   }

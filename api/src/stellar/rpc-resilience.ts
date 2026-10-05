@@ -101,11 +101,12 @@ const TRANSIENT_MESSAGES = [
 ] as const;
 
 function isTransientError(err: unknown): boolean {
-  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const message = (
+    err instanceof Error ? err.message : String(err)
+  ).toLowerCase();
   const statusCode =
     (err as { response?: { status?: number }; code?: number })?.response
-      ?.status ??
-    (err as { code?: number })?.code;
+      ?.status ?? (err as { code?: number })?.code;
 
   if (statusCode === 429 || statusCode === 503) return true;
   return TRANSIENT_MESSAGES.some((fragment) => message.includes(fragment));

@@ -221,9 +221,7 @@ describe('MarketplaceService — mapMarketplaceError', () => {
 
     it('returns last page with no nextCursor when fewer offers than limit remain', async () => {
       // Only 10 offers available.
-      mockStellarService.readContract.mockResolvedValueOnce(
-        makeRawOffers(10),
-      );
+      mockStellarService.readContract.mockResolvedValueOnce(makeRawOffers(10));
 
       const result = await service.getListingsKeyset({ limit: 50 });
 

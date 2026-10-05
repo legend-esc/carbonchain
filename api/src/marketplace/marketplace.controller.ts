@@ -12,10 +12,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
-import {
-  MarketplaceService,
-  KeysetPage,
-} from './marketplace.service';
+import { MarketplaceService, KeysetPage } from './marketplace.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { QuoteOfferDto, QuoteResult } from './dto/quote-offer.dto';
 import { Offer } from '../../../shared';
@@ -56,7 +53,8 @@ export class MarketplaceController {
   ): Promise<KeysetPage> {
     return this.marketplaceService.getListingsKeyset({
       cursor,
-      limit: limit !== undefined ? Math.max(1, parseInt(limit, 10) || 1) : undefined,
+      limit:
+        limit !== undefined ? Math.max(1, parseInt(limit, 10) || 1) : undefined,
       methodology,
       minPrice: minPrice !== undefined ? Number(minPrice) : undefined,
       maxPrice: maxPrice !== undefined ? Number(maxPrice) : undefined,

@@ -22,7 +22,10 @@ import { CacheService } from '../common/cache.service';
 import { VerifierEntity } from './verifier.entity';
 import type { IVerifierRepository } from './verifier.repository';
 import { VERIFIER_REPOSITORY } from './verifier.repository';
-import { VerifierApplicationEntity, VerifierApplicationStatus } from './verifier-application.entity';
+import {
+  VerifierApplicationEntity,
+  VerifierApplicationStatus,
+} from './verifier-application.entity';
 import type { IVerifierApplicationRepository } from './verifier-application.repository';
 import { VERIFIER_APPLICATION_REPOSITORY } from './verifier-application.repository';
 
@@ -717,7 +720,9 @@ export class VerifiersService implements OnApplicationBootstrap {
     const repo = this.verifierAppRepo;
     const existing = await repo.findByAddress(data.address);
     if (existing && existing.status === VerifierApplicationStatus.Pending) {
-      throw new ConflictException('Application already pending for this address');
+      throw new ConflictException(
+        'Application already pending for this address',
+      );
     }
     const entity = repo.create({
       address: data.address,
@@ -731,11 +736,15 @@ export class VerifiersService implements OnApplicationBootstrap {
     return repo.save(entity);
   }
 
-  async getApplication(address: string): Promise<VerifierApplicationEntity | null> {
+  async getApplication(
+    address: string,
+  ): Promise<VerifierApplicationEntity | null> {
     return this.verifierAppRepo.findByAddress(address);
   }
 
-  async listApplications(status?: VerifierApplicationStatus): Promise<VerifierApplicationEntity[]> {
+  async listApplications(
+    status?: VerifierApplicationStatus,
+  ): Promise<VerifierApplicationEntity[]> {
     const all = await this.verifierAppRepo.findAll();
     if (!status) return all;
     return all.filter((a) => a.status === status);
@@ -746,10 +755,17 @@ export class VerifiersService implements OnApplicationBootstrap {
     status: VerifierApplicationStatus,
     reviewedBy: string,
   ): Promise<VerifierApplicationEntity | null> {
-    if (status !== VerifierApplicationStatus.Approved && status !== VerifierApplicationStatus.Rejected) {
+    if (
+      status !== VerifierApplicationStatus.Approved &&
+      status !== VerifierApplicationStatus.Rejected
+    ) {
       throw new BadRequestException('Invalid review status');
     }
-    const updated = await this.verifierAppRepo.updateStatus(address, status, reviewedBy);
+    const updated = await this.verifierAppRepo.updateStatus(
+      address,
+      status,
+      reviewedBy,
+    );
     if (!updated) return null;
     return updated;
   }

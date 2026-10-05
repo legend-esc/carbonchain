@@ -93,8 +93,12 @@ describe('WebhooksController', () => {
   describe('registerWebhook', () => {
     it('registers a webhook and returns secret', async () => {
       // Bypass real DNS in controller tests
-      const service = (controller as unknown as { webhooksService: WebhooksService }).webhooksService;
-      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValueOnce(undefined);
+      const service = (
+        controller as unknown as { webhooksService: WebhooksService }
+      ).webhooksService;
+      jest
+        .spyOn(service, 'validateWebhookUrl')
+        .mockResolvedValueOnce(undefined);
 
       const result = await controller.registerWebhook({
         url: 'https://example.com/webhook',
@@ -110,7 +114,9 @@ describe('WebhooksController', () => {
 
   describe('getWebhooks', () => {
     it('returns all webhooks', async () => {
-      const service = (controller as unknown as { webhooksService: WebhooksService }).webhooksService;
+      const service = (
+        controller as unknown as { webhooksService: WebhooksService }
+      ).webhooksService;
       jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       await controller.registerWebhook({
@@ -131,7 +137,9 @@ describe('WebhooksController', () => {
     });
 
     it('returns webhook for known id', async () => {
-      const service = (controller as unknown as { webhooksService: WebhooksService }).webhooksService;
+      const service = (
+        controller as unknown as { webhooksService: WebhooksService }
+      ).webhooksService;
       jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       const created = await controller.registerWebhook({
@@ -146,7 +154,9 @@ describe('WebhooksController', () => {
 
   describe('deleteWebhook', () => {
     it('deletes a webhook', async () => {
-      const service = (controller as unknown as { webhooksService: WebhooksService }).webhooksService;
+      const service = (
+        controller as unknown as { webhooksService: WebhooksService }
+      ).webhooksService;
       jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       const created = await controller.registerWebhook({

@@ -1151,7 +1151,9 @@ mod tests {
         client.initialize(&admin);
         // NONCE_WINDOW = 16; current nonce + 16 is just outside the window.
         let current = client.get_nonce(&admin);
-        assert!(client.try_register_oracle(&admin, &oracle, &(current + 16)).is_err());
+        assert!(client
+            .try_register_oracle(&admin, &oracle, &(current + 16))
+            .is_err());
     }
 
     // ── Pause tests ──────────────────────────────────────────────────────────

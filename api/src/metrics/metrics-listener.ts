@@ -110,9 +110,7 @@ export class MetricsListener implements OnModuleDestroy {
    * Records latency on `stellar_rpc_duration_seconds` and increments
    * `stellar_contract_ops_total{op_type="read"}`.
    */
-  private onContractReadCompleted(
-    payload: ContractReadCompletedEvent,
-  ): void {
+  private onContractReadCompleted(payload: ContractReadCompletedEvent): void {
     const outcome = payload.status === 'success' ? 'success' : 'failure';
     this.metricsService.stellarRpcDurationSeconds?.observe(
       { method: payload.method, outcome },

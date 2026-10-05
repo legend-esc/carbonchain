@@ -168,19 +168,14 @@ function buildMockDataSource() {
         } else if (s.includes("status = 'pending'")) {
           deliveries[id].status = 'pending';
           deliveries[id].attempts = (params as [string, number, Date])[1];
-          deliveries[id].next_retry_at = (
-            params as [string, number, Date]
-          )[2];
+          deliveries[id].next_retry_at = (params as [string, number, Date])[2];
         }
       }
       return [];
     }
 
     // UPDATE webhook (success path)
-    if (
-      s.startsWith('UPDATE webhooks') &&
-      s.includes('failure_count = 0')
-    ) {
+    if (s.startsWith('UPDATE webhooks') && s.includes('failure_count = 0')) {
       const id = (params as string[])[0];
       if (webhooks[id]) {
         webhooks[id].failure_count = 0;
@@ -308,10 +303,9 @@ describe('WebhooksService', () => {
         .spyOn(service, 'validateWebhookUrl')
         .mockResolvedValueOnce(undefined);
 
-      const result = await service.registerWebhook(
-        'https://example.com/hook',
-        ['credit_submitted'],
-      );
+      const result = await service.registerWebhook('https://example.com/hook', [
+        'credit_submitted',
+      ]);
 
       expect(result.id).toMatch(/^webhook_/);
       expect(result.url).toBe('https://example.com/hook');
@@ -319,9 +313,7 @@ describe('WebhooksService', () => {
     });
 
     it('getWebhooks returns rows from Postgres', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       await service.registerWebhook('https://example.com/hook', [
         'credit_submitted',
@@ -332,14 +324,11 @@ describe('WebhooksService', () => {
     });
 
     it('deleteWebhook removes the webhook', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
-      const wh = await service.registerWebhook(
-        'https://example.com/hook',
-        ['credit_submitted'],
-      );
+      const wh = await service.registerWebhook('https://example.com/hook', [
+        'credit_submitted',
+      ]);
 
       const ok = await service.deleteWebhook(wh.id);
       expect(ok).toBe(true);
@@ -353,9 +342,7 @@ describe('WebhooksService', () => {
 
   describe('#910 Original payload preserved on retry', () => {
     it('retry delivers identical body to first attempt', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       await service.registerWebhook('https://example.com/hook', [
         'credit_submitted',
@@ -386,9 +373,7 @@ describe('WebhooksService', () => {
     });
 
     it('x-carbonchain-retry header increments on each attempt', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       await service.registerWebhook('https://example.com/hook', [
         'credit_submitted',
@@ -418,9 +403,7 @@ describe('WebhooksService', () => {
 
   describe('#913 HMAC signing', () => {
     it('every delivery carries x-carbonchain-signature', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       await service.registerWebhook('https://example.com/hook', [
         'credit_submitted',
@@ -442,9 +425,7 @@ describe('WebhooksService', () => {
     });
 
     it('signature is verifiable using the registered secret', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       const registration = await service.registerWebhook(
         'https://example.com/hook',
@@ -472,9 +453,7 @@ describe('WebhooksService', () => {
     });
 
     it('wrong secret produces a different signature', async () => {
-      jest
-        .spyOn(service, 'validateWebhookUrl')
-        .mockResolvedValue(undefined);
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
       await service.registerWebhook('https://example.com/hook', [
         'credit_submitted',

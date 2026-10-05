@@ -15,7 +15,9 @@ const SAMPLE_DATA: CertificateData = {
 
 const VALID_CID = computeFileCid(Buffer.from('certificate pdf bytes'));
 
-function makeService(overrides: Record<string, unknown> = {}): Promise<CertificateService> {
+function makeService(
+  overrides: Record<string, unknown> = {},
+): Promise<CertificateService> {
   return Test.createTestingModule({
     providers: [
       CertificateService,
@@ -112,9 +114,18 @@ describe('CertificateService', () => {
       const ids: string[] = [];
 
       const results = await Promise.all([
-        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-1' }).then((b) => { ids.push('job-1'); return b; }),
-        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-2' }).then((b) => { ids.push('job-2'); return b; }),
-        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-3' }).then((b) => { ids.push('job-3'); return b; }),
+        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-1' }).then((b) => {
+          ids.push('job-1');
+          return b;
+        }),
+        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-2' }).then((b) => {
+          ids.push('job-2');
+          return b;
+        }),
+        svc.generatePdf({ ...SAMPLE_DATA, retirementId: 'job-3' }).then((b) => {
+          ids.push('job-3');
+          return b;
+        }),
       ]);
 
       expect(results).toHaveLength(3);

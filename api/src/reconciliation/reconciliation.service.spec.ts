@@ -46,12 +46,16 @@ const mockConfigService = {
 let inMemoryCredits: CreditEntity[] = [];
 
 const mockCreditRepo = {
-  find: jest.fn().mockImplementation(({ skip = 0, take = 100 }) =>
-    Promise.resolve(inMemoryCredits.slice(skip, skip + take)),
-  ),
-  findOne: jest.fn().mockImplementation(({ where: { id } }) =>
-    Promise.resolve(inMemoryCredits.find((c) => c.id === id) ?? null),
-  ),
+  find: jest
+    .fn()
+    .mockImplementation(({ skip = 0, take = 100 }) =>
+      Promise.resolve(inMemoryCredits.slice(skip, skip + take)),
+    ),
+  findOne: jest
+    .fn()
+    .mockImplementation(({ where: { id } }) =>
+      Promise.resolve(inMemoryCredits.find((c) => c.id === id) ?? null),
+    ),
   save: jest.fn().mockImplementation((c: CreditEntity) => {
     const idx = inMemoryCredits.findIndex((x) => x.id === c.id);
     if (idx >= 0) inMemoryCredits[idx] = c;
@@ -95,9 +99,7 @@ describe('ReconciliationService', () => {
       });
 
       // Spy on fetchChainStatus to inject the chain response directly.
-      jest
-        .spyOn(service, 'fetchChainStatus')
-        .mockResolvedValueOnce('retired');
+      jest.spyOn(service, 'fetchChainStatus').mockResolvedValueOnce('retired');
 
       const drifts = await service.reconcileIds([creditId]);
 
@@ -157,7 +159,7 @@ describe('ReconciliationService', () => {
 
       jest
         .spyOn(service, 'fetchChainStatus')
-        .mockResolvedValueOnce('retired')  // aa drifted
+        .mockResolvedValueOnce('retired') // aa drifted
         .mockResolvedValueOnce(CreditStatus.Active); // bb ok
 
       await service.runNightlyReconciliation();

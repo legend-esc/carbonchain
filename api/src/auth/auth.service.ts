@@ -292,9 +292,10 @@ export class AuthService {
     expires_in: number;
   }> {
     const tokenKey = `${REFRESH_TOKEN_PREFIX}${refreshToken}`;
-    const tokenData = await this.cache.get<{ account: string; familyId: string }>(
-      tokenKey,
-    );
+    const tokenData = await this.cache.get<{
+      account: string;
+      familyId: string;
+    }>(tokenKey);
 
     if (!tokenData) {
       throw new UnauthorizedException('Refresh token not found or expired');
@@ -343,7 +344,7 @@ export class AuthService {
     if (token) {
       let payload: { jti?: string; exp?: number } | null = null;
       try {
-        payload = this.jwtService.decode(token) as { jti?: string; exp?: number } | null;
+        payload = this.jwtService.decode(token);
       } catch {
         // malformed — skip
       }
@@ -359,11 +360,7 @@ export class AuthService {
       const now = Math.floor(Date.now() / 1000);
       const remainingTtl = Math.max((payload.exp ?? 0) - now, 1);
       const blocklistKey = `${ACCESS_BLOCKLIST_PREFIX}${payload.jti}`;
-      const persisted = await this.cache.set(
-        blocklistKey,
-        true,
-        remainingTtl,
-      );
+      const persisted = await this.cache.set(blocklistKey, true, remainingTtl);
       if (!persisted) {
         this.logger.error(
           `JWT revocation NOT persisted (cache unavailable): jti=${payload.jti}`,
@@ -372,16 +369,15 @@ export class AuthService {
           'Unable to revoke token: revocation store unavailable. Token remains valid until it expires naturally.',
         );
       }
-      this.logger.log(
-        `JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`,
-      );
+      this.logger.log(`JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`);
     }
 
     if (refreshToken) {
       const tokenKey = `${REFRESH_TOKEN_PREFIX}${refreshToken}`;
-      const tokenData = await this.cache.get<{ account: string; familyId: string }>(
-        tokenKey,
-      );
+      const tokenData = await this.cache.get<{
+        account: string;
+        familyId: string;
+      }>(tokenKey);
       if (tokenData) {
         await this.revokeFamily(tokenData.familyId);
         await this.cache.del(tokenKey);

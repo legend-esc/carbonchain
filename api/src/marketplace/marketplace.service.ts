@@ -415,8 +415,13 @@ export class MarketplaceService {
     );
   }
 
-  async buildBuyOfferXdr(buyerPublicKey: string, offerId: number): Promise<string> {
-    this.logger.log(`Building buy_offer XDR for offer ${offerId} by ${buyerPublicKey}`);
+  async buildBuyOfferXdr(
+    buyerPublicKey: string,
+    offerId: number,
+  ): Promise<string> {
+    this.logger.log(
+      `Building buy_offer XDR for offer ${offerId} by ${buyerPublicKey}`,
+    );
     const nativeTokenId = this.configService.get<string>(
       'NATIVE_TOKEN_CONTRACT_ID',
       '',
@@ -426,7 +431,10 @@ export class MarketplaceService {
       nativeToScVal(offerId, { type: 'u64' }),
       nativeToScVal(nativeTokenId, { type: 'address' }),
     ];
-    if (typeof (this.stellarService as any).buildContractTransaction === 'function') {
+    if (
+      typeof (this.stellarService as any).buildContractTransaction ===
+      'function'
+    ) {
       return (this.stellarService as any).buildContractTransaction(
         this.contractId,
         'buy_offer',
@@ -434,18 +442,28 @@ export class MarketplaceService {
         buyerPublicKey,
       ) as Promise<string>;
     }
-    this.logger.log('buildContractTransaction not yet wired — returning stub XDR');
+    this.logger.log(
+      'buildContractTransaction not yet wired — returning stub XDR',
+    );
     return 'AAAAAA==';
   }
 
-  async buyOffer(buyerPublicKey: string, offerId: number, signedXdr?: string): Promise<void> {
+  async buyOffer(
+    buyerPublicKey: string,
+    offerId: number,
+    signedXdr?: string,
+  ): Promise<void> {
     if (signedXdr) {
       this.logger.log(`Submitting user-signed XDR for offer ${offerId}`);
-      if (typeof (this.stellarService as any).submitTransaction === 'function') {
+      if (
+        typeof (this.stellarService as any).submitTransaction === 'function'
+      ) {
         await (this.stellarService as any).submitTransaction(signedXdr);
         return;
       }
-      this.logger.warn('submitTransaction not available — falling back to admin-signed flow');
+      this.logger.warn(
+        'submitTransaction not available — falling back to admin-signed flow',
+      );
     }
     try {
       const registryId = this.configService.get<string>(
@@ -582,8 +600,12 @@ export class MarketplaceService {
       created_at: Number(n.created_at),
       status: n.active ? 'open' : 'cancelled',
       methodology: n.methodology ? String(n.methodology) : undefined,
-      payment_asset_code: n.payment_asset_code ? String(n.payment_asset_code) : 'XLM',
-      payment_asset_issuer: n.payment_asset_issuer ? String(n.payment_asset_issuer) : undefined,
+      payment_asset_code: n.payment_asset_code
+        ? String(n.payment_asset_code)
+        : 'XLM',
+      payment_asset_issuer: n.payment_asset_issuer
+        ? String(n.payment_asset_issuer)
+        : undefined,
       price_raw: String(n.price_xlm),
     };
   }

@@ -23,11 +23,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       }),
     }),
   ],
-  providers: [
-    AuthService,
-    StellarAuthStrategy,
-    JwtAuthGuard,
-  ],
+  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard],
   controllers: [AuthController],
   exports: [AuthService, JwtAuthGuard],
 })

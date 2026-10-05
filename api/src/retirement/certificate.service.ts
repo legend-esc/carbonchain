@@ -256,11 +256,7 @@ export class CertificateService {
 
     worker.once('message', (msg: { error?: string } | Buffer) => {
       clearTimeout(timeoutHandle);
-      if (
-        msg &&
-        !Buffer.isBuffer(msg) &&
-        typeof (msg as { error?: string }).error === 'string'
-      ) {
+      if (msg && !Buffer.isBuffer(msg) && typeof msg.error === 'string') {
         settle(() =>
           item.reject(
             new InternalServerErrorException({

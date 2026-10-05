@@ -143,12 +143,7 @@ export class RedisSequenceNumberManager {
         // We store horizonSeq directly; the first INCR yields horizonSeq + 1 which is
         // the correct next sequence number (Stellar uses the sequence as the *base*
         // and the submitted tx must have seq = account.sequence + 1).
-        await client.set(
-          seqKey,
-          String(horizonSeq),
-          'PX',
-          this.seqTtlMs,
-        );
+        await client.set(seqKey, String(horizonSeq), 'PX', this.seqTtlMs);
         this.logger.debug(
           `[#914] Seeded Redis sequence for ${publicKey}: ${horizonSeq}`,
         );
@@ -294,10 +289,10 @@ export class RedisSequenceNumberManager {
    * We use a bracket accessor with an `any` cast because CacheService does not
    * expose its client via a public API — keeping this adapter self-contained.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   private getRedisClient(): any {
     // CacheService stores its ioredis client as a private field `client`.
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     return (this.cacheService as any)['client'] ?? null;
   }
 }

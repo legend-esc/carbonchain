@@ -84,7 +84,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
       route?: { path?: string };
       path?: string;
     }>();
-    const res = context.switchToHttp().getResponse<{ status: (code: number) => void; statusCode?: number }>();
+    const res = context
+      .switchToHttp()
+      .getResponse<{ status: (code: number) => void; statusCode?: number }>();
 
     if (req.method !== 'POST' && req.method !== 'PUT') {
       return next.handle();
@@ -117,7 +119,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     // ── 1. Fast path: completed record exists ────────────────────────────────
     const done = await this.cache.get<CompletedRecord>(dk);
     if (done) {
-      this.logger.debug(`[#915] Idempotency cache HIT (done) fp=${fingerprint.slice(0, 12)}`);
+      this.logger.debug(
+        `[#915] Idempotency cache HIT (done) fp=${fingerprint.slice(0, 12)}`,
+      );
       res.status(done.statusCode);
       return done.body;
     }
@@ -159,7 +163,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
         next.handle().subscribe({ next: resolve, error: reject });
       });
 
-      const statusCode = (res as unknown as { statusCode?: number }).statusCode ?? 201;
+      const statusCode =
+        (res as unknown as { statusCode?: number }).statusCode ?? 201;
 
       // Persist the completed response separately from the lease with 24 h TTL.
       await this.cache.set(
@@ -210,7 +215,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     );
 
     while (Date.now() < deadline) {
-      await new Promise<void>((r) => setTimeout(r, PROCESSING_POLL_INTERVAL_MS));
+      await new Promise<void>((r) =>
+        setTimeout(r, PROCESSING_POLL_INTERVAL_MS),
+      );
 
       // Check for a completed record first.
       const done = await this.cache.get<CompletedRecord>(dk);
@@ -233,7 +240,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
         const tookOver = await this.acquireLease(lk, ownerToken);
         if (tookOver) {
-          return this.executeWithLease(fingerprint, dk, lk, ownerToken, res, next);
+          return this.executeWithLease(
+            fingerprint,
+            dk,
+            lk,
+            ownerToken,
+            res,
+            next,
+          );
         }
         // Another waiter got the lease first — keep polling.
       }
@@ -260,7 +274,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
   private async acquireLease(lk: string, ownerToken: string): Promise<boolean> {
     // We access the raw ioredis client via CacheService's private field,
     // consistent with how RedisSequenceNumberManager does it.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const client: any = (this.cache as any)['client'];
     if (!client) {
       // Redis unavailable — fall through without idempotency (best-effort).
@@ -282,7 +296,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
    * Uses a Lua compare-and-delete to avoid evicting another owner's lease.
    */
   private async releaseLease(lk: string, ownerToken: string): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client: any = (this.cache as any)['client'];
     if (!client) return;
 

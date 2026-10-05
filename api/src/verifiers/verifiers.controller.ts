@@ -67,7 +67,10 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get pending credits for a verifier' })
   @ApiResponse({ status: 200, description: 'Pending credits' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - can only view own pending credits' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - can only view own pending credits',
+  })
   @UseGuards(JwtAuthGuard)
   @Get(':address/pending')
   async getPendingCredits(
@@ -76,7 +79,9 @@ export class VerifiersController {
   ): Promise<CreditMetadata[]> {
     const caller = req.user?.account;
     if (caller !== address && req.user?.role !== 'admin') {
-      throw new ForbiddenException('You can only view your own pending credits');
+      throw new ForbiddenException(
+        'You can only view your own pending credits',
+      );
     }
     return this.verifiersService.getPendingCredits(address);
   }
@@ -84,7 +89,10 @@ export class VerifiersController {
   @ApiOperation({ summary: 'Get approval history for a verifier' })
   @ApiResponse({ status: 200, description: 'Approval history' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden - can only view own approval history' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - can only view own approval history',
+  })
   @UseGuards(JwtAuthGuard)
   @Get(':address/history')
   async getApprovalHistory(
@@ -93,7 +101,9 @@ export class VerifiersController {
   ): Promise<CreditMetadata[]> {
     const caller = req.user?.account;
     if (caller !== address && req.user?.role !== 'admin') {
-      throw new ForbiddenException('You can only view your own approval history');
+      throw new ForbiddenException(
+        'You can only view your own approval history',
+      );
     }
     return this.verifiersService.getApprovalHistory(address);
   }
@@ -266,7 +276,8 @@ export class VerifiersController {
   @ApiResponse({ status: 409, description: 'Application already pending' })
   @Post('applications')
   async submitApplication(
-    @Body() body: {
+    @Body()
+    body: {
       address: string;
       name: string;
       capabilities: string[];
@@ -282,7 +293,9 @@ export class VerifiersController {
   @ApiResponse({ status: 200, description: 'Application details' })
   @ApiResponse({ status: 404, description: 'No application found' })
   @Get('applications/:address')
-  async getApplication(@Param('address') address: string): Promise<VerifierApplicationEntity | null> {
+  async getApplication(
+    @Param('address') address: string,
+  ): Promise<VerifierApplicationEntity | null> {
     return this.verifiersService.getApplication(address);
   }
 
@@ -294,11 +307,12 @@ export class VerifiersController {
   async listApplications(
     @Query('status') status?: string,
   ): Promise<VerifierApplicationEntity[]> {
-    const filter = status === VerifierApplicationStatus.Approved
-      ? VerifierApplicationStatus.Approved
-      : status === VerifierApplicationStatus.Rejected
-        ? VerifierApplicationStatus.Rejected
-        : undefined;
+    const filter =
+      status === VerifierApplicationStatus.Approved
+        ? VerifierApplicationStatus.Approved
+        : status === VerifierApplicationStatus.Rejected
+          ? VerifierApplicationStatus.Rejected
+          : undefined;
     return this.verifiersService.listApplications(filter);
   }
 
@@ -313,6 +327,10 @@ export class VerifiersController {
     @Body() body: { status: VerifierApplicationStatus },
     @Request() req: any,
   ): Promise<VerifierApplicationEntity | null> {
-    return this.verifiersService.reviewApplication(address, body.status, req.user.account);
+    return this.verifiersService.reviewApplication(
+      address,
+      body.status,
+      req.user.account,
+    );
   }
 }

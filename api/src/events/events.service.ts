@@ -61,7 +61,9 @@ export class EventsService implements OnModuleInit {
     try {
       if (typeof this.stellarService.getLatestLedger === 'function') {
         currentLedger = await this.stellarService.getLatestLedger();
-      } else if (typeof this.stellarService.getSorobanRpcServer === 'function') {
+      } else if (
+        typeof this.stellarService.getSorobanRpcServer === 'function'
+      ) {
         const server = this.stellarService.getSorobanRpcServer();
         if (server && typeof server.getLatestLedger === 'function') {
           const res = await server.getLatestLedger();
@@ -87,7 +89,11 @@ export class EventsService implements OnModuleInit {
           this.logger.warn(
             `Contract ${contractId}: stored lastLedger ${lastLedger} is ahead of node current sequence ${currentLedger}. Handling reorg.`,
           );
-          for (let reverted = lastLedger; reverted > currentLedger; reverted--) {
+          for (
+            let reverted = lastLedger;
+            reverted > currentLedger;
+            reverted--
+          ) {
             await this.handleReorg(contractId, reverted);
           }
           lastLedger = this.lastLedgerCache.get(contractId) || currentLedger;

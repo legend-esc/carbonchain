@@ -161,10 +161,7 @@ export class ApiService {
   }
 
   /** POST /credits/merge */
-  mergeCredits(
-    creditIds: string[],
-    token: string,
-  ): Observable<{ mergedCreditId: string }> {
+  mergeCredits(creditIds: string[], token: string): Observable<{ mergedCreditId: string }> {
     return this.http.post<{ mergedCreditId: string }>(
       `${this.baseUrl}/credits/merge`,
       { creditIds },

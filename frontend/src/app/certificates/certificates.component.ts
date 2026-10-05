@@ -23,13 +23,20 @@ type VerifyState = 'idle' | 'loading' | 'verified' | 'failed' | 'error';
         <h1>Retirement Certificate</h1>
 
         <dl class="meta">
-          <dt>Certificate ID</dt><dd class="mono">{{ record()!.id }}</dd>
-          <dt>Credit ID</dt><dd class="mono">{{ record()!.credit_id }}</dd>
-          <dt>Retired By</dt><dd class="mono">{{ record()!.buyer }}</dd>
-          <dt>Tonnes Retired</dt><dd>{{ tonnesDisplay() }}</dd>
-          <dt>Reason</dt><dd>{{ record()!.reason }}</dd>
-          <dt>Retired At</dt><dd>{{ record()!.retired_at | date:'medium' }}</dd>
-          <dt>Transaction</dt><dd class="mono small">{{ record()!.tx_hash }}</dd>
+          <dt>Certificate ID</dt>
+          <dd class="mono">{{ record()!.id }}</dd>
+          <dt>Credit ID</dt>
+          <dd class="mono">{{ record()!.credit_id }}</dd>
+          <dt>Retired By</dt>
+          <dd class="mono">{{ record()!.buyer }}</dd>
+          <dt>Tonnes Retired</dt>
+          <dd>{{ tonnesDisplay() }}</dd>
+          <dt>Reason</dt>
+          <dd>{{ record()!.reason }}</dd>
+          <dt>Retired At</dt>
+          <dd>{{ record()!.retired_at | date: 'medium' }}</dd>
+          <dt>Transaction</dt>
+          <dd class="mono small">{{ record()!.tx_hash }}</dd>
         </dl>
 
         <!-- PDF Preview section -->
@@ -108,74 +115,136 @@ type VerifyState = 'idle' | 'loading' | 'verified' | 'failed' | 'error';
       }
     </main>
   `,
-  styles: [`
-    .certificate { padding: 2rem; max-width: 760px; margin: auto; }
-    h1 { margin-bottom: 1.5rem; }
-    h2 { font-size: 1.05rem; color: #333; margin: 1.5rem 0 0.5rem; }
-    .meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin-bottom: 1.5rem; }
-    dt { font-weight: 600; color: #555; }
-    dd { margin: 0; }
-    .mono { font-family: monospace; font-size: 0.85rem; word-break: break-all; }
-    .small { font-size: 0.78rem; }
-    .status { color: #888; }
-    .error { color: #e53935; }
-    .pdf-section, .verify-section {
-      border-top: 1px solid #eee;
-      padding-top: 1rem;
-      margin-top: 1rem;
-    }
-    .pdf-frame {
-      width: 100%;
-      height: 480px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      margin-bottom: 0.75rem;
-    }
-    .pdf-placeholder {
-      width: 100%;
-      height: 160px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #f5f5f5;
-      border: 1px dashed #ccc;
-      border-radius: 6px;
-      color: #888;
-      font-size: 0.9rem;
-      margin-bottom: 0.75rem;
-    }
-    .error-box { color: #e53935; background: #ffebee; border-color: #ef9a9a; }
-    .pdf-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-    .verify-result {
-      display: flex;
-      gap: 0.75rem;
-      align-items: flex-start;
-      padding: 0.75rem 1rem;
-      border-radius: 6px;
-      margin-top: 0.5rem;
-    }
-    .verify-ok { background: #e8f5e9; }
-    .verify-fail { background: #ffebee; }
-    .verify-icon { font-size: 1.25rem; line-height: 1.4; }
-    .verify-detail {
-      display: grid;
-      grid-template-columns: max-content 1fr;
-      gap: 0.3rem 0.75rem;
-      font-size: 0.85rem;
-      margin: 0.5rem 0 0;
-    }
-    .verify-reason { color: #c62828; font-size: 0.85rem; margin: 0.25rem 0 0; }
-    .btn {
-      padding: 0.5rem 1.25rem;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.9rem;
-    }
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .btn-primary { background: #4caf50; color: #fff; }
-    .btn-outline { background: transparent; color: #333; border: 1px solid #ccc; }
-  `],
+  styles: [
+    `
+      .certificate {
+        padding: 2rem;
+        max-width: 760px;
+        margin: auto;
+      }
+      h1 {
+        margin-bottom: 1.5rem;
+      }
+      h2 {
+        font-size: 1.05rem;
+        color: #333;
+        margin: 1.5rem 0 0.5rem;
+      }
+      .meta {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.4rem 1rem;
+        margin-bottom: 1.5rem;
+      }
+      dt {
+        font-weight: 600;
+        color: #555;
+      }
+      dd {
+        margin: 0;
+      }
+      .mono {
+        font-family: monospace;
+        font-size: 0.85rem;
+        word-break: break-all;
+      }
+      .small {
+        font-size: 0.78rem;
+      }
+      .status {
+        color: #888;
+      }
+      .error {
+        color: #e53935;
+      }
+      .pdf-section,
+      .verify-section {
+        border-top: 1px solid #eee;
+        padding-top: 1rem;
+        margin-top: 1rem;
+      }
+      .pdf-frame {
+        width: 100%;
+        height: 480px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        margin-bottom: 0.75rem;
+      }
+      .pdf-placeholder {
+        width: 100%;
+        height: 160px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f5f5f5;
+        border: 1px dashed #ccc;
+        border-radius: 6px;
+        color: #888;
+        font-size: 0.9rem;
+        margin-bottom: 0.75rem;
+      }
+      .error-box {
+        color: #e53935;
+        background: #ffebee;
+        border-color: #ef9a9a;
+      }
+      .pdf-actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .verify-result {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        margin-top: 0.5rem;
+      }
+      .verify-ok {
+        background: #e8f5e9;
+      }
+      .verify-fail {
+        background: #ffebee;
+      }
+      .verify-icon {
+        font-size: 1.25rem;
+        line-height: 1.4;
+      }
+      .verify-detail {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.3rem 0.75rem;
+        font-size: 0.85rem;
+        margin: 0.5rem 0 0;
+      }
+      .verify-reason {
+        color: #c62828;
+        font-size: 0.85rem;
+        margin: 0.25rem 0 0;
+      }
+      .btn {
+        padding: 0.5rem 1.25rem;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .btn-primary {
+        background: #4caf50;
+        color: #fff;
+      }
+      .btn-outline {
+        background: transparent;
+        color: #333;
+        border: 1px solid #ccc;
+      }
+    `,
+  ],
 })
 export class CertificatesComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
@@ -233,9 +302,7 @@ export class CertificatesComponent implements OnInit, OnDestroy {
     this.pdfLoading.set(true);
     this.pdfError.set(null);
     try {
-      const blob = await firstValueFrom(
-        this.api.downloadCertificate(id, this.auth.token() ?? ''),
-      );
+      const blob = await firstValueFrom(this.api.downloadCertificate(id, this.auth.token() ?? ''));
       // Revoke any previously created URL
       if (this._pdfObjectUrl) URL.revokeObjectURL(this._pdfObjectUrl);
       this._pdfObjectUrl = URL.createObjectURL(blob);

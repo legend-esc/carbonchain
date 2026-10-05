@@ -44,10 +44,18 @@ export function multipleOf100kValidator(): ValidatorFn {
       <p>Retire component - minimal version</p>
     </div>
   `,
-  styles: [`
-    .retire-wizard { max-width: 700px; margin: 0 auto; padding: 1.5rem 1rem; }
-    h1 { margin-bottom: 1.5rem; }
-  `],
+  styles: [
+    `
+      .retire-wizard {
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 1.5rem 1rem;
+      }
+      h1 {
+        margin-bottom: 1.5rem;
+      }
+    `,
+  ],
 })
 export class RetireComponent implements OnInit {
   protected readonly auth = inject(AuthService);
@@ -67,19 +75,27 @@ export class RetireComponent implements OnInit {
   readonly statusMessage = signal<string | null>(null);
 
   readonly reasonControl = new FormControl<string>('', { validators: [Validators.required] });
-  readonly tonnesControl = new FormControl<number | null>(null, { validators: [Validators.required, multipleOf100kValidator()] });
+  readonly tonnesControl = new FormControl<number | null>(null, {
+    validators: [Validators.required, multipleOf100kValidator()],
+  });
 
   readonly activeCredits = computed(() => {
     const owner = this.wallet.publicKey();
-    return this.store.credits().filter((c) => c.status === CreditStatus.Active && c.owner === owner);
+    return this.store
+      .credits()
+      .filter((c) => c.status === CreditStatus.Active && c.owner === owner);
   });
 
-  readonly allSelected = computed(() =>
-    this.activeCredits().length > 0 && this.selectedCredits().length === this.activeCredits().length
+  readonly allSelected = computed(
+    () =>
+      this.activeCredits().length > 0 &&
+      this.selectedCredits().length === this.activeCredits().length,
   );
 
   readonly totalSelectedTonnes = computed(() =>
-    this.selectedCredits().reduce((sum, c) => sum + BigInt(c.tonnes), 0n).toString()
+    this.selectedCredits()
+      .reduce((sum, c) => sum + BigInt(c.tonnes), 0n)
+      .toString(),
   );
 
   readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
@@ -107,10 +123,14 @@ export class RetireComponent implements OnInit {
   stepLabel(step: WizardStep): string {
     const i18n = inject(TranslationService);
     switch (step) {
-      case 1: return i18n.t('retire.step.selectCredits');
-      case 2: return i18n.t('retire.step.reason');
-      case 3: return i18n.t('retire.step.confirm');
-      default: return '';
+      case 1:
+        return i18n.t('retire.step.selectCredits');
+      case 2:
+        return i18n.t('retire.step.reason');
+      case 3:
+        return i18n.t('retire.step.confirm');
+      default:
+        return '';
     }
   }
 
@@ -176,7 +196,7 @@ export class RetireComponent implements OnInit {
         this.draftNotice.set(
           reason === 'expired'
             ? 'Your saved retirement draft expired and was cleared.'
-            : 'Your saved retirement draft was out of date and was cleared.'
+            : 'Your saved retirement draft was out of date and was cleared.',
         );
       }
       return;
@@ -219,7 +239,15 @@ export class RetireComponent implements OnInit {
       if (credits.length === 1) {
         const credit = credits[0];
         const { retirementId } = await firstValueFrom(
-          this.api.retireCredit({ buyerPublicKey: pk, creditId: credit.id, tonnes: credit.tonnes, reason: reason ?? '' }, token)
+          this.api.retireCredit(
+            {
+              buyerPublicKey: pk,
+              creditId: credit.id,
+              tonnes: credit.tonnes,
+              reason: reason ?? '',
+            },
+            token,
+          ),
         );
         this.store.loadOne(credit.id).catch(() => {});
         this.clearDraft();
@@ -228,7 +256,15 @@ export class RetireComponent implements OnInit {
       }
 
       const { succeeded, failed } = await firstValueFrom(
-        this.api.batchRetire({ buyerPublicKey: pk, creditIds: credits.map((c) => c.id), tonnes: credits.map((c) => c.tonnes), reason: reason ?? '' }, token)
+        this.api.batchRetire(
+          {
+            buyerPublicKey: pk,
+            creditIds: credits.map((c) => c.id),
+            tonnes: credits.map((c) => c.tonnes),
+            reason: reason ?? '',
+          },
+          token,
+        ),
       );
 
       for (const c of credits) {
@@ -236,7 +272,9 @@ export class RetireComponent implements OnInit {
       }
 
       if (failed.length > 0) {
-        this.signingError.set(failed.length + ' credit(s) failed: ' + failed.map((f) => f.reason).join(', '));
+        this.signingError.set(
+          failed.length + ' credit(s) failed: ' + failed.map((f) => f.reason).join(', '),
+        );
       }
 
       if (succeeded.length > 0) {

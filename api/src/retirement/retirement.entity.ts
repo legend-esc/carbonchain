@@ -70,14 +70,24 @@ export class RetirementEntity {
    * retirement.  Records are created with 'pending' and rolled back to
    * 'failed'/'timeout' when the network does not confirm them.
    */
-  @Column({ type: 'varchar', length: 16, default: 'pending', name: 'tx_status' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'pending',
+    name: 'tx_status',
+  })
   txStatus: RetirementTxStatus;
 
   /**
    * Issue #921 — lifecycle of the certificate-hash write-back to the contract.
    * See {@link CertificateHashStatus}.
    */
-  @Column({ type: 'varchar', length: 16, default: 'none', name: 'cert_hash_status' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'none',
+    name: 'cert_hash_status',
+  })
   certHashStatus: CertificateHashStatus;
 
   /**

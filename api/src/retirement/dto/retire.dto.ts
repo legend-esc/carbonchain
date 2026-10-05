@@ -41,7 +41,8 @@ export class RetireDto {
 
   @ApiProperty({
     example: '500000',
-    description: 'Number of tonnes to retire in scaled units (optional, defaults to entire credit)',
+    description:
+      'Number of tonnes to retire in scaled units (optional, defaults to entire credit)',
     required: false,
   })
   @IsOptional()
