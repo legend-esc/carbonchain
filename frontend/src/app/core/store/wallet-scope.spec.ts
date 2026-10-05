@@ -46,8 +46,20 @@ const CREDITS: Record<string, CreditMetadata> = {
 };
 
 const OFFERS = {
-  a: { id: 'offer-a', seller: USER_A, credit_id: 'credit-a1', price_xlm: '10000000', status: 'open' },
-  b: { id: 'offer-b', seller: USER_B, credit_id: 'credit-b1', price_xlm: '20000000', status: 'open' },
+  a: {
+    id: 'offer-a',
+    seller: USER_A,
+    credit_id: 'credit-a1',
+    price_xlm: '10000000',
+    status: 'open',
+  },
+  b: {
+    id: 'offer-b',
+    seller: USER_B,
+    credit_id: 'credit-b1',
+    price_xlm: '20000000',
+    status: 'open',
+  },
 } as never;
 
 describe('Issue #965 — cache keyed by (network, address)', () => {
@@ -61,10 +73,18 @@ describe('Issue #965 — cache keyed by (network, address)', () => {
 
     api = {
       listCreditsByProject: vi.fn().mockReturnValue(of([])),
-      listCreditsByOwner: vi
+      listCreditsByOwner: vi.fn().mockImplementation((owner: string) =>
+        of({
+          data: Object.keys(CREDITS).filter(
+            (id) => CREDITS[id as keyof typeof CREDITS].owner === owner,
+          ),
+          offset: 0,
+          limit: 50,
+        }),
+      ),
+      getCredit: vi
         .fn()
-        .mockImplementation((owner: string) => of({ data: Object.keys(CREDITS).filter((id) => CREDITS[id as keyof typeof CREDITS].owner === owner), offset: 0, limit: 50 })),
-      getCredit: vi.fn().mockImplementation((id: string) => of(CREDITS[id as keyof typeof CREDITS])),
+        .mockImplementation((id: string) => of(CREDITS[id as keyof typeof CREDITS])),
       getListings: vi.fn().mockReturnValue(of({ data: [], total: 0, page: 1, pageSize: 20 })),
       getOffersBySeller: vi
         .fn()
@@ -218,7 +238,7 @@ describe('Issue #965 — cache keyed by (network, address)', () => {
     expect(store.cacheKey()).toBeNull();
   });
 
-  it('never files another account\'s rows even if the API returns them', async () => {
+  it("never files another account's rows even if the API returns them", async () => {
     await connect(USER_A);
     // A misbehaving API hands back B's credit under A's request.
     api.getCredit.mockImplementation((id: string) => of(CREDITS['credit-b1']));

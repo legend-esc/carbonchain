@@ -12,6 +12,7 @@ import { ReconciliationService } from './reconciliation.service';
 import { CreditEntity } from '../credits/credit.entity';
 import { StellarService } from '../stellar/stellar.service';
 import { CreditStatus } from '../../../shared';
+import client from 'prom-client';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,7 @@ describe('ReconciliationService', () => {
   beforeEach(async () => {
     inMemoryCredits = [];
     jest.clearAllMocks();
+    client.register.clear(); // Clear prom-client registry to avoid "metric already registered" errors
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

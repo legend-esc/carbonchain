@@ -41,13 +41,17 @@ function buildSignedChallenge(
   const account = new Account(serverKp.publicKey(), '-1');
   const now = Math.floor(Date.now() / 1000);
 
+  // Convert base64 nonce string back to bytes, matching generateChallenge which
+  // uses nonceBytes (raw bytes) as the manageData value.
+  const nonceBytes = Buffer.from(nonce, 'base64');
+
   const builder = new TransactionBuilder(account, {
     fee: '100',
     networkPassphrase,
   }).addOperation(
     Operation.manageData({
       name: `${domain} auth`,
-      value: nonce,
+      value: nonceBytes,
       source: clientKp.publicKey(),
     }),
   );

@@ -47,9 +47,9 @@ import { ToastService } from '../core/services/toast.service';
             @if (app()!.reviewedBy) {
               <p>Reviewed by: {{ app()!.reviewedBy }}</p>
             }
-            <p class="meta">Submitted: {{ app()!.createdAt | date:'medium' }}</p>
+            <p class="meta">Submitted: {{ app()!.createdAt | date: 'medium' }}</p>
             @if (app()!.updatedAt) {
-              <p class="meta">Last updated: {{ app()!.updatedAt | date:'medium' }}</p>
+              <p class="meta">Last updated: {{ app()!.updatedAt | date: 'medium' }}</p>
             }
 
             @if (app()!.status === 'pending') {
@@ -237,8 +237,8 @@ export class VerifierStatusComponent implements OnInit {
               stakeAmount: result.stakeAmount,
               status: result.status,
               reviewedBy: result.reviewedBy,
-              createdAt: result.createdAt.getTime() / 1000,
-              updatedAt: result.updatedAt ? result.updatedAt.getTime() / 1000 : null,
+              createdAt: typeof result.createdAt === "number" ? result.createdAt : (result.createdAt as any).getTime()/1000,
+              updatedAt: result.updatedAt ? (typeof result.updatedAt === "number" ? result.updatedAt : (result.updatedAt as any).getTime()/1000) : null,
             }
           : null,
       );

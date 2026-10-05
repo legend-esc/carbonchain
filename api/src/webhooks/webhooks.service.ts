@@ -514,16 +514,17 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         attempts: number;
         last_attempt_at: Date | null;
         next_retry_at: Date | null;
+        created_at: Date;
       }[]
     >(
       webhookId
         ? `SELECT id, webhook_id, event_id, event_type, status, attempts,
-                  last_attempt_at, next_retry_at
+                  last_attempt_at, next_retry_at, created_at
              FROM webhook_deliveries
             WHERE webhook_id = $1
             ORDER BY created_at DESC`
         : `SELECT id, webhook_id, event_id, event_type, status, attempts,
-                  last_attempt_at, next_retry_at
+                  last_attempt_at, next_retry_at, created_at
              FROM webhook_deliveries
             ORDER BY created_at DESC`,
       webhookId ? [webhookId] : [],
@@ -536,9 +537,26 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
       eventType: r.event_type,
       status: r.status as 'pending' | 'success' | 'failed',
       attempts: r.attempts,
+      createdAt: r.created_at,
       lastAttemptAt: r.last_attempt_at ?? undefined,
       nextRetryAt: r.next_retry_at ?? undefined,
     }));
+  }
+
+  /**
+   * #935 — delete a single delivery record by id.
+   * Used by WebhookJanitorService to bound table growth to the retention window.
+   *
+   * @returns true when a row was deleted, false when the id was already gone.
+   */
+  async deleteDelivery(id: string): Promise<boolean> {
+    const result = await this.dataSource.query(
+      `DELETE FROM webhook_deliveries WHERE id = $1`,
+      [id],
+    );
+    // node-postgres returns [rowCount, rows] for DELETE without RETURNING.
+    const rowCount = Array.isArray(result) ? result[0] : undefined;
+    return typeof rowCount === 'number' ? rowCount > 0 : false;
   }
 
   // ── Signature helpers (kept for external use / tests) ──────────────────────

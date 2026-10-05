@@ -34,7 +34,7 @@
     "@nestjs/schedule": "^6.1.3",
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/typeorm": "^11.0.0",
-    "@stellar/stellar-sdk": "^15.1.0",
+    "@stellar/stellar-sdk": "^17.2.1",
     "axios": "^1.7.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -52,7 +52,6 @@
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "stellar-sdk": "^13.3.0",
     "typeorm": "^0.3.20"
   },
   "devDependencies": {
@@ -91,8 +90,18 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true
+          }
+        }
+      ]
     },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!.*(uint8array-extras|@exodus|@stellar|eventsource|@noble|ip-range-check|jsvu|@ledgerhq|@cosmjs|base32-decode|bech32|ripemd160|sha256-uint8array|bip39|elliptic|hash.js|bn.js|readable-stream|bufferutil|utf-8-validate|node-fetch|data-uri-to-buffer|fetch-blob|formdata-polyfill|web-streams-polyfill|blakejs|bs58|js-sha3|elliptic|aes-js|tiny-secp256k1|secp256k1|@scroll-tech|superstruct|isows|stellar-sdk)/)"
+    ],
     "moduleNameMapper": {
       "^ip-range-check$": "<rootDir>/../test/__mocks__/ip-range-check.js"
     },

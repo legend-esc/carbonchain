@@ -106,11 +106,7 @@ export function normalizeWalletError(err: unknown): WalletError {
     text.includes('stale') ||
     text.includes('envelope')
   ) {
-    return new WalletError(
-      textOf(err) || 'Stale transaction envelope.',
-      'staleEnvelope',
-      err,
-    );
+    return new WalletError(textOf(err) || 'Stale transaction envelope.', 'staleEnvelope', err);
   }
 
   if (

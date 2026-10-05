@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
 import { Offer } from '@shared';
-import { WatchlistStore, type WatchAlert } from '../../core/store/watchlist.store';
+import { WatchlistStore, type WatchAlert } from '../core/store/watchlist.store';
 
 /**
  * Issue #958 — watchlist panel with client-side alerts.
@@ -22,19 +22,15 @@ import { WatchlistStore, type WatchAlert } from '../../core/store/watchlist.stor
 
       @if (watchlist.isEmpty()) {
         <p class="watchlist__empty">
-          Nothing watched yet. Add a project or credit to get an alert when a listing
-          hits your target price.
+          Nothing watched yet. Add a project or credit to get an alert when a listing hits your
+          target price.
         </p>
       } @else {
         <!-- Issue #963: alerts are announced politely, not just drawn. -->
         <ul class="watchlist__alerts" aria-live="polite" aria-label="Watchlist alerts">
           @for (alert of watchlist.alerts(); track alert.offer.id) {
             <li class="alert-row">
-              <button
-                class="alert-row__link"
-                type="button"
-                (click)="alertSelected.emit(alert)"
-              >
+              <button class="alert-row__link" type="button" (click)="alertSelected.emit(alert)">
                 <span class="alert-row__label">{{ alert.label }}</span>
                 <span class="alert-row__price">
                   {{ formatPrice(priceOfAlert(alert)) }}
@@ -179,7 +175,7 @@ import { WatchlistStore, type WatchAlert } from '../../core/store/watchlist.stor
   ],
 })
 export class WatchlistComponent {
-  readonly watchlist = inject(WatchlistStore);
+  readonly watchlist = inject<WatchlistStore>(WatchlistStore);
 
   /** Emitted when the user activates an alert to jump to the matching listing. */
   readonly alertSelected = output<WatchAlert>();

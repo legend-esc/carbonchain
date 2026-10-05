@@ -15,18 +15,16 @@ describe('AdminComponent', () => {
 
   function createApiSpy() {
     return {
-      getAdminStats: vi
-        .fn()
-        .mockReturnValue(
-          of({
-            totalCredits: 0,
-            totalRetirements: 0,
-            activeVerifiers: 3,
-            paused: false,
-            contractPauseStatus: 'unpaused',
-            health: { degraded: false },
-          }),
-        ),
+      getAdminStats: vi.fn().mockReturnValue(
+        of({
+          totalCredits: 0,
+          totalRetirements: 0,
+          activeVerifiers: 3,
+          paused: false,
+          contractPauseStatus: 'unpaused',
+          health: { degraded: false },
+        }),
+      ),
       registerMethodology: vi.fn(),
       getAdminNonce: vi.fn().mockReturnValue(of({ address: 'GADMIN', nonce: 0 })),
       setRequiredApprovals: vi.fn(),

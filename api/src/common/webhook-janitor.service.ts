@@ -26,7 +26,6 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { WebhookDelivery } from '../webhooks/webhooks.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 
 /** Default retention period in days when WEBHOOK_RETENTION_DAYS is not set. */
@@ -121,11 +120,11 @@ export class WebhookJanitorService implements OnModuleInit, OnModuleDestroy {
         Date.now() - this.retentionDays * 24 * 60 * 60 * 1000,
       );
 
-      const all: WebhookDelivery[] = this.webhooksService.getDeliveries();
+      const all = await this.webhooksService.getDeliveries();
       const toDelete = all.filter((d) => d.createdAt < cutoff);
 
       for (const delivery of toDelete) {
-        this.webhooksService.deleteDelivery(delivery.id);
+        await this.webhooksService.deleteDelivery(delivery.id);
         deleted++;
 
         // Advance watermark to the highest id encountered.

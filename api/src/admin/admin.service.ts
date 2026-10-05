@@ -9,6 +9,14 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { AdminAuditEntity } from './admin-audit.entity';
+import { CreditStatus } from '../../../shared';
+
+/**
+ * #926 — tri-state contract pause probe.
+ * 'unknown' means the on-chain probe failed and the UI should show a degraded
+ * indicator rather than claiming the contract is running.
+ */
+export type ContractPauseStatus = 'paused' | 'unpaused' | 'unknown';
 
 export interface AdminStats {
   totalCredits: number;
@@ -59,6 +67,7 @@ export class AdminService {
     @InjectRepository(AdminAuditEntity)
     private readonly auditRepo: Repository<AdminAuditEntity>,
     private readonly retirementService: RetirementService,
+    private readonly creditsService: CreditsService,
   ) {
     this.creditRegistryContractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') || '';
@@ -118,8 +127,6 @@ export class AdminService {
       this.retirementService.listRetirements(1, 1),
     ]);
     return {
-      totalCredits: 0,
-      totalRetirements: 0,
       totalCredits,
       totalRetirements: retirements.total,
       activeVerifiers: verifiers.length,
@@ -212,30 +219,28 @@ export class AdminService {
     return { registered: true, address };
   }
 
+  /**
+   * Suspend a verifier by removing it on-chain via `remove_verifier`.
+   *
+   * The verifier must exist in our registry first; `getVerifier` throws
+   * NotFoundException otherwise.  The contract rejects removal while the
+   * verifier still has pending credits (`VerifierHasPendingCredits`).
+   */
   async suspendVerifier(
     id: string,
     ctx: AuditContext = { actor: 'system' },
   ): Promise<{ suspended: boolean }> {
     const verifier = await this.verifiersService.getVerifier(id);
-    await this.writeAudit(
-      ctx,
-      'suspend_verifier',
-      id,
-      { verifier },
-      { suspended: true },
+    const admin = this.keypairService.getAdminKeypair();
+    const args = [nativeToScVal(admin.publicKey(), { type: 'address' })];
+    await this.stellarService.invokeContract(
+      this.creditRegistryContractId,
+      'remove_verifier',
+      args,
+      admin,
     );
-    void address;
-    // No `register_verifier` contract/DB call exists yet — see verifiers.service.ts.
-    // Returning a fake success here would silently mislead admin tooling.
-    throw new NotImplementedException(
-      'registerVerifier is not implemented: no backing contract/DB call exists yet',
-    );
-  }
-
-  async suspendVerifier(id: string): Promise<{ suspended: boolean }> {
-    // Confirm the verifier exists in our registry before hitting the chain.
-    await this.verifiersService.getVerifier(id);
     this.logger.log(`Verifier ${id} suspended by admin`);
+    await this.writeAudit(ctx, 'suspend_verifier', id, { verifier }, { suspended: true });
     return { suspended: true };
   }
 
@@ -262,14 +267,13 @@ export class AdminService {
       'configure_verifier',
       id,
       { verifier },
-      { configured: true, verifierId: id, capabilities },
+      { configured: false, verifierId: id, capabilities },
     );
-    return { configured: true, verifierId: id };
-    void _capabilities;
-    await this.verifiersService.getVerifier(id);
-    // No `configure_verifier` contract/DB call exists yet.
+    // No admin-side `configure_verifier` call exists: the contract requires the
+    // verifier to sign with their own keypair.  Returning a fake success would
+    // silently mislead admin tooling, so surface 501 instead.
     throw new NotImplementedException(
-      'configureVerifier is not implemented: no backing contract/DB call exists yet',
+      'configureVerifier is not implemented: the contract requires the verifier to sign the transaction themselves',
     );
   }
 
@@ -285,7 +289,6 @@ export class AdminService {
       { status: (credit as { status?: unknown })?.status ?? null },
       { flagged: true, creditId: id, status: CreditStatus.Flagged },
     );
-    await this.creditsService.getCredit(id);
     this.logger.log(`Credit ${id} flagged by admin`);
     return { flagged: true, creditId: id, status: CreditStatus.Flagged };
   }

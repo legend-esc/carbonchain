@@ -44,8 +44,8 @@ function buildJanitor(
   const deleted = new Set<string>();
 
   const mockWebhooksService = {
-    getDeliveries: () => Array.from(store.values()),
-    deleteDelivery: (id: string) => {
+    getDeliveries: async () => Array.from(store.values()),
+    deleteDelivery: async (id: string) => {
       const had = store.has(id);
       if (had) {
         store.delete(id);

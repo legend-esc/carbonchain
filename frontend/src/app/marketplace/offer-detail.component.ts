@@ -24,7 +24,14 @@ export const OFFER_EXPIRED_ERROR_CODE = 309;
       <div class="offer-detail" role="alertdialog" aria-labelledby="offer-expired-heading">
         <div class="offer-detail__header">
           <h2 id="offer-expired-heading">Offer Expired</h2>
-          <button class="btn btn-ghost" type="button" (click)="closed.emit()" aria-label="Close offer details">✕</button>
+          <button
+            class="btn btn-ghost"
+            type="button"
+            (click)="closed.emit()"
+            aria-label="Close offer details"
+          >
+            ✕
+          </button>
         </div>
 
         <p class="error-message">This offer has expired and is no longer available.</p>
@@ -40,7 +47,14 @@ export const OFFER_EXPIRED_ERROR_CODE = 309;
       <div class="offer-detail" role="dialog" aria-modal="true" aria-labelledby="offer-heading">
         <div class="offer-detail__header">
           <h2 id="offer-heading">Offer #{{ offer().id }}</h2>
-          <button class="btn btn-ghost" type="button" (click)="closed.emit()" aria-label="Close offer details">✕</button>
+          <button
+            class="btn btn-ghost"
+            type="button"
+            (click)="closed.emit()"
+            aria-label="Close offer details"
+          >
+            ✕
+          </button>
         </div>
 
         <dl class="detail-list">
@@ -55,7 +69,9 @@ export const OFFER_EXPIRED_ERROR_CODE = 309;
           <dt>Price</dt>
           <dd>{{ formatPrice(offer()) }}</dd>
           <dt>Status</dt>
-          <dd><span class="badge" [class]="'badge-' + offer().status">{{ offer().status }}</span></dd>
+          <dd>
+            <span class="badge" [class]="'badge-' + offer().status">{{ offer().status }}</span>
+          </dd>
         </dl>
 
         @if (quoteLoading()) {
@@ -108,34 +124,132 @@ export const OFFER_EXPIRED_ERROR_CODE = 309;
       </div>
     }
   `,
-  styles: [`
-    .offer-detail { background: #fff; border: 1px solid #d0d0d0; border-radius: 8px; padding: 1.5rem; max-width: 480px; }
-    .offer-detail__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-    h2 { margin: 0; }
-    .detail-list { display: grid; grid-template-columns: 140px 1fr; gap: 0.4rem 1rem; margin: 0 0 1.5rem; }
-    dt { font-weight: 600; color: #404040; }
-    dd { margin: 0; }
-    .mono { font-family: monospace; word-break: break-all; }
-    .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase; font-weight: 600; }
-    .badge-open { background: #e8f5e9; color: #1b5e20; }
-    .badge-filled { background: #e3f2fd; color: #0d47a1; }
-    .badge-cancelled { background: #fce4ec; color: #a31515; }
-    .quote-panel { background: #f5f5f5; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
-    .quote-panel h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #1a1a1a; }
-    .total { font-weight: 700; color: #1b5e20; }
-    /* Issue #963: #888 was 3.5:1 on white — below AA for body text. */
-    .quote-loading { color: #595959; font-size: 0.85rem; }
-    .status-message { color: #1b5e20; font-size: 0.85rem; font-weight: 500; min-height: 1.2em; }
-    .offer-detail__actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-    .error-message, .error { color: #a31515; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem; }
-    .btn { padding: 0.5rem 1.2rem; border-radius: 6px; cursor: pointer; border: none; font-size: 0.9rem; }
-    .btn:focus-visible { outline: 3px solid #1b5e20; outline-offset: 2px; }
-    .btn-primary { background: #2e7d32; color: #fff; }
-    .btn-primary:disabled { background: #9c9c9c; cursor: not-allowed; }
-    .btn-danger { background: #c62828; color: #fff; }
-    .btn-danger:disabled { background: #a8a8a8; cursor: not-allowed; }
-    .btn-ghost { background: transparent; border: 1px solid #767676; color: #262626; }
-  `],
+  styles: [
+    `
+      .offer-detail {
+        background: #fff;
+        border: 1px solid #d0d0d0;
+        border-radius: 8px;
+        padding: 1.5rem;
+        max-width: 480px;
+      }
+      .offer-detail__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        margin: 0;
+      }
+      .detail-list {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 0.4rem 1rem;
+        margin: 0 0 1.5rem;
+      }
+      dt {
+        font-weight: 600;
+        color: #404040;
+      }
+      dd {
+        margin: 0;
+      }
+      .mono {
+        font-family: monospace;
+        word-break: break-all;
+      }
+      .badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+      .badge-open {
+        background: #e8f5e9;
+        color: #1b5e20;
+      }
+      .badge-filled {
+        background: #e3f2fd;
+        color: #0d47a1;
+      }
+      .badge-cancelled {
+        background: #fce4ec;
+        color: #a31515;
+      }
+      .quote-panel {
+        background: #f5f5f5;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      .quote-panel h3 {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+        color: #1a1a1a;
+      }
+      .total {
+        font-weight: 700;
+        color: #1b5e20;
+      }
+      /* Issue #963: #888 was 3.5:1 on white — below AA for body text. */
+      .quote-loading {
+        color: #595959;
+        font-size: 0.85rem;
+      }
+      .status-message {
+        color: #1b5e20;
+        font-size: 0.85rem;
+        font-weight: 500;
+        min-height: 1.2em;
+      }
+      .offer-detail__actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .error-message,
+      .error {
+        color: #a31515;
+        font-size: 0.85rem;
+        font-weight: 500;
+        margin-bottom: 0.5rem;
+      }
+      .btn {
+        padding: 0.5rem 1.2rem;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-size: 0.9rem;
+      }
+      .btn:focus-visible {
+        outline: 3px solid #1b5e20;
+        outline-offset: 2px;
+      }
+      .btn-primary {
+        background: #2e7d32;
+        color: #fff;
+      }
+      .btn-primary:disabled {
+        background: #9c9c9c;
+        cursor: not-allowed;
+      }
+      .btn-danger {
+        background: #c62828;
+        color: #fff;
+      }
+      .btn-danger:disabled {
+        background: #a8a8a8;
+        cursor: not-allowed;
+      }
+      .btn-ghost {
+        background: transparent;
+        border: 1px solid #767676;
+        color: #262626;
+      }
+    `,
+  ],
 })
 export class OfferDetailComponent implements OnInit {
   readonly offer = input.required<Offer>();
@@ -199,7 +313,8 @@ export class OfferDetailComponent implements OnInit {
     }
     // For SAC/USDC tokens, assume 7 decimal places (Stellar standard)
     return (
-      (Number(raw) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 7 }) + ` ${code}`
+      (Number(raw) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 7 }) +
+      ` ${code}`
     );
   }
 

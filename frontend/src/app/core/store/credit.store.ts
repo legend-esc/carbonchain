@@ -29,7 +29,6 @@ export class CreditStore extends WalletScopedStore {
     this.watchScope(() => this.reset());
   }
 
-
   // ── Public readonly signals ────────────────────────────────────────────────
 
   readonly credits = this._credits.asReadonly();
@@ -164,7 +163,6 @@ export class CreditStore extends WalletScopedStore {
     }
   }
 
-
   /** Set the currently selected credit id. */
   select(id: string | null): void {
     this._selectedId.set(id);
@@ -209,15 +207,14 @@ export class CreditStore extends WalletScopedStore {
    * On success, replaces temporary IDs with real IDs from the API response.
    * On failure, rolls back the optimistic update and shows an error toast.
    */
-  async splitCredit(creditId: string, splitTonnes: string, token: string): Promise<void> {
+  async splitCredit(creditId: string, splitTonnes: string, token: string): Promise<{ childCredit1: string; childCredit2: string }> {
     const scope = this.beginWrite();
     const parent = this._credits().find((c) => c.id === creditId);
     if (!parent) {
       this.discardWrite();
       this.toast.showError('Credit not found');
-      return;
+      throw new Error('Credit not found');
     }
-
 
     const splitTonnesBigInt = BigInt(splitTonnes);
     const parentTonnesBigInt = BigInt(parent.tonnes);
@@ -257,7 +254,7 @@ export class CreditStore extends WalletScopedStore {
       // alone rather than writing real IDs into the new account's cache.
       if (this.cacheKey() !== scope) {
         this.discardWrite();
-        return;
+        return response;
       }
       this.annotate('split reconcile', scope, `credit=${creditId}`);
 
@@ -278,6 +275,7 @@ export class CreditStore extends WalletScopedStore {
       await this.invalidateSwCache();
 
       this.toast.showSuccess('Credit split successfully');
+      return response;
     } catch (err) {
       this.discardWrite();
       // Rollback: remove children, restore parent status
@@ -290,6 +288,40 @@ export class CreditStore extends WalletScopedStore {
       const msg = err instanceof Error ? err.message : 'Failed to split credit.';
       this._error.set(msg);
       this.toast.showError(msg);
+      throw err;
+    }
+  }
+
+  /** POST /credits/merge — merge multiple credits into one */
+  async mergeCredits(creditIds: string[], token: string): Promise<{ mergedCreditId: string }> {
+    const scope = this.beginWrite();
+    try {
+      const response = await firstValueFrom(this.api.mergeCredits(creditIds, token));
+
+      // Issue #965 — if the account changed mid-flight the optimistic rows
+      // belong to the previous account, so leave the (already cleared) store
+      // alone rather than writing real IDs into the new account's cache.
+      if (this.cacheKey() !== scope) {
+        this.discardWrite();
+        return response;
+      }
+      this.annotate('merge reconcile', scope, `credits=${creditIds.join(',')}`);
+
+      // Remove merged credits from local store
+      this._credits.update((list) =>
+        list.filter((c) => !creditIds.includes(c.id)),
+      );
+
+      await this.invalidateSwCache();
+
+      this.toast.showSuccess('Credits merged successfully');
+      return response;
+    } catch (err) {
+      this.discardWrite();
+      const msg = err instanceof Error ? err.message : 'Failed to merge credits.';
+      this._error.set(msg);
+      this.toast.showError(msg);
+      throw err;
     }
   }
 }

@@ -134,7 +134,7 @@ export abstract class WalletScopedStore {
    */
   protected annotate(action: string, scope: string, detail: string): void {
     if (!isDevBuild()) return;
-    // eslint-disable-next-line no-console
+
     console.debug(`[${this.constructor.name}] ${action} scope=${scope} ${detail}`);
   }
 

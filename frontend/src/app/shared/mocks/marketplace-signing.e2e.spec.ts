@@ -133,7 +133,7 @@ describe('[e2e] OfferDetailComponent — wallet signing paths (issue #970)', () 
     expect(apiMock.getBuyOfferXdr).toHaveBeenCalledOnce();
     expect(wallet.signTransaction).toHaveBeenCalledWith(UNSIGNED_XDR);
     expect(apiMock.buyOffer).toHaveBeenCalledWith(
-      42,               // numeric offer id
+      42, // numeric offer id
       BUYER_PK,
       MOCK_SIGNED_XDR,
       'mock-jwt',
@@ -207,9 +207,7 @@ describe('[e2e] OfferDetailComponent — wallet signing paths (issue #970)', () 
     setupComponent(XLM_OFFER);
 
     wallet.simulateDisconnect();
-    wallet.signTransaction.mockRejectedValue(
-      new WalletError('net::ERR_BAD_RESPONSE', 'network'),
-    );
+    wallet.signTransaction.mockRejectedValue(new WalletError('net::ERR_BAD_RESPONSE', 'network'));
 
     await comp.executeBuy();
 
@@ -229,7 +227,7 @@ describe('[e2e] OfferDetailComponent — wallet signing paths (issue #970)', () 
     await comp.executeBuy();
 
     expect(apiMock.getBuyOfferXdr).toHaveBeenCalledWith(
-      99,       // USDC offer id
+      99, // USDC offer id
       BUYER_PK,
       'mock-jwt',
     );

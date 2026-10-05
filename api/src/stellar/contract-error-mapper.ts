@@ -2,7 +2,7 @@
  * ContractErrorMapper — issue #919
  *
  * Single source of truth for all stable contract error codes.
- * Derived directly from the Rust error enums in contracts/*/src/errors.rs.
+ * Derived directly from the Rust error enums in the contracts errors.rs files.
  *
  * Error ranges:
  *   100–126  credit_registry  (CarbonChainError)

@@ -124,7 +124,7 @@ export class MarketplaceStore extends WalletScopedStore {
       this._state.set('loaded');
     } catch (err) {
       this.discardWrite();
-      this._error.set(err instanceof Error ? err.message : `Failed to load offer ${id}.`;
+      this._error.set(err instanceof Error ? err.message : `Failed to load offer ${id}`);
       this._state.set('error');
     }
   }

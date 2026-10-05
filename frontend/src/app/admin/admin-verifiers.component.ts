@@ -32,7 +32,12 @@ type SortDir = 'asc' | 'desc';
 
       <div class="sort-bar">
         <label class="field-label" for="sort-key">Sort by</label>
-        <select id="sort-key" class="text-input" [value]="sortKey()" (change)="onSortKeyChange($event)">
+        <select
+          id="sort-key"
+          class="text-input"
+          [value]="sortKey()"
+          (change)="onSortKeyChange($event)"
+        >
           <option value="reputation">Reputation</option>
           <option value="stake">Stake (XLM)</option>
           <option value="address">Address</option>
@@ -69,7 +74,11 @@ type SortDir = 'asc' | 'desc';
           </thead>
           <tbody>
             @for (v of sortedVerifiers(); track v.address; let i = $index) {
-              <tr class="verifier-row" (click)="openDetail(v.address)" [class.verifier-row--selected]="selectedAddress() === v.address">
+              <tr
+                class="verifier-row"
+                (click)="openDetail(v.address)"
+                [class.verifier-row--selected]="selectedAddress() === v.address"
+              >
                 <td>{{ i + 1 }}</td>
                 <td class="mono" [title]="v.address">{{ v.address }}</td>
                 <td>{{ formatStake(v.address) }}</td>
@@ -92,7 +101,13 @@ type SortDir = 'asc' | 'desc';
 
       @if (selectedAddress()) {
         <div class="drawer-backdrop" (click)="closeDetail()">
-          <div class="drawer" (click)="$event.stopPropagation()" role="dialog" aria-modal="true" [attr.aria-label]="'Verifier detail: ' + selectedAddress()">
+          <div
+            class="drawer"
+            (click)="$event.stopPropagation()"
+            role="dialog"
+            aria-modal="true"
+            [attr.aria-label]="'Verifier detail: ' + selectedAddress()"
+          >
             <div class="drawer-header">
               <h2>Verifier Detail</h2>
               <button class="btn btn-ghost btn-sm" (click)="closeDetail()">Close</button>
@@ -110,13 +125,21 @@ type SortDir = 'asc' | 'desc';
 
               <div class="drawer-section">
                 <h3>Stake</h3>
-                <p>{{ detailStake() !== null ? (detailStake()! | number:'1.7-7') + ' XLM' : '—' }}</p>
+                <p>
+                  {{ detailStake() !== null ? (detailStake()! | number: '1.7-7') + ' XLM' : '—' }}
+                </p>
               </div>
 
               <div class="drawer-section">
                 <h3>Reputation</h3>
-                <p>Approvals: <strong>{{ selectedVerifier()?.reputation?.approvalCount ?? '—' }}</strong></p>
-                <p>Disputes: <strong>{{ selectedVerifier()?.reputation?.disputeCount ?? '—' }}</strong></p>
+                <p>
+                  Approvals:
+                  <strong>{{ selectedVerifier()?.reputation?.approvalCount ?? '—' }}</strong>
+                </p>
+                <p>
+                  Disputes:
+                  <strong>{{ selectedVerifier()?.reputation?.disputeCount ?? '—' }}</strong>
+                </p>
               </div>
 
               <div class="drawer-section">
@@ -143,7 +166,7 @@ type SortDir = 'asc' | 'desc';
                     @for (c of detailPending(); track c.id) {
                       <li>
                         <span class="mono">{{ c.id | slice: 0 : 12 }}…</span>
-                        <span>{{ c.tonnes | number:'1.2-2' }} t</span>
+                        <span>{{ c.tonnes | number: '1.2-2' }} t</span>
                         <span>{{ c.status }}</span>
                       </li>
                     }
@@ -162,7 +185,7 @@ type SortDir = 'asc' | 'desc';
                     @for (c of detailHistory(); track c.id) {
                       <li>
                         <span class="mono">{{ c.id | slice: 0 : 12 }}…</span>
-                        <span>{{ c.tonnes | number:'1.2-2' }} t</span>
+                        <span>{{ c.tonnes | number: '1.2-2' }} t</span>
                         <span>{{ c.status }}</span>
                       </li>
                     }
@@ -192,10 +215,16 @@ type SortDir = 'asc' | 'desc';
                 <tr>
                   <td class="mono">{{ app.address }}</td>
                   <td>{{ app.name || '—' }}</td>
-                  <td class="mono">{{ app.documentsCid | slice: 0 : 20 }}{{ app.documentsCid && app.documentsCid.length > 20 ? '…' : '' }}</td>
+                  <td class="mono">
+                    {{ app.documentsCid | slice: 0 : 20
+                    }}{{ app.documentsCid && app.documentsCid.length > 20 ? '…' : '' }}
+                  </td>
                   <td>{{ app.stakeAmount }}</td>
                   <td class="actions-cell">
-                    <button class="btn btn-sm btn-primary" (click)="approveApplication(app.address)">
+                    <button
+                      class="btn btn-sm btn-primary"
+                      (click)="approveApplication(app.address)"
+                    >
                       Approve
                     </button>
                     <button class="btn btn-sm btn-danger" (click)="rejectApplication(app.address)">
@@ -628,7 +657,13 @@ export class AdminVerifiersComponent implements OnInit {
   protected readonly detailHistoryLoading = signal(false);
 
   protected readonly pendingApplications = signal<
-    { address: string; name: string | null; documentsCid: string | null; stakeAmount: string | null; status: string }[]
+    {
+      address: string;
+      name: string | null;
+      documentsCid: string | null;
+      stakeAmount: string | null;
+      status: string;
+    }[]
   >([]);
 
   // Register modal state
@@ -685,7 +720,9 @@ export class AdminVerifiersComponent implements OnInit {
   private async loadStakes(addresses: string[]): Promise<void> {
     const results = await Promise.all(
       addresses.map((addr) =>
-        firstValueFrom(this.api.getVerifierStake(addr)).then((r) => [addr, r.stake] as const).catch(() => [addr, '0'] as const),
+        firstValueFrom(this.api.getVerifierStake(addr))
+          .then((r) => [addr, r.stake] as const)
+          .catch(() => [addr, '0'] as const),
       ),
     );
     const map = new Map<string, string>();

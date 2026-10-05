@@ -38,7 +38,10 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
 
     provideRouter(routes),
-    provideHttpClient(withFetch(), withInterceptors([authInterceptor, conditionalRequestInterceptor])),
+    provideHttpClient(
+      withFetch(),
+      withInterceptors([authInterceptor, conditionalRequestInterceptor]),
+    ),
     { provide: ErrorHandler, useClass: GlobalErrorHandler },
     { provide: APP_INITIALIZER, useFactory: initializeTranslations, multi: true },
     provideServiceWorker('ngsw-worker.js', {

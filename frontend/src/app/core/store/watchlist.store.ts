@@ -81,9 +81,7 @@ export class WatchlistStore {
 
   /** Set (or clear, with null) the target price for a watched key. */
   setTargetPrice(key: string, targetPrice: number | null): void {
-    this._entries.update((list) =>
-      list.map((e) => (e.key === key ? { ...e, targetPrice } : e)),
-    );
+    this._entries.update((list) => list.map((e) => (e.key === key ? { ...e, targetPrice } : e)));
     this.persist();
   }
 
@@ -119,9 +117,7 @@ export class WatchlistStore {
         offer,
         targetPrice: entry.targetPrice,
         discount:
-          entry.targetPrice > 0
-            ? Math.max(0, (entry.targetPrice - price) / entry.targetPrice)
-            : 0,
+          entry.targetPrice > 0 ? Math.max(0, (entry.targetPrice - price) / entry.targetPrice) : 0,
       });
     }
 

@@ -1,7 +1,7 @@
 import { Component, computed, input, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
-import { type PricePoint } from '../../core/store/market-events.store';
+import { type PricePoint } from '../core/store/market-events.store';
 
 /**
  * Issue #958 — project-level price history.
@@ -34,7 +34,7 @@ import { type PricePoint } from '../../core/store/market-events.store';
           class="chart__svg"
           [attr.width]="width"
           [attr.height]="height"
-          viewBox="0 0 {{ width }} {{ height }}"
+          [attr.viewBox]="'0 0 ' + width + ' ' + height"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           [attr.aria-label]="summary()"
@@ -253,10 +253,13 @@ export class PriceHistoryChartComponent {
 
     return pts.map((p) => ({
       ...p,
-      cx: this.padding.left + (timeSpan === 0 ? plotW / 2 : ((p.timestamp - b.minTime) / timeSpan) * plotW),
+      cx:
+        this.padding.left +
+        (timeSpan === 0 ? plotW / 2 : ((p.timestamp - b.minTime) / timeSpan) * plotW),
       cy:
         this.padding.top +
-        plotH - (priceSpan === 0 ? plotH / 2 : ((p.price - b.minPrice) / priceSpan) * plotH),
+        plotH -
+        (priceSpan === 0 ? plotH / 2 : ((p.price - b.minPrice) / priceSpan) * plotH),
     }));
   });
 
@@ -274,7 +277,13 @@ export class PriceHistoryChartComponent {
     });
   });
 
-  readonly linePath = computed(() => this.points().length < 2 ? '' : this.plotted().map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.cx.toFixed(2)} ${p.cy.toFixed(2)}`).join(' '));
+  readonly linePath = computed(() =>
+    this.points().length < 2
+      ? ''
+      : this.plotted()
+          .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.cx.toFixed(2)} ${p.cy.toFixed(2)}`)
+          .join(' '),
+  );
 
   readonly areaPath = computed(() => {
     const plotted = this.plotted();

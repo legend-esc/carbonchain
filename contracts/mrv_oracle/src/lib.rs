@@ -1149,8 +1149,9 @@ mod tests {
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         client.initialize(&admin);
-        // Wrong nonce (1 instead of 0) must be rejected.
-        assert!(client.try_register_oracle(&admin, &oracle, &1u64).is_err());
+        // NONCE_WINDOW = 16; current nonce + 16 is just outside the window.
+        let current = client.get_nonce(&admin);
+        assert!(client.try_register_oracle(&admin, &oracle, &(current + 16)).is_err());
     }
 
     // ── Pause tests ──────────────────────────────────────────────────────────
@@ -1701,9 +1702,9 @@ mod tests {
 
         let nonce = client.get_nonce(&admin);
 
-        // Wrong nonce must be rejected
+        // Wrong nonce (outside window) must be rejected
         assert!(client
-            .try_set_anomaly_threshold(&admin, &1000u32, &(nonce + 1))
+            .try_set_anomaly_threshold(&admin, &1000u32, &(nonce + 16))
             .is_err());
 
         // Threshold 0 must return InvalidThreshold, not InvalidReading

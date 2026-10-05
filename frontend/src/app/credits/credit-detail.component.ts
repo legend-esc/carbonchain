@@ -7,12 +7,13 @@ import { CreditMetadata, CreditStatus } from '@shared';
 import { ApiService, ProvenanceEvent } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
+import { CreditStore } from '../core/store/credit.store';
 import { ProvenanceTimelineComponent } from './provenance-timeline.component';
 
 @Component({
   selector: 'app-credit-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule, ProvenanceTimelineComponent],
+  imports: [CommonModule, RouterModule, FormsModule, ProvenanceTimelineComponent],
   template: `
     <div class="credit-detail">
       @if (loading()) {
@@ -141,8 +142,8 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
               <h2>Split Credit</h2>
               <p class="help-text">
                 Divide this credit into two child credits. The first child receives the tonnes you
-                specify; the remainder goes to the second child.
-                Total available: <strong>{{ formatTonnes(credit()!.tonnes) }}</strong>
+                specify; the remainder goes to the second child. Total available:
+                <strong>{{ formatTonnes(credit()!.tonnes) }}</strong>
               </p>
 
               @if (splitError()) {
@@ -151,7 +152,8 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
               @if (splitResult()) {
                 <div class="alert alert--success" role="status">
                   <strong>Split successful!</strong><br />
-                  Child 1: <span class="mono">{{ splitResult()!.childCredit1 }}</span><br />
+                  Child 1: <span class="mono">{{ splitResult()!.childCredit1 }}</span
+                  ><br />
                   Child 2: <span class="mono">{{ splitResult()!.childCredit2 }}</span>
                 </div>
               }
@@ -218,9 +220,11 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
             <section class="card action-card" aria-label="Merge credits form">
               <h2>Merge Credits</h2>
               <p class="help-text">
-                Select credits with the same methodology (<strong>{{ credit()!.methodology }}</strong>),
-                vintage year (<strong>{{ credit()!.vintage_year }}</strong>), and issuer to merge
-                into this credit.
+                Select credits with the same methodology (<strong>{{
+                  credit()!.methodology
+                }}</strong
+                >), vintage year (<strong>{{ credit()!.vintage_year }}</strong
+                >), and issuer to merge into this credit.
               </p>
 
               @if (mergeError()) {
@@ -262,7 +266,11 @@ import { ProvenanceTimelineComponent } from './provenance-timeline.component';
                         class="btn btn-primary"
                         [disabled]="mergeLoading() || mergeSelectedIds().length === 0"
                       >
-                        {{ mergeLoading() ? 'Merging…' : 'Confirm Merge (' + mergeSelectedIds().length + ' credits)' }}
+                        {{
+                          mergeLoading()
+                            ? 'Merging…'
+                            : 'Confirm Merge (' + mergeSelectedIds().length + ' credits)'
+                        }}
                       </button>
                       <button type="button" class="btn btn-ghost" (click)="toggleMergePanel()">
                         Cancel
@@ -582,7 +590,9 @@ export class CreditDetailComponent implements OnInit {
     // Load store so eligible merge candidates are available.
     const c = this.credit();
     if (c?.project_id) {
-      this.store.loadByProject(c.project_id).catch(() => {/* non-critical */});
+      this.store.loadByProject(c.project_id).catch(() => {
+        /* non-critical */
+      });
     }
   }
 
@@ -665,7 +675,7 @@ export class CreditDetailComponent implements OnInit {
       this.splitResult.set(result);
       // Refresh this credit from the store (it will no longer exist — show child info)
     } catch (err) {
-      this.splitError.set(mapContractError(err));
+      this.splitError.set(this.mapContractError(err));
     } finally {
       this.splitLoading.set(false);
     }
@@ -698,7 +708,7 @@ export class CreditDetailComponent implements OnInit {
       const result = await this.store.mergeCredits([c.id, ...selectedIds], token);
       this.mergeResult.set(result);
     } catch (err) {
-      this.mergeError.set(mapContractError(err));
+      this.mergeError.set(this.mapContractError(err));
     } finally {
       this.mergeLoading.set(false);
     }
@@ -707,8 +717,12 @@ export class CreditDetailComponent implements OnInit {
   // ── Formatting ─────────────────────────────────────────────────────────────
 
   formatTonnes(raw: string): string {
-    return (
-      (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t'
-    );
+    return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
+  }
+
+  private mapContractError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    return 'An unknown error occurred';
   }
 }

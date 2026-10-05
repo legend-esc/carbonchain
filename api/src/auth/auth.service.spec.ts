@@ -1,109 +1,56 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { UnauthorizedException } from '@nestjs/common';
 import {
   BadRequestException,
   UnauthorizedException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 import { Keypair, Transaction, Networks } from '@stellar/stellar-sdk';
 import { AuthService } from './auth.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CacheService } from '../common/cache.service';
 
+const VALID_CLIENT = Keypair.random();
+
 /**
- * Tests for Issue #933 — rotating refresh tokens and short-lived access tokens.
- * Tests for Issue #932 — server nonce account binding.
+ * Stateful in-memory cache double mirroring the async CacheService contract.
+ * Methods are jest mocks so tests can assert on cache writes, while the backing
+ * Map keeps read/write behaviour real.
  */
-describe('AuthService — token management (Issue #933)', () => {
-  let service: AuthService;
-  let jwtService: jest.Mocked<JwtService>;
-  let cacheService: jest.Mocked<CacheService>;
+function createFakeCache() {
+  const store = new Map<string, { value: unknown; expiry: number }>();
 
-  const cacheStore = new Map<string, unknown>();
+  const set = jest.fn(
+    async (key: string, value: unknown, ttl = 0): Promise<boolean> => {
+      store.set(key, { value, expiry: Math.floor(Date.now() / 1000) + ttl });
+      return true;
+    },
+  );
 
-  beforeEach(async () => {
-    cacheStore.clear();
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        AuthService,
-        {
-          provide: JwtService,
-          useValue: {
-            sign: jest.fn().mockReturnValue('signed-access-token'),
-            decode: jest.fn().mockReturnValue({ jti: 'jti-1', exp: Math.floor(Date.now() / 1000) + 900 }),
-          },
-        },
-        {
-          provide: ConfigService,
-          useValue: {
-            get: jest.fn().mockImplementation((key: string, def?: unknown) => {
-              if (key === 'STELLAR_NETWORK') return 'TESTNET';
-              if (key === 'HOME_DOMAIN') return 'localhost';
-              return def;
-            }),
-          },
-        },
-        {
-          provide: StellarKeypairService,
-          useValue: {
-            getAdminKeypair: jest.fn().mockReturnValue({
-              publicKey: () => 'GADMIN',
-              sign: jest.fn(),
-            }),
-          },
-        },
-        {
-          provide: CacheService,
-          useValue: {
-            get: jest.fn().mockImplementation((key: string) =>
-              Promise.resolve(cacheStore.get(key) ?? null),
-            ),
-            set: jest.fn().mockImplementation((key: string, value: unknown) => {
-              cacheStore.set(key, value);
-              return Promise.resolve();
-            }),
-            del: jest.fn().mockImplementation((key: string) => {
-              cacheStore.delete(key);
-              return Promise.resolve();
-            }),
-          },
-        },
-// === In-memory fake cache mirroring the async CacheService interface.
-
-class FakeCache {
-  private store = new Map<string, { value: unknown; expiry: number }>();
-
-  async set(key: string, value: unknown, ttl = 0): Promise<boolean> {
-    this.store.set(key, { value, expiry: Math.floor(Date.now() / 1000) + ttl });
-    return true;
-  }
-
-  async get<T>(key: string): Promise<T | null> {
-    const entry = this.store.get(key);
+  const get = jest.fn(async <T>(key: string): Promise<T | null> => {
+    const entry = store.get(key);
     if (!entry) return null;
     if (entry.expiry && Math.floor(Date.now() / 1000) > entry.expiry) {
-      this.store.delete(key);
+      store.delete(key);
       return null;
     }
     return entry.value as T;
-  }
+  });
 
-  async del(key: string): Promise<boolean> {
-    this.store.delete(key);
+  const del = jest.fn(async (key: string): Promise<boolean> => {
+    store.delete(key);
     return true;
-  }
+  });
 
-  clear() {
-    this.store.clear();
-  }
+  const clear = (): void => {
+    store.clear();
+  };
+
+  return { set, get, del, clear };
 }
 
-const VALID_CLIENT = Keypair.random();
+type FakeCache = ReturnType<typeof createFakeCache>;
 
 const mockConfigService = {
   get: jest.fn((key: string, def?: string) => {
@@ -119,15 +66,24 @@ const mockKeypairService = {
 
 const mockJwtService = {
   sign: jest.fn().mockReturnValue('signed.jwt.token'),
-  decode: jest.fn(),
+  decode: jest.fn().mockReturnValue({
+    jti: 'jti-1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  }),
 };
 
+/**
+ * Tests for Issue #933 — rotating refresh tokens and short-lived access tokens.
+ * Tests for Issue #932 — server nonce account binding.
+ */
 describe('AuthService', () => {
   let service: AuthService;
   let cache: FakeCache;
+  let jwtService: jest.Mocked<JwtService>;
+  let cacheService: jest.Mocked<CacheService>;
 
   beforeEach(async () => {
-    cache = new FakeCache();
+    cache = createFakeCache();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -141,106 +97,6 @@ describe('AuthService', () => {
     service = module.get<AuthService>(AuthService);
     jwtService = module.get(JwtService);
     cacheService = module.get(CacheService);
-  });
-
-  describe('issueTokenPair', () => {
-    it('returns an access_token, refresh_token, and expires_in', async () => {
-      const result = await service.issueTokenPair('GACCOUNT');
-      expect(result).toHaveProperty('access_token', 'signed-access-token');
-      expect(result).toHaveProperty('refresh_token');
-      expect(result).toHaveProperty('expires_in', 900);
-      expect(typeof result.refresh_token).toBe('string');
-    });
-
-    it('stores refresh token metadata in cache', async () => {
-      const result = await service.issueTokenPair('GACCOUNT');
-      expect(cacheService.set).toHaveBeenCalledWith(
-        expect.stringContaining('auth:refresh:token:'),
-        expect.objectContaining({ account: 'GACCOUNT' }),
-        expect.any(Number),
-      );
-      expect(cacheService.set).toHaveBeenCalledWith(
-        expect.stringContaining('auth:refresh:family:'),
-        result.refresh_token,
-        expect.any(Number),
-      );
-    });
-
-    it('preserves the provided familyId when rotating', async () => {
-      const familyId = 'family-abc';
-      await service.issueTokenPair('GACCOUNT', familyId);
-      expect(cacheService.set).toHaveBeenCalledWith(
-        `auth:refresh:family:${familyId}`,
-        expect.any(String),
-        expect.any(Number),
-      );
-    });
-  });
-
-  describe('rotateRefreshToken', () => {
-    it('issues a new token pair on valid rotation', async () => {
-      const first = await service.issueTokenPair('GACCOUNT');
-
-      // The family should now point to first.refresh_token.
-      const result = await service.rotateRefreshToken(first.refresh_token);
-      expect(result.access_token).toBe('signed-access-token');
-      expect(result.refresh_token).not.toBe(first.refresh_token);
-    });
-
-    it('throws UnauthorizedException when token is not found', async () => {
-      await expect(
-        service.rotateRefreshToken('non-existent-token'),
-      ).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('detects replay: revoking family when an old token is re-used', async () => {
-      const first = await service.issueTokenPair('GACCOUNT');
-      // Rotate once — family now points to a NEW token
-      await service.rotateRefreshToken(first.refresh_token);
-
-      // Replay the first (now stale) token → should detect theft
-      await expect(
-        service.rotateRefreshToken(first.refresh_token),
-      ).rejects.toThrow(UnauthorizedException);
-    });
-  });
-
-  describe('isTokenRevoked', () => {
-    it('returns false for a fresh JTI', async () => {
-      const revoked = await service.isTokenRevoked('fresh-jti');
-      expect(revoked).toBe(false);
-    });
-
-    it('returns true after the jti is added to the blocklist', async () => {
-      cacheStore.set('auth:blocklist:jti:blocked-jti', true);
-      const revoked = await service.isTokenRevoked('blocked-jti');
-      expect(revoked).toBe(true);
-    });
-  });
-
-  describe('logout', () => {
-    it('adds the access token jti to the blocklist', async () => {
-      await service.issueTokenPair('GACCOUNT');
-      await service.logout('raw-bearer-token');
-      expect(cacheService.set).toHaveBeenCalledWith(
-        'auth:blocklist:jti:jti-1',
-        true,
-        expect.any(Number),
-      );
-    });
-
-    it('revokes the refresh family when refresh_token is provided', async () => {
-      const pair = await service.issueTokenPair('GACCOUNT');
-      await service.logout('raw-bearer-token', pair.refresh_token);
-      // Family key and token key should be deleted
-      expect(cacheService.del).toHaveBeenCalledWith(
-        expect.stringContaining('auth:refresh:family:'),
-      );
-      expect(cacheService.del).toHaveBeenCalledWith(
-        expect.stringContaining('auth:refresh:token:'),
-      );
-    });
-  });
   });
 
   afterEach(() => {
@@ -266,14 +122,17 @@ describe('AuthService', () => {
       expect(tx.operations.some((op) => op.type === 'manageData')).toBe(true);
     });
 
-    it('caches the nonce under a base64 key for replay protection', async () => {
+    it('caches the nonce bound to the client account for replay protection', async () => {
       const result = await service.generateChallenge(VALID_CLIENT.publicKey());
       const tx = new Transaction(result.transaction, result.network_passphrase);
-      const nonce = (
-        tx.operations.find((op) => op.type === 'manageData') as any
-      ).value.toString('base64');
-      const cached = await cache.get<boolean>(`sep10:nonce:${nonce}`);
-      expect(cached).toBe(true);
+      const opValue = (tx.operations.find((op) => op.type === 'manageData') as any)
+        .value as Uint8Array | Buffer;
+      const nonce =
+        opValue instanceof Buffer
+          ? opValue.toString('base64')
+          : Buffer.from(opValue).toString('base64');
+      const cached = await cache.get<{ account: string }>(`sep10:nonce:${nonce}`);
+      expect(cached).toEqual({ account: VALID_CLIENT.publicKey() });
     });
 
     it('uses the server home domain in the manageData name', async () => {
@@ -310,6 +169,7 @@ describe('AuthService', () => {
           account: VALID_CLIENT.publicKey(),
           jti: expect.any(String),
         }),
+        expect.objectContaining({ expiresIn: 900 }),
       );
     });
 
@@ -329,11 +189,14 @@ describe('AuthService', () => {
       const { transaction, network_passphrase } =
         await service.generateChallenge(VALID_CLIENT.publicKey());
       const tx = new Transaction(transaction, network_passphrase);
-      const nonce = (
-        tx.operations.find((op) => op.type === 'manageData') as any
-      ).value.toString('base64');
-      const before = await cache.get<boolean>(`sep10:nonce:${nonce}`);
-      expect(before).toBe(true);
+      const opValue = (tx.operations.find((op) => op.type === 'manageData') as any)
+        .value as Uint8Array | Buffer;
+      const nonce =
+        opValue instanceof Buffer
+          ? opValue.toString('base64')
+          : Buffer.from(opValue).toString('base64');
+      const before = await cache.get<{ account: string }>(`sep10:nonce:${nonce}`);
+      expect(before).toEqual({ account: VALID_CLIENT.publicKey() });
 
       tx.sign(VALID_CLIENT);
       // Should NOT throw "Challenge nonce not found or already used".
@@ -392,6 +255,28 @@ describe('AuthService', () => {
         ServiceUnavailableException,
       );
     });
+
+    it('revokes the refresh family when a refresh_token is provided', async () => {
+      const pair = await service.issueTokenPair('GACCOUNT');
+      await service.logout('raw-bearer-token', pair.refresh_token);
+      // Family key and token key should be deleted
+      expect(cacheService.del).toHaveBeenCalledWith(
+        expect.stringContaining('auth:refresh:family:'),
+      );
+      expect(cacheService.del).toHaveBeenCalledWith(
+        expect.stringContaining('auth:refresh:token:'),
+      );
+    });
+
+    it('adds the access token jti to the blocklist', async () => {
+      await service.issueTokenPair('GACCOUNT');
+      await service.logout('raw-bearer-token');
+      expect(cacheService.set).toHaveBeenCalledWith(
+        'auth:blocklist:jti:jti-1',
+        true,
+        expect.any(Number),
+      );
+    });
   });
 
   // === isTokenRevoked
@@ -402,8 +287,94 @@ describe('AuthService', () => {
       expect(await service.isTokenRevoked('revoked-jti')).toBe(true);
     });
 
+    it('returns true after the jti is added to the blocklist', async () => {
+      await cache.set('auth:blocklist:jti:blocked-jti', true, 100);
+      const revoked = await service.isTokenRevoked('blocked-jti');
+      expect(revoked).toBe(true);
+    });
+
+    it('returns false for a fresh JTI', async () => {
+      const revoked = await service.isTokenRevoked('fresh-jti');
+      expect(revoked).toBe(false);
+    });
+
     it('returns false when the jti is unknown', async () => {
       expect(await service.isTokenRevoked('fresh-jti')).toBe(false);
+    });
+  });
+
+  // === issueTokenPair — Issue #933
+
+  describe('issueTokenPair', () => {
+    it('returns an access_token, refresh_token, and expires_in', async () => {
+      const result = await service.issueTokenPair('GACCOUNT');
+      expect(result).toHaveProperty('access_token', 'signed.jwt.token');
+      expect(result).toHaveProperty('refresh_token');
+      expect(result).toHaveProperty('expires_in', 900);
+      expect(typeof result.refresh_token).toBe('string');
+    });
+
+    it('stores refresh token metadata in cache', async () => {
+      const result = await service.issueTokenPair('GACCOUNT');
+      expect(cacheService.set).toHaveBeenCalledWith(
+        expect.stringContaining('auth:refresh:token:'),
+        expect.objectContaining({ account: 'GACCOUNT' }),
+        expect.any(Number),
+      );
+      expect(cacheService.set).toHaveBeenCalledWith(
+        expect.stringContaining('auth:refresh:family:'),
+        result.refresh_token,
+        expect.any(Number),
+      );
+    });
+
+    it('preserves the provided familyId when rotating', async () => {
+      const familyId = 'family-abc';
+      await service.issueTokenPair('GACCOUNT', familyId);
+      expect(cacheService.set).toHaveBeenCalledWith(
+        `auth:refresh:family:${familyId}`,
+        expect.any(String),
+        expect.any(Number),
+      );
+    });
+  });
+
+  // === rotateRefreshToken — Issue #933
+
+  describe('rotateRefreshToken', () => {
+    it('issues a new token pair on valid rotation', async () => {
+      const first = await service.issueTokenPair('GACCOUNT');
+
+      // The family should now point to first.refresh_token.
+      const result = await service.rotateRefreshToken(first.refresh_token);
+      expect(result.access_token).toBe('signed.jwt.token');
+      expect(result.refresh_token).not.toBe(first.refresh_token);
+    });
+
+    it('throws UnauthorizedException when token is not found', async () => {
+      await expect(
+        service.rotateRefreshToken('non-existent-token'),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('detects replay: revoking family when an old token is re-used', async () => {
+      const first = await service.issueTokenPair('GACCOUNT');
+      // Rotate once — family now points to a NEW token
+      await service.rotateRefreshToken(first.refresh_token);
+
+      // Replay the first (now stale) token → should detect theft
+      await expect(
+        service.rotateRefreshToken(first.refresh_token),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  // === jwtService / cacheService injection sanity
+
+  describe('dependency wiring', () => {
+    it('injects the jwt service and cache service', () => {
+      expect(jwtService).toBeDefined();
+      expect(cacheService).toBe(cache);
     });
   });
 });

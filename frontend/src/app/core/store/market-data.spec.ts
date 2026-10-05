@@ -138,7 +138,12 @@ describe('WatchlistStore', () => {
   });
 });
 
-function event(id: string, type: string, timestamp: number, data: Record<string, unknown>): SorobanEvent {
+function event(
+  id: string,
+  type: string,
+  timestamp: number,
+  data: Record<string, unknown>,
+): SorobanEvent {
   return { id, type, contractId: 'C1', ledger: 1, timestamp, data };
 }
 
@@ -197,9 +202,10 @@ describe('MarketEventsStore', () => {
     localStorage.clear();
     walletAddressSignal.set(null);
     networkSignal.set(null);
-    getEvents = vi
-      .fn()
-      .mockResolvedValue({ events: [event('e1', 'OfferListed', 1, { project_id: 'p1', price_xlm: '10000000' })], nextCursor: null });
+    getEvents = vi.fn().mockResolvedValue({
+      events: [event('e1', 'OfferListed', 1, { project_id: 'p1', price_xlm: '10000000' })],
+      nextCursor: null,
+    });
     TestBed.configureTestingModule({
       providers: [{ provide: ApiService, useValue: { getEvents } }],
     });
@@ -261,9 +267,7 @@ describe('MarketEventsStore', () => {
 
 describe('PricePoint ordering', () => {
   it('is stable for a single point', () => {
-    const points: PricePoint[] = [
-      { timestamp: 1, price: 1, event: { id: 'e' } as never },
-    ];
+    const points: PricePoint[] = [{ timestamp: 1, price: 1, event: { id: 'e' } as never }];
     expect(buildHistoryFrom(points)).toHaveLength(1);
   });
 });

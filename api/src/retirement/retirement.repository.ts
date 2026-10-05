@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { RetirementEntity } from './retirement.entity';
 import { PageResult } from '../credits/credit.repository';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { ListRetirementsDto } from './dto/list-retirements.dto';
 
 export interface IRetirementRepository {
   save(record: RetirementEntity): Promise<RetirementEntity>;
@@ -17,6 +18,8 @@ export interface IRetirementRepository {
   findAll(page: number, limit: number): Promise<PageResult<RetirementEntity>>;
   /** Issue #942 — Paginated query with optional buyer/status filters. */
   findPaginated(dto: ListRetirementsDto): Promise<[RetirementEntity[], number]>;
+  /** Issue #921 — records whose certificate hash still needs an on-chain write. */
+  findPendingCertHash(limit: number): Promise<RetirementEntity[]>;
 }
 
 export const RETIREMENT_REPOSITORY = 'RETIREMENT_REPOSITORY';
@@ -92,6 +95,18 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
     return [data, total];
   }
 
+  /**
+   * Issue #921 — records whose certificate hash still needs an on-chain write.
+   * Excludes 'onchain'. The retry-budget check (certHashRetries) is applied by
+   * CertHashReconciler so this stays free of a circular dependency on it.
+   */
+  async findPendingCertHash(limit: number): Promise<RetirementEntity[]> {
+    return Array.from(this.store.values())
+      .filter((r) => r.certHashStatus !== 'onchain')
+      .sort((a, b) => a.retiredAt - b.retiredAt)
+      .slice(0, limit);
+  }
+
   private paginate(
     items: RetirementEntity[],
     page: number,
@@ -134,6 +149,49 @@ export class TypeOrmRetirementRepository implements IRetirementRepository {
 
   async findAll(page: number, limit: number) {
     return this.paginate({}, page, limit);
+  }
+
+  /**
+   * Issue #942 — Paginated query compatible with the ListRetirementsDto shape.
+   * Applies optional buyer/status filters, sorts by retiredAt DESC, and
+   * returns a [data, total] tuple matching the TypeORM findAndCount signature.
+   */
+  async findPaginated(
+    dto: ListRetirementsDto,
+  ): Promise<[RetirementEntity[], number]> {
+    const page = dto.page ?? 1;
+    const pageSize = dto.pageSize ?? 20;
+
+    const where: Record<string, unknown> = {};
+    if (dto.buyer) {
+      where.buyer = dto.buyer;
+    }
+    if (dto.status) {
+      where.txStatus = dto.status;
+    }
+
+    return this.repository.findAndCount({
+      where,
+      order: { retiredAt: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    });
+  }
+
+  /**
+   * Issue #921 — records whose certificate hash still needs an on-chain write.
+   * Excludes 'onchain' and records that exhausted their retry budget.
+   */
+  async findPendingCertHash(limit: number): Promise<RetirementEntity[]> {
+    return this.repository.find({
+      where: [
+        { certHashStatus: 'none' },
+        { certHashStatus: 'pending' },
+        { certHashStatus: 'failure' },
+      ],
+      order: { retiredAt: 'ASC' },
+      take: limit,
+    });
   }
 
   private async paginate(

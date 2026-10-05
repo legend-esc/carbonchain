@@ -10,8 +10,9 @@ import { toObservable } from '@angular/core/rxjs-interop';
  * the toObservable() exports below keep existing subscribers working
  * unchanged until they're moved over.
  */
+export type WalletNetwork = 'testnet' | 'mainnet';
 export const walletAddressSignal = signal<string | null>(null);
-export const networkSignal = signal<string | null>(null);
+export const networkSignal = signal<WalletNetwork | null>(null);
 export const isConnectedSignal = computed(() => walletAddressSignal() !== null);
 
 /** Backward-compatible observables for components not yet migrated off async pipe. */

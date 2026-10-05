@@ -13,7 +13,10 @@ import { CacheService } from './cache.service';
 /** Method decorator: marks a route as requiring Idempotency-Key enforcement. */
 export const Idempotent = () => SetMetadata('idempotent', true);
 
-const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60; // 24h
+/** TTL for the stored completed response record (#915). */
+const COMPLETED_TTL_SECONDS = 24 * 60 * 60; // 24h
+/** TTL for the in-flight processing lease (#915). */
+const PROCESSING_LEASE_TTL_SECONDS = 60; // 60s
 const PROCESSING_WAIT_TIMEOUT_MS = 10_000;
 const PROCESSING_POLL_INTERVAL_MS = 250;
 
@@ -159,7 +162,11 @@ export class IdempotencyInterceptor implements NestInterceptor {
       const statusCode = (res as unknown as { statusCode?: number }).statusCode ?? 201;
 
       // Persist the completed response separately from the lease with 24 h TTL.
-      await this.cache.set(dk, { statusCode, body: result } satisfies CompletedRecord, COMPLETED_TTL_SECONDS);
+      await this.cache.set(
+        dk,
+        { statusCode, body: result } satisfies CompletedRecord,
+        COMPLETED_TTL_SECONDS,
+      );
 
       this.logger.debug(
         `[#915] Execution complete, persisted done record fp=${fingerprint.slice(0, 12)}`,

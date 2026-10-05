@@ -14,6 +14,8 @@ import {
   ValidationPipe,
   HttpCode,
   HttpStatus,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
@@ -31,12 +33,15 @@ import { PageResult, CursorPageResult } from './credit.repository';
 import { BulkCreditsDto } from './dto/bulk-credits.dto';
 import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
 import { Idempotent } from '../common/idempotency.interceptor';
+import { RetirementService } from '../retirement/retirement.service';
+import { RetirementRequestDto } from '../retirement/dto/retire.dto';
 
 @ApiTags('credits')
 @Controller('credits')
 export class CreditsController {
   constructor(
     private readonly creditsService: CreditsService,
+    @Inject(forwardRef(() => RetirementService))
     private readonly retirementService: RetirementService,
   ) {}
 
@@ -382,12 +387,14 @@ export class CreditsController {
    *
    * `POST /credits/:id/retire` is a convenience route that delegates directly
    * to the **canonical** `POST /retirement` entrypoint via
-   * `RetirementService.retire()`.  Both routes share the same DTO shape
+   * `RetirementService.retireCredit()`.  Both routes share the same DTO shape
    * (`RetireDto`) and return an identical response:
    * `{ retirementId: string; certificateIpfsHash: string }`.
    *
+   * The buyer is bound to the authenticated principal, never taken from the body.
+   *
    * Do NOT add independent logic here — all retire business logic lives in
-   * `RetirementService.retire()`.
+   * `RetirementService`.
    */
   @ApiOperation({
     summary: '(Proxy) Retire a credit — delegates to POST /retirement',
@@ -398,15 +405,13 @@ export class CreditsController {
   @Post(':id/retire')
   async retireCredit(
     @Param('id') creditId: string,
-    @Body() body: { buyerPublicKey: string; tonnes: string; reason: string },
-    @Request() req: any,
+    @Body() body: RetirementRequestDto,
+    @Request() req: { user: { account: string } },
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
-    const dto: RetireDto = {
-      buyerPublicKey: body.buyerPublicKey ?? req.user.account,
+    return this.retirementService.retireCredit(
       creditId,
-      tonnes: body.tonnes,
-      reason: body.reason,
-    };
-    return this.retirementService.retire(dto);
+      { reason: body.reason, nonce: body.nonce, tonnes: body.tonnes },
+      req.user.account,
+    );
   }
 }

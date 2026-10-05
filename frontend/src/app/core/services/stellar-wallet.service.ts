@@ -3,11 +3,7 @@ import { Subject } from 'rxjs';
 
 import { HttpClient } from '@angular/common/http';
 
-import {
-  WalletError,
-  WalletErrorType,
-  normalizeWalletError,
-} from './wallet-errors';
+import { WalletError, WalletErrorType, normalizeWalletError } from './wallet-errors';
 import { networkSignal, walletAddressSignal } from './wallet-state.signals';
 import { publishScopeChange } from '../store/wallet-scope';
 
@@ -129,10 +125,7 @@ export class StellarWalletService {
   /** Connects to Freighter and retrieves the user's public key. */
   async connect(): Promise<string> {
     if (!this.isFreighterInstalled) {
-      const err = new WalletError(
-        'Freighter wallet extension is not installed.',
-        'unsupported',
-      );
+      const err = new WalletError('Freighter wallet extension is not installed.', 'unsupported');
       this._error.set(err.message);
       this._state.set('error');
       throw err;
@@ -211,7 +204,9 @@ export class StellarWalletService {
   private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new WalletError(`Wallet did not respond within ${Math.round(ms / 1000)}s.`, 'timeout'));
+        reject(
+          new WalletError(`Wallet did not respond within ${Math.round(ms / 1000)}s.`, 'timeout'),
+        );
       }, ms);
       promise.then(
         (value) => {

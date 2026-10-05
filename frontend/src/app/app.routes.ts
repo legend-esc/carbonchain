@@ -8,6 +8,7 @@ import { ConnectWalletComponent } from './core/components/connect-wallet.compone
 import { AdminComponent } from './admin/admin.component';
 import { OfflineComponent } from './offline/offline.component';
 import { CertificatesComponent } from './certificates/certificates.component';
+import { PortfolioComponent } from './portfolio/portfolio.component';
 import { VerifierApplyComponent } from './verifier/verifier-apply.component';
 import { VerifierStatusComponent } from './verifier/verifier-status.component';
 import { authGuard } from './core/guards/auth.guard';

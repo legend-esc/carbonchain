@@ -265,7 +265,8 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 
         @if (healthDegraded()) {
           <p class="alert alert--warning" role="alert" aria-live="polite">
-            ⚠ Contract status probe failed — pause state is unknown. Check RPC connectivity before proceeding.
+            ⚠ Contract status probe failed — pause state is unknown. Check RPC connectivity before
+            proceeding.
           </p>
         }
 
@@ -471,7 +472,8 @@ export class AdminComponent implements OnInit {
       const stats = await firstValueFrom(this.api.getAdminStats(token));
       this.maxApprovals.set(Math.max(stats.activeVerifiers, 1));
       // #926 — use tri-state when available; fall back to boolean for older API
-      const pauseStatus = (stats as { contractPauseStatus?: 'paused' | 'unpaused' | 'unknown' }).contractPauseStatus;
+      const pauseStatus = (stats as { contractPauseStatus?: 'paused' | 'unpaused' | 'unknown' })
+        .contractPauseStatus;
       if (pauseStatus) {
         this.contractPauseStatus.set(pauseStatus);
       } else {

@@ -131,7 +131,9 @@ describe('MarketplaceListComponent', () => {
   });
 
   it('formats price correctly for XLM', () => {
-    expect(component.formatPrice({ ...mockOffer, payment_asset_code: 'XLM', price_raw: '10000000' })).toBe('1 XLM');
+    expect(
+      component.formatPrice({ ...mockOffer, payment_asset_code: 'XLM', price_raw: '10000000' }),
+    ).toBe('1 XLM');
   });
 
   // #340 — pagination boundary tests

@@ -53,7 +53,7 @@ export class CertificatesController {
     dto.certificate_ipfs_hash = record.certificate_ipfs_hash ?? '';
     dto.vintage_year = record.vintage_year ?? null;
     // Issue #943 — expose the ledger anchor; null for legacy records (ledger_seq absent / 0).
-    dto.ledgerSeq = record.ledger_seq ?? null;
+    dto.ledgerSeq = record.ledger_seq && record.ledger_seq > 0 ? record.ledger_seq : null;
     return dto;
   }
 

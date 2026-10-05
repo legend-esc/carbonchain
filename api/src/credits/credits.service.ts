@@ -994,12 +994,10 @@ export class CreditsService {
     }
 
     // Build contract args: (caller: Address, credit_ids: Vec<BytesN<32>>)
+    // Buffers convert to ScVal scvBytes and arrays to scvVec automatically.
     const cleanArgs = [
       nativeToScVal(callerPublicKey, { type: 'address' }),
-      nativeToScVal(
-        creditIds.map((id) => Buffer.from(id, 'hex')),
-        { type: 'vec' },
-      ),
+      nativeToScVal(creditIds.map((id) => Buffer.from(id, 'hex'))),
     ];
 
     const signer = this.keypairService.getAdminKeypair();

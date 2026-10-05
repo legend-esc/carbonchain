@@ -14,7 +14,12 @@ import {
   Header,
   Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+} from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
   RetirementService,
@@ -28,6 +33,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { CertHashReconciler } from './cert-hash-reconciler.service';
+import { CertificateResponseDto } from './dto/certificate-response.dto';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
 import { Idempotent } from '../common/idempotency.interceptor';
 
@@ -168,7 +175,7 @@ export class RetirementController {
   @ApiResponse({
     status: 200,
     description: 'Certificate verification result with on-chain status fields',
-    type: CertificateResponse,
+    type: CertificateResponseDto,
   })
   @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Get('certificates/:id/verify')

@@ -162,10 +162,10 @@ export class AuthService {
 
     // Verify server signature
     const serverKeypair = this.keypairService.getAdminKeypair();
-    const txHash = tx.hash();
+    const txHash = Buffer.from(tx.hash());
     const serverSig = tx.signatures.find((sig) => {
       try {
-        return serverKeypair.verify(txHash, sig.signature());
+        return serverKeypair.verify(txHash, sig.signature);
       } catch {
         return false;
       }
@@ -178,7 +178,7 @@ export class AuthService {
     const clientKeypair = Keypair.fromPublicKey(clientAccount);
     const clientSig = tx.signatures.find((sig) => {
       try {
-        return clientKeypair.verify(txHash, sig.signature());
+        return clientKeypair.verify(txHash, sig.signature);
       } catch {
         return false;
       }
@@ -187,26 +187,25 @@ export class AuthService {
       throw new UnauthorizedException('Client signature missing or invalid');
     }
 
-    // Issue #932 — verify nonce freshness, account binding, and revoke-on-success
-    const nonce = (manageDataOp as { value?: unknown }).value;
-    const nonceKey = `sep10:nonce:${String(nonce)}`;
-    const nonceData = await this.cache.get<{ account: string }>(nonceKey);
-
-    if (!nonceData) {
-    // Issue #254 — Verify nonce freshness and prevent replay attacks.
+    // Issue #254 / #932 — verify nonce freshness and account binding, then
+    // revoke the nonce so it cannot be replayed.
     // The cached key is the base64-encoded nonce (see generateChallenge), so the
     // Buffer value parsed back from the manageData op must be base64-encoded too.
-    const nonceValue = (manageDataOp as any).value as
+    const nonceValue = (manageDataOp as { value?: unknown }).value as
       | Buffer
-      | string
-      | undefined;
-    const nonce =
-      nonceValue instanceof Buffer
-        ? nonceValue.toString('base64')
-        : String(nonceValue);
+      | Uint8Array
+      | string;
+    let nonce: string;
+    if (nonceValue instanceof Buffer) {
+      nonce = nonceValue.toString('base64');
+    } else if (nonceValue instanceof Uint8Array) {
+      nonce = Buffer.from(nonceValue).toString('base64');
+    } else {
+      nonce = String(nonceValue);
+    }
     const nonceKey = `sep10:nonce:${nonce}`;
-    const nonceExists = await this.cache.get<boolean>(nonceKey);
-    if (!nonceExists) {
+    const nonceData = await this.cache.get<{ account: string }>(nonceKey);
+    if (!nonceData) {
       throw new UnauthorizedException(
         'Challenge nonce not found or already used',
       );
@@ -331,17 +330,6 @@ export class AuthService {
   private async revokeFamily(familyId: string): Promise<void> {
     await this.cache.del(`${REFRESH_FAMILY_PREFIX}${familyId}`);
     this.logger.log(`Revoked refresh token family ${familyId}`);
-    const blocklistKey = `${BLOCKLIST_PREFIX}${payload.jti}`;
-    const persisted = await this.cache.set(blocklistKey, true, remainingTtl);
-    if (!persisted) {
-      this.logger.error(
-        `JWT revocation NOT persisted (cache unavailable): jti=${payload.jti}`,
-      );
-      throw new ServiceUnavailableException(
-        'Unable to revoke token: revocation store unavailable. Token remains valid until it expires naturally.',
-      );
-    }
-    this.logger.log(`JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`);
   }
 
   /**
@@ -360,16 +348,33 @@ export class AuthService {
         // malformed — skip
       }
 
-      if (payload?.jti) {
-        const now = Math.floor(Date.now() / 1000);
-        const remainingTtl = Math.max((payload.exp ?? 0) - now, 1);
-        await this.cache.set(
-          `${ACCESS_BLOCKLIST_PREFIX}${payload.jti}`,
-          true,
-          remainingTtl,
+      if (!payload?.jti) {
+        // A non-empty token that carries no jti cannot be revoked. Silently
+        // succeeding would leave the token usable, so fail loudly instead.
+        throw new UnauthorizedException(
+          'Token cannot be revoked: missing jti claim',
         );
-        this.logger.log(`Access token revoked: jti=${payload.jti}`);
       }
+
+      const now = Math.floor(Date.now() / 1000);
+      const remainingTtl = Math.max((payload.exp ?? 0) - now, 1);
+      const blocklistKey = `${ACCESS_BLOCKLIST_PREFIX}${payload.jti}`;
+      const persisted = await this.cache.set(
+        blocklistKey,
+        true,
+        remainingTtl,
+      );
+      if (!persisted) {
+        this.logger.error(
+          `JWT revocation NOT persisted (cache unavailable): jti=${payload.jti}`,
+        );
+        throw new ServiceUnavailableException(
+          'Unable to revoke token: revocation store unavailable. Token remains valid until it expires naturally.',
+        );
+      }
+      this.logger.log(
+        `JWT revoked: jti=${payload.jti}, TTL=${remainingTtl}s`,
+      );
     }
 
     if (refreshToken) {

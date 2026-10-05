@@ -190,6 +190,7 @@ function readProjectKey(data: Record<string, unknown>): string {
 
 function readAsset(data: Record<string, unknown>): string | undefined {
   return (
-    firstString(data, ['price_asset_code', 'asset_code', 'assetCode', 'paymentAssetCode']) ?? undefined
+    firstString(data, ['price_asset_code', 'asset_code', 'assetCode', 'paymentAssetCode']) ??
+    undefined
   );
 }

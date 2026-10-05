@@ -476,7 +476,11 @@ impl Marketplace {
         if ids.len() >= 50 {
             let mut pruned = Vec::new(&env);
             for id in ids.iter() {
-                if let Some(o) = env.storage().persistent().get::<_, Offer>(&DataKey::Offer(id)) {
+                if let Some(o) = env
+                    .storage()
+                    .persistent()
+                    .get::<_, Offer>(&DataKey::Offer(id))
+                {
                     if o.active {
                         pruned.push_back(id);
                     }
@@ -813,9 +817,11 @@ impl Marketplace {
                                 env.storage().persistent().remove(&seller_key);
                             } else {
                                 env.storage().persistent().set(&seller_key, &seller_ids);
-                                env.storage()
-                                    .persistent()
-                                    .extend_ttl(&seller_key, TTL_THRESHOLD, MIN_TTL);
+                                env.storage().persistent().extend_ttl(
+                                    &seller_key,
+                                    TTL_THRESHOLD,
+                                    MIN_TTL,
+                                );
                             }
                         }
                     }

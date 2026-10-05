@@ -8,6 +8,7 @@ import {
   PROJECT_REPOSITORY,
 } from './project.repository';
 import { computeFileCid } from '../common/ipfs-cid.util';
+import client from 'prom-client';
 
 const VALID_CID = computeFileCid(Buffer.from('REDD+ Project docs'));
 
@@ -31,6 +32,7 @@ describe('ProjectsService', () => {
 
   beforeEach(async () => {
     repo = new InMemoryProjectRepository();
+    client.register.clear(); // Clear prom-client registry to avoid "metric already registered" errors
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectsService,

@@ -1,4 +1,4 @@
-import { Module, OnApplicationBootstrap } from '@nestjs/common';
+import { Module, OnApplicationBootstrap, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { CreditsService } from './credits.service';
 import { CreditsController } from './credits.controller';
@@ -10,9 +10,18 @@ import {
 } from './credit.repository';
 import { NonceService } from '../common/nonce.service';
 import { ETagCacheInterceptor } from './etag-cache.interceptor';
+import { RetirementModule } from '../retirement/retirement.module';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule, RetirementModule],
+  imports: [
+    ConfigModule,
+    StellarModule,
+    AuthModule,
+    // RetirementModule depends on CreditsModule (credits repo/service) and vice
+    // versa (CreditsController exposes a retire proxy), so the cycle is broken
+    // with forwardRef on both sides.
+    forwardRef(() => RetirementModule),
+  ],
   controllers: [CreditsController],
   providers: [
     CreditsService,

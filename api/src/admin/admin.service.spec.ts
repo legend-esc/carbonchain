@@ -435,4 +435,3 @@ describe('AdminService', () => {
       expect(mockQb.take).toHaveBeenCalledWith(200);
     });
   });
-});

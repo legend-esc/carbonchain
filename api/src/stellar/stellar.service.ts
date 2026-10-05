@@ -246,8 +246,12 @@ export class StellarService implements OnModuleInit {
   private extractSorobanData(
     tx: Transaction,
   ): xdr.SorobanTransactionData | undefined {
-    const ext = tx.toEnvelope().v1().tx().ext();
-    return ext.switch() === 1 ? ext.sorobanData() : undefined;
+    const envelope = tx.toEnvelope();
+    if (envelope.type !== 'envelopeTypeTx') {
+      return undefined;
+    }
+    const ext = envelope.v1.tx.ext;
+    return ext.type === 'sorobanData' ? ext.sorobanData : undefined;
   }
 
   async invokeContract(
@@ -346,7 +350,7 @@ export class StellarService implements OnModuleInit {
       preparedTx.sign(signerKeypair);
 
       this.logger.debug(
-        `Submitting Soroban tx: method=${method} fee=${fee} hash=${preparedTx.hash().toString('hex').slice(0, 16)}...`,
+        `Submitting Soroban tx: method=${method} fee=${fee} hash=${Buffer.from(preparedTx.hash()).toString('hex').slice(0, 16)}...`,
       );
       this.logger.verbose(
         `Full XDR for method=${method}: ${preparedTx.toEnvelope().toXDR('base64')}`,
@@ -533,7 +537,7 @@ export class StellarService implements OnModuleInit {
     tx.sign(signerKeypair);
 
     this.logger.debug(
-      `Submitting Horizon tx: fee=${feeWithBuffer} hash=${tx.hash().toString('hex').slice(0, 16)}...`,
+      `Submitting Horizon tx: fee=${feeWithBuffer} hash=${Buffer.from(tx.hash()).toString('hex').slice(0, 16)}...`,
     );
     this.logger.verbose(`Full XDR: ${tx.toEnvelope().toXDR('base64')}`);
 
@@ -618,7 +622,7 @@ export class StellarService implements OnModuleInit {
   async getContractData(
     contractId: string,
     key: xdr.ScVal,
-    durability: xdr.ContractDataDurability = xdr.ContractDataDurability.persistent(),
+    durability: xdr.ContractDataDurability = xdr.ContractDataDurability.persistent,
   ): Promise<xdr.ScVal | null> {
     const ledgerKey = xdr.LedgerKey.contractData(
       new xdr.LedgerKeyContractData({
@@ -636,11 +640,11 @@ export class StellarService implements OnModuleInit {
       const entry = response.entries[0];
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       const entryXdr = (entry as any).xdr as string;
-      const contractData = xdr.LedgerEntryData.fromXDR(
-        entryXdr,
-        'base64',
-      ).contractData();
-      return contractData.val();
+      const entryData = xdr.LedgerEntryData.fromXDR(entryXdr, 'base64');
+      if (entryData.type !== 'contractData') {
+        return null;
+      }
+      return entryData.contractData.val;
     }
     return null;
   }
@@ -893,7 +897,7 @@ export class StellarService implements OnModuleInit {
         .resultXdr;
       if (resultXdr && typeof resultXdr === 'string') {
         const result = xdr.TransactionResult.fromXDR(resultXdr, 'base64');
-        return result.result().switch().name ?? 'FAILED';
+        return result.result.type ?? 'FAILED';
       }
     } catch {
       // ignore parse failures — we'll return the raw status

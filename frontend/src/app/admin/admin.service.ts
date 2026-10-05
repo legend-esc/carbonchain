@@ -48,11 +48,7 @@ export class AdminService {
    * @param reason    Human-readable reason for expiry (stored on-chain).
    * @param token     Admin JWT.
    */
-  expireCredit(
-    creditId: string,
-    reason: string,
-    token: string,
-  ): Observable<ExpireCreditResult> {
+  expireCredit(creditId: string, reason: string, token: string): Observable<ExpireCreditResult> {
     return this.http.post<ExpireCreditResult>(
       `${this.baseUrl}/credits/${creditId}/expire`,
       { reason },

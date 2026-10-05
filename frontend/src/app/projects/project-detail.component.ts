@@ -98,7 +98,8 @@ import { ApiService } from '../core/services/api.service';
               <p class="alert alert--warning" role="alert">
                 ⚠ {{ mrvAggregate()!.anomalyCount }} anomalous reading{{
                   mrvAggregate()!.anomalyCount === 1 ? '' : 's'
-                }} detected.
+                }}
+                detected.
               </p>
             }
 
@@ -118,7 +119,9 @@ import { ApiService } from '../core/services/api.service';
               @if (mrvAggregate()!.latestReading) {
                 <div class="mrv-stat">
                   <span class="mrv-stat-label">Latest Reading</span>
-                  <span class="mrv-stat-value">{{ formatDate(mrvAggregate()!.latestReading!.measurement_date) }}</span>
+                  <span class="mrv-stat-value">{{
+                    formatDate(mrvAggregate()!.latestReading!.measurement_date)
+                  }}</span>
                 </div>
               }
             </div>
@@ -139,7 +142,9 @@ import { ApiService } from '../core/services/api.service';
                     [attr.cy]="pt.y"
                     r="3"
                     fill="#1565c0"
-                    [attr.aria-label]="formatDate(pt.measurement_date) + ': ' + formatTonnes(pt.tonnes_sequestered)"
+                    [attr.aria-label]="
+                      formatDate(pt.measurement_date) + ': ' + formatTonnes(pt.tonnes_sequestered)
+                    "
                   />
                   @if (i > 0) {
                     <line
@@ -360,7 +365,12 @@ export class ProjectDetailComponent implements OnInit {
     readingCount: number;
     anomalyCount: number;
     latestReading: MrvDataPoint | null;
-    monthlyBreakdown: { month: string; totalTonnes: string; readingCount: number; anomalyCount: number }[];
+    monthlyBreakdown: {
+      month: string;
+      totalTonnes: string;
+      readingCount: number;
+      anomalyCount: number;
+    }[];
   } | null>(null);
 
   readonly mrvChartWidth = 640;
@@ -421,7 +431,10 @@ export class ProjectDetailComponent implements OnInit {
   }
 
   formatTonnes(raw: string): string {
-    return (Number(BigInt(raw)) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
+    return (
+      (Number(BigInt(raw)) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) +
+      ' t'
+    );
   }
 
   formatDate(ts: number): string {
@@ -430,7 +443,8 @@ export class ProjectDetailComponent implements OnInit {
 
   readonly mrvChartPoints = computed(() => {
     const points = this.mrvHistory();
-    if (points.length === 0) return [] as { x: number; y: number; measurement_date: number; tonnes_sequestered: string }[];
+    if (points.length === 0)
+      return [] as { x: number; y: number; measurement_date: number; tonnes_sequestered: string }[];
 
     const width = this.mrvChartWidth - this.mrvPaddingLeft - this.mrvPaddingRight;
     const height = this.mrvChartHeight - this.mrvPaddingTop - this.mrvPaddingBottom;
@@ -443,7 +457,12 @@ export class ProjectDetailComponent implements OnInit {
       const x = this.mrvPaddingLeft + ((pt.measurement_date - minTs) / tsRange) * width;
       const tonnes = Number(BigInt(pt.tonnes_sequestered));
       const y = this.mrvPaddingTop + height - (maxTonnes > 0 ? (tonnes / maxTonnes) * height : 0);
-      return { x, y, measurement_date: pt.measurement_date, tonnes_sequestered: pt.tonnes_sequestered };
+      return {
+        x,
+        y,
+        measurement_date: pt.measurement_date,
+        tonnes_sequestered: pt.tonnes_sequestered,
+      };
     });
   });
 }

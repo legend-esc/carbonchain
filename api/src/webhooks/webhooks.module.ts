@@ -5,6 +5,7 @@ import { WebhooksService } from './webhooks.service';
 import { WebhooksController } from './webhooks.controller';
 import { WebhookIpGuard } from './webhook-ip.guard';
 import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
+import { WebhookJanitorService } from '../common/webhook-janitor.service';
 
 /**
  * WebhooksModule
@@ -20,7 +21,12 @@ import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
     // Required for @InjectDataSource() in WebhooksService (#911)
     TypeOrmModule.forFeature([]),
   ],
-  providers: [WebhooksService, WebhookIpGuard, WebhookIpAllowlistGuard],
+  providers: [
+    WebhooksService,
+    WebhookJanitorService,
+    WebhookIpGuard,
+    WebhookIpAllowlistGuard,
+  ],
   controllers: [WebhooksController],
   exports: [WebhooksService, WebhookJanitorService],
 })

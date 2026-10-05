@@ -14,7 +14,12 @@ import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { nativeToScVal, scValToNative, rpc } from '@stellar/stellar-sdk';
 import { CreditStatus, RetirementRecord } from '../../../shared';
 import { RetirementEntity } from './retirement.entity';
+import type {
+  CertificateHashStatus,
+  RetirementTxStatus,
+} from './retirement.entity';
 import { CertificateService } from './certificate.service';
+import { CertHashReconciler } from './cert-hash-reconciler.service';
 import type { IRetirementRepository } from './retirement.repository';
 import { RETIREMENT_REPOSITORY } from './retirement.repository';
 import { NonceService } from '../common/nonce.service';
@@ -22,6 +27,16 @@ import type { ICreditRepository } from '../credits/credit.repository';
 import { CREDIT_REPOSITORY, PageResult } from '../credits/credit.repository';
 import { RetireDto, FullRetireDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
+import type {
+  ListRetirementsDto,
+  PaginatedRetirements,
+} from './dto/list-retirements.dto';
+import { parseCreditId } from '../common/credit-id';
+import {
+  extractContractErrorCode,
+  lookupError,
+  mapContractError,
+} from '../stellar/contract-error-mapper';
 import { computeFileCid, cidsMatch } from '../common/ipfs-cid.util';
 import {
   METRICS_EVENT_EMITTER,
@@ -49,6 +64,10 @@ export interface CertificateVerification {
   ledger_sequence?: number;
   /** Issue #544 — IPFS hash of the certificate PDF as committed on-chain. */
   certificate_ipfs_hash?: string;
+  /** Issue #918 — final ledger status of the anchoring transaction. */
+  txStatus: RetirementTxStatus;
+  /** Issue #921 — lifecycle of the certificate-hash write-back to the contract. */
+  certHashStatus: CertificateHashStatus;
 }
 
 /** Payload carried by the CreditRetired application event. */
@@ -89,7 +108,6 @@ export class RetirementService {
     private readonly creditRepo: ICreditRepository,
     @Inject(EVENT_EMITTER) private readonly eventEmitter: IEventEmitter,
     @Optional() private readonly nonceService?: NonceService,
-    @Optional() private readonly certificateService?: CertificateService,
     @Optional()
     @Inject(METRICS_EVENT_EMITTER)
     private readonly metricsEmitter?: EventEmitter,
@@ -316,8 +334,6 @@ export class RetirementService {
         ).toString('hex')
       : 'unknown';
 
-    const txHash = (response as unknown as { hash?: string })?.hash ?? '';
-
     // Issue #943 — capture the ledger sequence number from the Soroban RPC
     // response so the retirement record carries a tamper-proof on-chain anchor.
     // The `ledger` field is present on a SUCCESS response; it may be absent for
@@ -376,28 +392,51 @@ export class RetirementService {
 
     // ── #921 Step 3: Generate certificate and queue hash write ────────────────
     // Run best-effort: a failure here must not roll back a valid retirement.
+    // The reconciler owns the on-chain write (retry + backoff + certHashStatus
+    // audit trail), so this step only produces and pins the PDF.
     let certificateIpfsHash = '';
     try {
-      certificateIpfsHash = await this.certificateService.generateAndPin({
+      const { ipfsHash } = await this.certificateService.generateAndPin({
         retirementId,
         creditId: dto.creditId,
         buyer: dto.buyerPublicKey,
         tonnes: dto.tonnes,
         reason: dto.reason,
         timestamp: entity.retiredAt,
+        // Issue #589 — include vintage year in certificate data
+        ...(dto.vintageYear ? { vintageYear: dto.vintageYear } : {}),
       });
+      certificateIpfsHash = ipfsHash ?? '';
 
-      // Queue the on-chain hash write via CertHashReconciler (with bounded retry)
-      await this.certHashReconciler.writeCertificateHash(
-        retirementId,
-        certificateIpfsHash,
-      );
+      if (certificateIpfsHash) {
+        // Persist the hash to the off-chain index so GET /certificates/:id can
+        // return it without an additional on-chain read.
+        entity.certificateIpfsHash = certificateIpfsHash;
+        await this.retirementRepo.save(entity);
+
+        // Queue the on-chain hash write via CertHashReconciler (bounded retry).
+        await this.certHashReconciler.writeCertificateHash(
+          retirementId,
+          certificateIpfsHash,
+        );
+      } else {
+        this.logger.warn(
+          `Certificate pinned without an IPFS hash for retirement ${retirementId}; ` +
+            `on-chain commit skipped.`,
+        );
+      }
     } catch (certErr: unknown) {
-      // Log failure but do NOT re-throw — the retirement itself succeeded.
-      // The reconciler will retry the hash write on its next scan.
+      // A failed cert-gen must not be silently swallowed: the retirement record
+      // exists on-chain but the caller would receive an empty hash with a 201,
+      // leaving the certificate permanently unrecoverable.
       this.logger.error(
         `Certificate generation/hash write failed for retirement ${retirementId}: ` +
           `${(certErr as Error).message}. Will be reconciled by CertHashReconciler.`,
+      );
+      throw new InternalServerErrorException(
+        `Retirement succeeded on-chain (id: ${retirementId}) but certificate ` +
+          `generation failed: ${(certErr as Error).message}. ` +
+          `Retry POST /credits/${dto.creditId}/retire or contact support.`,
       );
     }
 
@@ -410,91 +449,6 @@ export class RetirementService {
       retiredAt: entity.retiredAt,
     };
     this.eventEmitter.emit('CreditRetired', event);
-
-    // ── Step 3: Generate certificate PDF and pin to IPFS (issue #493) ────────
-    // CertificateService is optional so RetirementService remains testable
-    // without it. Pinata failures are gracefully handled inside
-    // generateAndPin() — the retirement succeeds even when IPFS is down.
-    let certificateIpfsHash: string | null = null;
-    if (this.certificateService) {
-      try {
-        const result = await this.certificateService.generateAndPin({
-          retirementId,
-          creditId: dto.creditId,
-          buyer: dto.buyerPublicKey,
-          tonnes: dto.tonnes,
-          reason: dto.reason,
-          timestamp: entity.retiredAt,
-          // Issue #589 — include vintage year in certificate data
-          ...(dto.vintageYear ? { vintageYear: dto.vintageYear } : {}),
-        });
-        certificateIpfsHash = result.ipfsHash;
-
-        // ── Issue #544: commit the IPFS hash on-chain ─────────────────────
-        // This makes the certificate independently verifiable: anyone can
-        // fetch the hash from the contract, download from IPFS, and confirm
-        // the content hash matches.  We use the admin keypair and the admin's
-        // current nonce.  The call is fire-and-forget with a warning on
-        // failure so that a transient RPC error does not roll back the
-        // retirement itself.
-        try {
-          const adminKeypair = this.keypairService.getAdminKeypair();
-          const adminPublicKey = adminKeypair.publicKey();
-          const adminNonce = await this.stellarService.readContract(
-            this.retirementContractId,
-            'get_nonce',
-            [nativeToScVal(adminPublicKey, { type: 'address' })],
-          );
-          const nonceValue = adminNonce
-            ? BigInt(scValToNative(adminNonce) as number | bigint)
-            : 0n;
-
-          await this.stellarService.invokeContract(
-            this.retirementContractId,
-            'set_certificate_hash',
-            [
-              nativeToScVal(adminPublicKey, { type: 'address' }),
-              nativeToScVal(Buffer.from(retirementId, 'hex'), {
-                type: 'bytes',
-              }),
-              nativeToScVal(certificateIpfsHash, { type: 'string' }),
-              nativeToScVal(nonceValue, { type: 'u64' }),
-            ],
-            adminKeypair,
-          );
-
-          // Persist the hash to the off-chain index so it is returned in
-          // GET /certificates/:id without an additional on-chain read.
-          entity.certificateIpfsHash = certificateIpfsHash ?? '';
-          await this.retirementRepo.save(entity);
-
-          this.logger.log(
-            `Certificate hash committed on-chain for retirement ${retirementId}: ${certificateIpfsHash}`,
-          );
-        } catch (onChainErr) {
-          this.logger.warn(
-            `Failed to commit certificate hash on-chain for retirement ${retirementId}: ` +
-              `${(onChainErr as Error).message}. Hash is in IPFS but not yet on-chain.`,
-          );
-          // Do not rethrow — retirement already succeeded; on-chain commit can
-          // be retried separately via a background job.
-        }
-      } catch (certErr) {
-        // A failed cert-gen must not be silently swallowed: the retirement
-        // record exists on-chain but the caller would receive an empty hash
-        // with a 201, leaving the certificate permanently unrecoverable.
-        // Throw so the caller knows to retry or investigate.
-        this.logger.error(
-          `Certificate generation failed for retirement ${retirementId}: ` +
-            `${(certErr as Error).message}`,
-        );
-        throw new InternalServerErrorException(
-          `Retirement succeeded on-chain (id: ${retirementId}) but certificate ` +
-            `generation failed: ${(certErr as Error).message}. ` +
-            `Retry POST /credits/${dto.creditId}/retire or contact support.`,
-        );
-      }
-    }
 
     // Issue #495 — emit retirement metric event (single retirement).
     this.metricsEmitter?.emit(RETIREMENT_COMPLETED, {
@@ -582,31 +536,27 @@ export class RetirementService {
     }
 
     // #918 — confirm finality before persisting success records
-    let finalityOk = true;
     if (txHash) {
       const confirmation = await this.stellarService.confirmTransaction(txHash);
       if (confirmation.status !== 'SUCCESS') {
+        // The whole batch reverted on-chain — no DB writes and no events.
+        // Surface every credit as failed so callers can reconcile.
+        const msg =
+          confirmation.errorMessage ?? `Contract reverted (${confirmation.status})`;
         this.logger.error(
-          `Batch retire tx ${txHash.slice(0, 16)}... closed as ${confirmation.status}.`,
+          `Batch retire tx ${txHash.slice(0, 16)}... closed as ${confirmation.status}: ${msg}. No records persisted.`,
         );
-        finalityOk = false;
+        return {
+          succeeded: [],
+          failed: dto.creditIds.map((id) => ({
+            id,
+            reason: msg,
+          })),
+        };
       }
-      // The whole batch reverted on-chain — no DB writes and no events.
-      // Surface every credit as failed so callers can reconcile.
-      this.logger.error(
-        `Batch retire contract call failed: ${msg}. No records persisted.`,
-      );
-      return {
-        succeeded: [],
-        failed: dto.creditIds.map((id) => ({
-          id,
-          reason: msg || 'Contract reverted',
-        })),
-      };
     }
 
     const rv = (response as unknown as Record<string, unknown>).returnValue;
-    const txHash = (response as unknown as { hash?: string })?.hash ?? '';
 
     // The contract returns BatchRetireResult { succeeded: Vec<BytesN<32>>, failed: Vec<{credit_id, error_code}> }
     let succeededIds: string[] = [];
@@ -840,21 +790,16 @@ export class RetirementService {
     try {
       this.logger.log(`Verifying certificate: ${certificateId}`);
       const entity = await this.retirementRepo.findById(certificateId);
-      if (entity) {
-        // #921 — include certHashStatus; #918 — include txStatus
-        return {
-          id: entity.id,
-          credit_id: entity.creditId,
-          buyer: entity.buyer,
-          tonnes_retired: entity.tonnesRetired,
-          reason: entity.reason,
-          retired_at: entity.retiredAt,
-          tx_hash: entity.txHash || '',
-          verified: entity.txStatus === 'success',
-          certHashStatus: entity.certHashStatus,
-          txStatus: entity.txStatus,
-        };
+      if (!entity) {
+        throw new NotFoundException(
+          `Certificate ${certificateId} not found or cannot be verified`,
+        );
       }
+
+      // #921 — certHashStatus; #918 — txStatus, surfaced for the verifier UI.
+      const txStatus = entity.txStatus;
+      const certHashStatus = entity.certHashStatus;
+      const retirement = this.entityToRecord(entity);
 
       // Issue #544: fetch the on-chain certificate_ipfs_hash so we can compare
       // it against the content we actually issued.
@@ -929,8 +874,11 @@ export class RetirementService {
         tx_hash: retirement.tx_hash || '',
         verified,
         certificate_ipfs_hash: expectedHash,
+        txStatus,
+        certHashStatus,
       };
     } catch (error: unknown) {
+      if (error instanceof NotFoundException) throw error;
       this.logger.error(
         `Failed to verify certificate ${certificateId}: ${(error as Error).message}`,
       );

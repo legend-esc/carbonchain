@@ -56,7 +56,8 @@ const FOCUSABLE =
       } @else {
         @if (wallet.networkMismatch()) {
           <div class="network-warning" role="alert">
-            ⚠ Your wallet is on the wrong network. Please switch to {{ wallet.expectedNetwork() }} in Freighter.
+            ⚠ Your wallet is on the wrong network. Please switch to
+            {{ wallet.expectedNetwork() }} in Freighter.
           </div>
         }
 
@@ -143,7 +144,7 @@ const FOCUSABLE =
         @if (historyKey()) {
           <section class="card chart-card" aria-label="Price history">
             <app-price-history-chart
-              [series]="eventsStore.historyFor(historyKey())"
+              [series]="eventsStore.historyFor(historyKey()!)"
               [projectLabel]="historyKey()!"
             />
             <button class="btn btn-outline" type="button" (click)="toggleWatch(historyKey()!)">
@@ -155,7 +156,12 @@ const FOCUSABLE =
 
         <!-- Loading skeleton (initial load) -->
         @if (isLoading() && visibleOffers().length === 0) {
-          <div class="skeleton-wrapper" aria-busy="true" role="status" aria-label="Loading listings">
+          <div
+            class="skeleton-wrapper"
+            aria-busy="true"
+            role="status"
+            aria-label="Loading listings"
+          >
             @for (i of skeletonRows; track i) {
               <div class="skeleton-row" aria-hidden="true">
                 <div class="skeleton-cell wide"></div>
@@ -176,61 +182,68 @@ const FOCUSABLE =
           <p class="status">No active listings.</p>
         } @else {
           <div class="table-scroll">
-          <table class="offer-table" aria-label="Marketplace listings">
-            <thead>
-              <tr>
-                <th scope="col">Credit ID</th>
-                <th scope="col">Project</th>
-                <th scope="col">Tonnes</th>
-                <th scope="col">Methodology</th>
-                <th scope="col">Price</th>
-                <th scope="col">Asset</th>
-                <th scope="col">Status</th>
-                <th scope="col">
-                  <label class="asset-picker-inline" for="global-asset-picker">
-                    Payment asset
-                    <select id="global-asset-picker" (change)="onAssetChange($event)">
-                      @for (a of paymentAssets; track a.label) {
-                        <option [value]="a.label" [selected]="a.label === selectedPaymentAsset().label">
-                          {{ a.label }}
-                        </option>
-                      }
-                    </select>
-                  </label>
-                </th>
-                <th scope="col">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (offer of visibleOffers(); track offer.id) {
-                <tr class="offer-row">
-                  <td class="mono">{{ offer.credit_id | slice: 0 : 12 }}…</td>
-                  <td>{{ projectOf(offer) }}</td>
-                  <td>{{ formatTonnes(offer.tonnes_available) }}</td>
-                  <td>{{ offer.methodology ?? '—' }}</td>
-                  <td>{{ formatPrice(offer) }}</td>
-                  <td>
-                    <span class="badge badge-asset">{{ offer.price_asset_label ?? 'XLM' }}</span>
-                  </td>
-                  <td>
-                    <span class="badge" [class]="'badge-' + offer.status">{{ offer.status }}</span>
-                  </td>
-                  <td>
-                    <button
-                      class="btn btn-sm btn-primary"
-                      type="button"
-                      [disabled]="offer.status !== 'open' || buying() === offer.id"
-                      (click)="buy(offer)"
-                      [attr.aria-label]="'Buy credit ' + offer.credit_id + ' for ' + formatPrice(offer)"
-                      [attr.aria-busy]="buying() === offer.id"
-                    >
-                      {{ buying() === offer.id ? 'Buying…' : 'Buy' }}
-                    </button>
-                  </td>
+            <table class="offer-table" aria-label="Marketplace listings">
+              <thead>
+                <tr>
+                  <th scope="col">Credit ID</th>
+                  <th scope="col">Project</th>
+                  <th scope="col">Tonnes</th>
+                  <th scope="col">Methodology</th>
+                  <th scope="col">Price</th>
+                  <th scope="col">Asset</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">
+                    <label class="asset-picker-inline" for="global-asset-picker">
+                      Payment asset
+                      <select id="global-asset-picker" (change)="onAssetChange($event)">
+                        @for (a of paymentAssets; track a.label) {
+                          <option
+                            [value]="a.label"
+                            [selected]="a.label === selectedPaymentAsset().label"
+                          >
+                            {{ a.label }}
+                          </option>
+                        }
+                      </select>
+                    </label>
+                  </th>
+                  <th scope="col">Action</th>
                 </tr>
-              }
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                @for (offer of visibleOffers(); track offer.id) {
+                  <tr class="offer-row">
+                    <td class="mono">{{ offer.credit_id | slice: 0 : 12 }}…</td>
+                    <td>{{ projectOf(offer) }}</td>
+                    <td>{{ formatTonnes(offer.tonnes_available) }}</td>
+                    <td>{{ offer.methodology ?? '—' }}</td>
+                    <td>{{ formatPrice(offer) }}</td>
+                    <td>
+                      <span class="badge badge-asset">{{ offer.price_asset_label ?? 'XLM' }}</span>
+                    </td>
+                    <td>
+                      <span class="badge" [class]="'badge-' + offer.status">{{
+                        offer.status
+                      }}</span>
+                    </td>
+                    <td>
+                      <button
+                        class="btn btn-sm btn-primary"
+                        type="button"
+                        [disabled]="offer.status !== 'open' || buying() === offer.id"
+                        (click)="buy(offer)"
+                        [attr.aria-label]="
+                          'Buy credit ' + offer.credit_id + ' for ' + formatPrice(offer)
+                        "
+                        [attr.aria-busy]="buying() === offer.id"
+                      >
+                        {{ buying() === offer.id ? 'Buying…' : 'Buy' }}
+                      </button>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
           </div>
 
           <!-- Load More -->
@@ -247,7 +260,9 @@ const FOCUSABLE =
               </button>
             } @else {
               <p class="end-of-list">
-                All {{ visibleOffers().length }} listing{{ visibleOffers().length === 1 ? '' : 's' }}
+                All {{ visibleOffers().length }} listing{{
+                  visibleOffers().length === 1 ? '' : 's'
+                }}
                 loaded
               </p>
             }
@@ -310,8 +325,6 @@ const FOCUSABLE =
         z-index: 11;
       }
     `,
-  ],
-  styles: [
     `
       .marketplace {
         max-width: 1100px;
@@ -657,24 +670,6 @@ export class MarketplaceComponent implements OnInit {
     maxTonnes: '',
   };
 
-  onOfferSelected(offer: Offer): void {
-    this.selectedOffer.set(offer);
-  }
-
-  onBuyComplete(offer: Offer): void {
-    this.selectedOffer.set(null);
-    // Reload listings after a successful purchase
-    const pk = this.wallet.publicKey();
-    if (pk) void this.store.loadOffersBySeller(pk);
-  }
-
-  onCancelled(offer: Offer): void {
-    this.selectedOffer.set(null);
-    // Reload listings after cancellation
-    const pk = this.wallet.publicKey();
-    if (pk) void this.store.loadOffersBySeller(pk);
-  }
-
   /** Selected payment asset for the Buy action. Defaults to XLM. */
   readonly selectedPaymentAsset = signal(this.paymentAssets[0]);
 
@@ -889,7 +884,7 @@ export class MarketplaceComponent implements OnInit {
     try {
       // The buy flow: the offer-detail dialog builds the XDR client-side and
       // has the wallet sign it (see OfferDetailComponent.executeBuy).
-      await firstValueFrom(this.api.buyOffer(offer.id, this.auth.token() ?? ''));
+      await firstValueFrom(this.api.buyOffer(Number(offer.id), this.auth.token() ?? ''));
       this.toast.show('Purchase submitted successfully!', 'success');
       await this.load();
     } catch (err) {
@@ -906,7 +901,8 @@ export class MarketplaceComponent implements OnInit {
 
   formatXlm(stroops: string): string {
     return (
-      (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' XLM'
+      (Number(stroops) / 10_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
+      ' XLM'
     );
   }
 

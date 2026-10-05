@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DeepPartial, Repository } from 'typeorm';
 import { VerifierApplicationEntity, VerifierApplicationStatus } from './verifier-application.entity';
 
 export const VERIFIER_APPLICATION_REPOSITORY = 'VERIFIER_APPLICATION_REPOSITORY';
@@ -8,6 +8,7 @@ export const VERIFIER_APPLICATION_REPOSITORY = 'VERIFIER_APPLICATION_REPOSITORY'
 export interface IVerifierApplicationRepository {
   findAll(): Promise<VerifierApplicationEntity[]>;
   findByAddress(address: string): Promise<VerifierApplicationEntity | null>;
+  create(application: DeepPartial<VerifierApplicationEntity>): VerifierApplicationEntity;
   save(application: VerifierApplicationEntity): Promise<VerifierApplicationEntity>;
   saveAll(applications: VerifierApplicationEntity[]): Promise<VerifierApplicationEntity[]>;
   updateStatus(address: string, status: VerifierApplicationStatus, reviewedBy: string | null): Promise<VerifierApplicationEntity | null>;
@@ -26,6 +27,10 @@ export class VerifierApplicationRepository implements IVerifierApplicationReposi
 
   async findByAddress(address: string): Promise<VerifierApplicationEntity | null> {
     return this.repo.findOne({ where: { address } });
+  }
+
+  create(application: DeepPartial<VerifierApplicationEntity>): VerifierApplicationEntity {
+    return this.repo.create(application);
   }
 
   async save(application: VerifierApplicationEntity): Promise<VerifierApplicationEntity> {

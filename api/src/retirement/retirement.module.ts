@@ -1,4 +1,4 @@
-import { Module, OnApplicationBootstrap } from '@nestjs/common';
+import { Module, OnApplicationBootstrap, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitter } from 'events';
 import { RetirementService, EVENT_EMITTER } from './retirement.service';
@@ -17,7 +17,12 @@ import {
 import { NonceService } from '../common/nonce.service';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule, CreditsModule],
+  imports: [
+    ConfigModule,
+    StellarModule,
+    AuthModule,
+    forwardRef(() => CreditsModule),
+  ],
   controllers: [
     RetirementController,
     CreditRetirementController,
@@ -26,6 +31,7 @@ import { NonceService } from '../common/nonce.service';
   providers: [
     RetirementService,
     CertificateService,
+    CertHashReconciler,
     NonceService,
     { provide: RETIREMENT_REPOSITORY, useClass: InMemoryRetirementRepository },
     {

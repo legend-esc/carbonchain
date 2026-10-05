@@ -63,9 +63,9 @@ describe('[e2e] RetireComponent — wallet signing paths (issue #970)', () => {
   function buildApiMock() {
     return {
       retireCredit: vi.fn().mockReturnValue(of({ retirementId: RETIREMENT_ID })),
-      batchRetire: vi.fn().mockReturnValue(
-        of({ succeeded: [RETIREMENT_ID, 'retire-cert-2'], failed: [] }),
-      ),
+      batchRetire: vi
+        .fn()
+        .mockReturnValue(of({ succeeded: [RETIREMENT_ID, 'retire-cert-2'], failed: [] })),
     };
   }
 
@@ -150,7 +150,9 @@ describe('[e2e] RetireComponent — wallet signing paths (issue #970)', () => {
   it('userRejected: shows friendly cancellation message, does not navigate, does not retry', async () => {
     apiMock.retireCredit = vi
       .fn()
-      .mockReturnValue(throwError(() => new WalletError('User rejected the request', 'userRejected')));
+      .mockReturnValue(
+        throwError(() => new WalletError('User rejected the request', 'userRejected')),
+      );
     const comp = buildReadyToSubmit();
 
     await comp.submit();
@@ -198,7 +200,9 @@ describe('[e2e] RetireComponent — wallet signing paths (issue #970)', () => {
   it('timeout: shows timeout message and stays on step 3', async () => {
     apiMock.retireCredit = vi
       .fn()
-      .mockReturnValue(throwError(() => new WalletError('Wallet did not respond within 60s.', 'timeout')));
+      .mockReturnValue(
+        throwError(() => new WalletError('Wallet did not respond within 60s.', 'timeout')),
+      );
     const comp = buildReadyToSubmit();
 
     await comp.submit();
@@ -228,7 +232,9 @@ describe('[e2e] RetireComponent — wallet signing paths (issue #970)', () => {
     wallet.simulateDisconnect();
     apiMock.retireCredit = vi
       .fn()
-      .mockReturnValue(throwError(() => new WalletError('Wallet is not connected.', 'unsupported')));
+      .mockReturnValue(
+        throwError(() => new WalletError('Wallet is not connected.', 'unsupported')),
+      );
     const comp = buildReadyToSubmit();
 
     await comp.submit();
@@ -272,9 +278,11 @@ describe('[e2e] RetireComponent — wallet signing paths (issue #970)', () => {
     // Replace retireCredit with a Promise that never resolves so we can
     // inspect the in-flight state synchronously after calling submit().
     let resolve!: (value: unknown) => void;
-    apiMock.retireCredit = vi
-      .fn()
-      .mockReturnValue(new Promise((r) => { resolve = r; }));
+    apiMock.retireCredit = vi.fn().mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
 
     const comp = buildReadyToSubmit();
 

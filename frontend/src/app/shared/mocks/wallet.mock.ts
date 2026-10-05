@@ -43,7 +43,8 @@
 
 import { signal } from '@angular/core';
 import { Subject } from 'rxjs';
-import { WalletError, WalletErrorType } from '../../app/core/services/wallet-errors';
+import { vi } from 'vitest';
+import { WalletError, WalletErrorType } from '../../core/services/wallet-errors';
 
 /** The set of outcomes the mock's `signTransaction` / `signAuthEntry` can produce. */
 export type WalletMockOutcome =
@@ -67,7 +68,9 @@ export const MOCK_PUBLIC_KEY = 'GABC123XYZ_MOCK_WALLET_ADDRESS_AAAAA';
  * The return value is intended to be passed directly to Angular's DI:
  *   `{ provide: StellarWalletService, useValue: buildWalletMock() }`
  */
-export function buildWalletMock(overrides: Partial<{ publicKey: string; network: 'testnet' | 'mainnet' }> = {}) {
+export function buildWalletMock(
+  overrides: Partial<{ publicKey: string; network: 'testnet' | 'mainnet' }> = {},
+) {
   const pk = overrides.publicKey ?? MOCK_PUBLIC_KEY;
 
   // ── Mutable outcome controls ─────────────────────────────────────────────

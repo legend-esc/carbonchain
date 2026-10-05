@@ -59,7 +59,11 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           <legend>Methodologies</legend>
           @for (m of methodOptions; track m) {
             <label class="checkbox-label">
-              <input type="checkbox" [checked]="selectedMethods().includes(m)" (change)="toggleMethod(m)" />
+              <input
+                type="checkbox"
+                [checked]="selectedMethods().includes(m)"
+                (change)="toggleMethod(m)"
+              />
               {{ m }}
             </label>
           }
@@ -69,7 +73,11 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
           <legend>Geographies</legend>
           @for (g of geoOptions; track g) {
             <label class="checkbox-label">
-              <input type="checkbox" [checked]="selectedGeos().includes(g)" (change)="toggleGeo(g)" />
+              <input
+                type="checkbox"
+                [checked]="selectedGeos().includes(g)"
+                (change)="toggleGeo(g)"
+              />
               {{ g }}
             </label>
           }
@@ -123,17 +131,25 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
         <div class="stake-preview" *ngIf="stakeAmountXlm !== null && stakeAmountXlm >= 1000">
           <h3>Stake Commitment Preview</h3>
           <p>
-            You are committing <strong>{{ stakeAmountXlm }} XLM</strong> as verifier stake.
-            This amount will be locked on-chain and subject to slashing if you approve fraudulent
+            You are committing <strong>{{ stakeAmountXlm }} XLM</strong> as verifier stake. This
+            amount will be locked on-chain and subject to slashing if you approve fraudulent
             credits.
           </p>
         </div>
 
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit" [disabled]="submitting() || form.invalid || (stakeAmountXlm !== null && stakeAmountXlm < 1000)">
+          <button
+            class="btn btn-primary"
+            type="submit"
+            [disabled]="
+              submitting() || form.invalid || (stakeAmountXlm !== null && stakeAmountXlm < 1000)
+            "
+          >
             {{ submitting() ? 'Submitting…' : 'Submit Application' }}
           </button>
-          <button type="button" class="btn btn-ghost" (click)="router.navigate(['/dashboard'])">Cancel</button>
+          <button type="button" class="btn btn-ghost" (click)="router.navigate(['/dashboard'])">
+            Cancel
+          </button>
         </div>
       </form>
     </div>
@@ -268,7 +284,7 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
 export class VerifierApplyComponent {
   private readonly api = inject(ApiService);
   private readonly toast = inject(ToastService);
-  private readonly router = inject(Router);
+  public readonly router = inject(Router);
 
   readonly methodOptions = METHODOLOGY_OPTIONS;
   readonly geoOptions = GEOGRAPHY_OPTIONS;
@@ -286,17 +302,27 @@ export class VerifierApplyComponent {
   stakeAmountXlm: number | null = null;
 
   toggleMethod(m: string): void {
-    this.selectedMethods.update((list) => (list.includes(m) ? list.filter((x) => x !== m) : [...list, m]));
+    this.selectedMethods.update((list) =>
+      list.includes(m) ? list.filter((x) => x !== m) : [...list, m],
+    );
   }
 
   toggleGeo(g: string): void {
-    this.selectedGeos.update((list) => (list.includes(g) ? list.filter((x) => x !== g) : [...list, g]));
+    this.selectedGeos.update((list) =>
+      list.includes(g) ? list.filter((x) => x !== g) : [...list, g],
+    );
   }
 
   async submit(): Promise<void> {
     this.error.set(null);
     this.success.set(null);
-    if (!this.address || !this.name || !this.documentsCid || !this.stakeToken || this.stakeAmountXlm === null) {
+    if (
+      !this.address ||
+      !this.name ||
+      !this.documentsCid ||
+      !this.stakeToken ||
+      this.stakeAmountXlm === null
+    ) {
       this.error.set('Please fill in all required fields.');
       return;
     }

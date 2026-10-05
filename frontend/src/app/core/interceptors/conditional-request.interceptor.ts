@@ -1,4 +1,10 @@
-import { HttpInterceptorFn, HttpRequest, HttpHandler, HttpEvent, HttpResponse } from '@angular/common/http';
+import {
+  HttpInterceptorFn,
+  HttpRequest,
+  HttpHandlerFn,
+  HttpEvent,
+  HttpResponse,
+} from '@angular/common/http';
 import { inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { filter, map, tap } from 'rxjs/operators';
@@ -28,9 +34,12 @@ function isCacheable(req: HttpRequest<unknown>): boolean {
   return url.includes('/portfolio') || url.includes('/marketplace') || url.includes('/retirement');
 }
 
-export const conditionalRequestInterceptor: HttpInterceptorFn = (req: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> => {
+export const conditionalRequestInterceptor: HttpInterceptorFn = (
+  req: HttpRequest<unknown>,
+  next: HttpHandlerFn,
+): Observable<HttpEvent<unknown>> => {
   if (!isCacheable(req)) {
-    return next.handle(req);
+    return next(req);
   }
 
   const cached = cache.get(req.url);
@@ -46,7 +55,7 @@ export const conditionalRequestInterceptor: HttpInterceptorFn = (req: HttpReques
       })
     : req;
 
-  return next.handle(cloned).pipe(
+  return next(cloned).pipe(
     filter((event) => event instanceof HttpResponse),
     tap((event) => {
       const response = event as HttpResponse<unknown>;
@@ -69,6 +78,7 @@ export const conditionalRequestInterceptor: HttpInterceptorFn = (req: HttpReques
           body: cached.body,
           status: 200,
           statusText: 'OK (cached)',
+          url: response.url ?? '',
         });
       }
       return response;

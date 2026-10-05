@@ -1,19 +1,31 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
+  ForbiddenException,
   Get,
   Header,
   HttpCode,
   Param,
   Post,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { StrKey } from '@stellar/stellar-sdk';
-import { VerifiersService, VerifierInfo, VerifierApplicationEntity } from './verifiers.service';
-import { CreditMetadata, VerifierReputation, VerifierApplicationStatus } from '../../../shared';
+import { VerifiersService, VerifierInfo } from './verifiers.service';
+import {
+  VerifierApplicationEntity,
+  VerifierApplicationStatus,
+} from './verifier-application.entity';
+import { CreditMetadata, VerifierReputation } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../admin/admin.guard';
 

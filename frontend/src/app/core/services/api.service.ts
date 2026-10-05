@@ -1,7 +1,13 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { CreditMetadata, ProjectProfile, Offer, VerifierReputation, VerifierApplicationEntity } from '@shared';
+import {
+  CreditMetadata,
+  ProjectProfile,
+  Offer,
+  VerifierReputation,
+  VerifierApplicationEntity,
+} from '@shared';
 
 // ---------------------------------------------------------------------------
 // Response types mirroring the NestJS controllers
@@ -54,8 +60,16 @@ export interface ProvenanceEvent {
 /** On-chain verification result returned by GET /certificates/:id/verify */
 export interface CertificateVerification {
   id: string;
+  credit_id: string;
+  buyer: string;
+  tonnes_retired: string;
+  reason: string;
+  retired_at: number;
+  tx_hash: string;
   verified: boolean;
-  certificate_ipfs_hash?: string;
+  ledger_sequence?: number;
+  ipfs_status?: 'available' | 'unavailable' | 'unknown';
+  mismatch_reason?: string;
 }
 
 /**
@@ -142,6 +156,18 @@ export class ApiService {
     return this.http.post<{ childCredit1: string; childCredit2: string }>(
       `${this.baseUrl}/credits/${creditId}/split`,
       { splitTonnes },
+      { headers: this.authHeaders(token) },
+    );
+  }
+
+  /** POST /credits/merge */
+  mergeCredits(
+    creditIds: string[],
+    token: string,
+  ): Observable<{ mergedCreditId: string }> {
+    return this.http.post<{ mergedCreditId: string }>(
+      `${this.baseUrl}/credits/merge`,
+      { creditIds },
       { headers: this.authHeaders(token) },
     );
   }
@@ -243,11 +269,15 @@ export class ApiService {
   }
 
   /** GET /marketplace/offer/:id/xdr — get unsigned buy XDR for wallet signing */
-  getBuyOfferXdr(offerId: number, buyerPublicKey: string, token: string): Observable<{ xdr: string }> {
-    return this.http.get<{ xdr: string }>(
-      `${this.baseUrl}/marketplace/offer/${offerId}/xdr`,
-      { params: { buyerPublicKey }, headers: this.authHeaders(token) },
-    );
+  getBuyOfferXdr(
+    offerId: number,
+    buyerPublicKey: string,
+    token: string,
+  ): Observable<{ xdr: string }> {
+    return this.http.get<{ xdr: string }>(`${this.baseUrl}/marketplace/offer/${offerId}/xdr`, {
+      params: { buyerPublicKey },
+      headers: this.authHeaders(token),
+    });
   }
 
   /** DELETE /marketplace/offer/:id/seller/:address — cancel offer */
@@ -395,12 +425,19 @@ export class ApiService {
     projectId: string,
     page = 1,
     pageSize = 20,
-  ): Observable<{ data: import('@shared').MrvDataPoint[]; total: number; page: number; pageSize: number }> {
+  ): Observable<{
+    data: import('@shared').MrvDataPoint[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
     const params: Record<string, string> = { page: String(page), pageSize: String(pageSize) };
-    return this.http.get<{ data: import('@shared').MrvDataPoint[]; total: number; page: number; pageSize: number }>(
-      `${this.baseUrl}/oracle/${projectId}/history`,
-      { params },
-    );
+    return this.http.get<{
+      data: import('@shared').MrvDataPoint[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }>(`${this.baseUrl}/oracle/${projectId}/history`, { params });
   }
 
   /** GET /oracle/:projectId/aggregate */
@@ -409,14 +446,24 @@ export class ApiService {
     readingCount: number;
     anomalyCount: number;
     latestReading: import('@shared').MrvDataPoint | null;
-    monthlyBreakdown: { month: string; totalTonnes: string; readingCount: number; anomalyCount: number }[];
+    monthlyBreakdown: {
+      month: string;
+      totalTonnes: string;
+      readingCount: number;
+      anomalyCount: number;
+    }[];
   }> {
     return this.http.get<{
       totalTonnes: string;
       readingCount: number;
       anomalyCount: number;
       latestReading: import('@shared').MrvDataPoint | null;
-      monthlyBreakdown: { month: string; totalTonnes: string; readingCount: number; anomalyCount: number }[];
+      monthlyBreakdown: {
+        month: string;
+        totalTonnes: string;
+        readingCount: number;
+        anomalyCount: number;
+      }[];
     }>(`${this.baseUrl}/oracle/${projectId}/aggregate`);
   }
 
@@ -429,22 +476,33 @@ export class ApiService {
     stakeToken: string;
     stakeAmount: string;
   }): Observable<VerifierApplicationEntity> {
-    return this.http.post<VerifierApplicationEntity>(`${this.baseUrl}/verifiers/applications`, body);
+    return this.http.post<VerifierApplicationEntity>(
+      `${this.baseUrl}/verifiers/applications`,
+      body,
+    );
   }
 
   /** GET /verifiers/applications/:address */
   getVerifierApplication(address: string): Observable<VerifierApplicationEntity | null> {
-    return this.http.get<VerifierApplicationEntity | null>(`${this.baseUrl}/verifiers/applications/${address}`);
+    return this.http.get<VerifierApplicationEntity | null>(
+      `${this.baseUrl}/verifiers/applications/${address}`,
+    );
   }
 
   /** GET /verifiers/admin/applications */
-  listVerifierApplications(token: string, status?: string): Observable<VerifierApplicationEntity[]> {
+  listVerifierApplications(
+    token: string,
+    status?: string,
+  ): Observable<VerifierApplicationEntity[]> {
     const params: Record<string, string> = {};
     if (status) params['status'] = status;
-    return this.http.get<VerifierApplicationEntity[]>(`${this.baseUrl}/verifiers/admin/applications`, {
-      params,
-      headers: this.authHeaders(token),
-    });
+    return this.http.get<VerifierApplicationEntity[]>(
+      `${this.baseUrl}/verifiers/admin/applications`,
+      {
+        params,
+        headers: this.authHeaders(token),
+      },
+    );
   }
 
   /** POST /verifiers/admin/applications/:address/review */
@@ -461,7 +519,7 @@ export class ApiService {
   }
 
   /**
-    * POST /verifiers/:address/stake/deposit
+   * POST /verifiers/:address/stake/deposit
    * Deposit stake on behalf of a verifier. Requires JWT.
    */
   depositStake(

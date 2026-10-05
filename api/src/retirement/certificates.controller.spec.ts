@@ -216,7 +216,7 @@ describe('CertificatesController', () => {
       expect(result.credit_id).toBe('CREDIT1');
       expect(result.buyer).toBe('GBUYER');
       expect(result.tonnes_retired).toBe('100');
-      expect(result.reason).toBe('offset');
+      expect(result.reason).toBe('ok');
       expect(result.retired_at).toBe(1700000000);
       expect(result.tx_hash).toBe('TX');
     });

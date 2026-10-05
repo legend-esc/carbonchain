@@ -259,11 +259,12 @@ impl Retirement {
 
         // Cross-contract: if partial retirement, split credit first then mark retired child
         let effective_credit_id: BytesN<32> = if tonnes < credit.tonnes {
-            let (child_to_retire, _child_remaining): (BytesN<32>, BytesN<32>) = env.invoke_contract(
-                &registry_id,
-                &Symbol::new(&env, "split_credit"),
-                (buyer.clone(), credit_id.clone(), tonnes, nonce).into_val(&env),
-            );
+            let (child_to_retire, _child_remaining): (BytesN<32>, BytesN<32>) = env
+                .invoke_contract(
+                    &registry_id,
+                    &Symbol::new(&env, "split_credit"),
+                    (buyer.clone(), credit_id.clone(), tonnes, nonce).into_val(&env),
+                );
             child_to_retire
         } else {
             credit_id.clone()
