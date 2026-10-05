@@ -48,7 +48,7 @@
     "@angular/build": "^21.2.22",
     "@angular/cli": "^21.2.22",
     "@angular/compiler-cli": "^21.2.22",
-    "@types/jasmine": "^6.0.0",
+    "@types/jasmine": "^7.0.0",
     "@vitest/coverage-v8": "4.1.8",
     "axe-core": "4.11.0",
     "eslint": "^9.39.4",
