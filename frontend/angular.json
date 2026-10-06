@@ -59,9 +59,7 @@
                 "styles": false,
                 "hidden": true
               },
-              "define": {
-                "__SENTRY_RELEASE__": "\"0.0.0+dev\""
-              }
+              "define": {}
             },
             "development": {
               "optimization": false,

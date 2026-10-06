@@ -91,7 +91,7 @@ jobs:
           key: ${{ runner.os }}-cargo-audit-0.21.2
       - name: Install cargo-audit
         if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --locked --version 0.21.2
+        run: cargo install cargo-audit --locked
       - name: Run cargo audit
         run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124
       # #192 — zero-warning clippy policy across all four contracts.
@@ -254,6 +254,17 @@ jobs:
           cache-dependency-path: api/package-lock.json
       - name: Install Dependencies
         run: cd api && npm install --legacy-peer-deps
+      # Wait for PostgreSQL to be ready (health check may pass before DB is fully ready)
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U postgres; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
       # #974 — audit production dependencies; fail on high/critical, annotate moderate.
       # Allowlisted exceptions live in api/.audit-allowlist.json and must be reviewed in PR.
       - name: npm audit (api)
@@ -445,11 +456,11 @@ jobs:
         id: cache-cargo-audit-sec
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ~/.cargo/bin/cargo-audit
-          key: ${{ runner.os }}-cargo-audit-0.21.2
+path: ~/.cargo/bin/cargo-audit
+        key: ${{ runner.os }}-cargo-audit
       - name: Install cargo-audit
         if: steps.cache-cargo-audit-sec.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --locked --version 0.21.2
+        run: cargo install cargo-audit --locked
       - name: Run cargo audit
         run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124
 
@@ -517,7 +528,7 @@ jobs:
           RELEASE="${{ env.SENTRY_RELEASE }}"
           echo "Asserting release '${RELEASE}' is present in the compiled bundle…"
           # Search all JS chunks in the production output directory.
-          FOUND=$(grep -rl "${RELEASE}" frontend/dist/carbonchain-frontend/browser/*.js 2>/dev/null | wc -l)
+          FOUND=$(grep -rl "${RELEASE}" frontend/dist/frontend/browser/*.js 2>/dev/null | wc -l)
           if [ "$FOUND" -eq "0" ]; then
             echo "::error::Release '${RELEASE}' not found in compiled bundle. The Sentry release baked into the bundle differs from the value used for source-map upload."
             exit 1
@@ -550,7 +561,7 @@ jobs:
             --org "$SENTRY_ORG" --project "$SENTRY_PROJECT"
 
           npx @sentry/cli@2 releases files "$RELEASE" upload-sourcemaps \
-            frontend/dist/carbonchain-frontend/browser \
+            frontend/dist/frontend/browser \
             --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \
             --url-prefix '~/browser' \
             --rewrite
