@@ -46,7 +46,7 @@ use crate::storage::{
     decrement_verifier_pending, get_admin, get_approved_stake_token, get_audit_log, get_credit,
     get_credit_approvals, get_credit_by_project_vintage, get_credit_verifiers,
     get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies, get_min_stake,
-    get_next_verifier_id, get_nonce, get_pending_credits, get_pending_credits_by_verifier,
+    get_next_verifier_id, get_nonce, get_pending_credits_by_verifier,
     get_required_approvals, get_retirement_contract, get_session, get_session_op_count,
     get_total_credits, get_unbonding_request, get_verifier_id, get_verifier_reputation,
     get_verifier_services_for, get_verifier_stake, get_verifier_stake_token, get_verifiers,
