@@ -176,8 +176,7 @@ describe('MarketplaceService — mapMarketplaceError', () => {
         BadGatewayException,
       );
     });
-
-});
+  });
 
   // === #930 — keyset pagination
 

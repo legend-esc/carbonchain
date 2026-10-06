@@ -81,7 +81,12 @@ describe('WebhooksController', () => {
 
   describe('getWebhook', () => {
     it('returns a single webhook without secret', async () => {
-      const webhook = { id: '1', url: 'https://a.com', events: ['e1'], active: true };
+      const webhook = {
+        id: '1',
+        url: 'https://a.com',
+        events: ['e1'],
+        active: true,
+      };
       mockWebhooksService.getWebhook.mockResolvedValueOnce(webhook);
 
       const result = await controller.getWebhook('1');
@@ -105,7 +110,9 @@ describe('WebhooksController', () => {
       const result = await controller.deleteWebhook('webhook_123');
 
       expect(result.success).toBe(true);
-      expect(mockWebhooksService.deleteWebhook).toHaveBeenCalledWith('webhook_123');
+      expect(mockWebhooksService.deleteWebhook).toHaveBeenCalledWith(
+        'webhook_123',
+      );
     });
 
     it('returns false for nonexistent webhook', async () => {

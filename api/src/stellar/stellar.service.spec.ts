@@ -72,11 +72,13 @@ function buildModule(
       {
         provide: RedisSequenceNumberManager,
         useFactory: () => ({
-          getNextSequenceNumberAtomic: jest.fn().mockImplementation(
-            async (_publicKey: string, fetchFn: () => Promise<number>) => {
-              return fetchFn();
-            },
-          ),
+          getNextSequenceNumberAtomic: jest
+            .fn()
+            .mockImplementation(
+              async (_publicKey: string, fetchFn: () => Promise<number>) => {
+                return fetchFn();
+              },
+            ),
           cacheSequenceNumber: jest.fn().mockResolvedValue(undefined),
           reset: jest.fn().mockResolvedValue(undefined),
         }),
@@ -390,11 +392,16 @@ describe('StellarService - sequence number integration', () => {
           {
             provide: RedisSequenceNumberManager,
             useFactory: () => ({
-              getNextSequenceNumberAtomic: jest.fn().mockImplementation(
-                async (_publicKey: string, fetchFn: () => Promise<number>) => {
-                  return fetchFn();
-                },
-              ),
+              getNextSequenceNumberAtomic: jest
+                .fn()
+                .mockImplementation(
+                  async (
+                    _publicKey: string,
+                    fetchFn: () => Promise<number>,
+                  ) => {
+                    return fetchFn();
+                  },
+                ),
               cacheSequenceNumber: jest.fn().mockResolvedValue(undefined),
               reset: jest.fn().mockResolvedValue(undefined),
             }),

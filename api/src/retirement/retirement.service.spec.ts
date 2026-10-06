@@ -282,7 +282,10 @@ describe('RetirementService — contract error handling (issue #258)', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(UnprocessableEntityException);
       const response = (error as UnprocessableEntityException).getResponse();
-      expect(response).toEqual({ error: 'Contract error code 123: paused', code: 123 });
+      expect(response).toEqual({
+        error: 'Contract error code 123: paused',
+        code: 123,
+      });
     }
   });
 
@@ -404,4 +407,3 @@ describe('RetirementService — retireCredit (issue #403)', () => {
     expect(credit!.status).toBe(CreditStatus.Retired);
   });
 });
-

@@ -35,13 +35,11 @@ describe('AdminController', () => {
               .mockResolvedValue({ registered: true, address: 'GVER1' }),
             suspendVerifier: jest.fn().mockResolvedValue({ suspended: true }),
             // #924 — flagCredit and configureVerifier throw 501
-            flagCredit: jest
-              .fn()
-              .mockResolvedValue({
-                flagged: true,
-                creditId: 'abc',
-                status: CreditStatus.Flagged,
-              }),
+            flagCredit: jest.fn().mockResolvedValue({
+              flagged: true,
+              creditId: 'abc',
+              status: CreditStatus.Flagged,
+            }),
             configureVerifier: jest
               .fn()
               .mockRejectedValue(new NotImplementedException()),

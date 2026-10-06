@@ -34,7 +34,7 @@ describe('AdminService', () => {
   };
 
   const mockAdminKeypair = Keypair.random();
-const mockCredit = { id: 'test-credit', status: 'Active' };
+  const mockCredit = { id: 'test-credit', status: 'Active' };
 
   const mockRetirementService = {
     save: jest.fn(),
@@ -62,7 +62,7 @@ const mockCredit = { id: 'test-credit', status: 'Active' };
       createQueryBuilder: jest.fn().mockReturnValue(mockQb),
     };
 
-const module: TestingModule = await Test.createTestingModule({
+    const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
         {
@@ -283,130 +283,134 @@ const module: TestingModule = await Test.createTestingModule({
     );
   });
 
-// ── Other ─────────────────────────────────────────────────────────────────
+  // ── Other ─────────────────────────────────────────────────────────────────
 
-describe('pauseContract', () => {
-  it('should invoke pause on the credit registry and return paused: true', async () => {
-    const result = await service.pauseContract(mockAuditCtx);
-    expect(result).toEqual({ paused: true });
-    expect(stellarService.invokeContract).toHaveBeenCalledWith(
-      expect.any(String),
-      'pause',
-      expect.any(Array),
-      mockAdminKeypair,
-    );
-  });
+  describe('pauseContract', () => {
+    it('should invoke pause on the credit registry and return paused: true', async () => {
+      const result = await service.pauseContract(mockAuditCtx);
+      expect(result).toEqual({ paused: true });
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'pause',
+        expect.any(Array),
+        mockAdminKeypair,
+      );
+    });
 
-  it('should write audit row with action pause_contract', async () => {
-    await service.pauseContract(mockAuditCtx);
-    expect(auditRepo.save).toHaveBeenCalledTimes(1);
-    const createArg = auditRepo.create.mock.calls[0][0];
-    expect(createArg.action).toBe('pause_contract');
-    expect(createArg.actor).toBe(mockAuditCtx.actor);
-  });
-});
-
-describe('unpauseContract', () => {
-  it('should invoke unpause on the credit registry and return paused: false', async () => {
-    const result = await service.unpauseContract(mockAuditCtx);
-    expect(result).toEqual({ paused: false });
-    expect(stellarService.invokeContract).toHaveBeenCalledWith(
-      expect.any(String),
-      'unpause',
-      expect.any(Array),
-      mockAdminKeypair,
-    );
-  });
-
-  it('should write audit row with action unpause_contract', async () => {
-    await service.unpauseContract(mockAuditCtx);
-    const createArg = auditRepo.create.mock.calls[0][0];
-    expect(createArg.action).toBe('unpause_contract');
-  });
-});
-
-describe('registerMethodology', () => {
-  it('should return registered: true with the provided name and description', () => {
-    const result = service.registerMethodology(
-      'Gold Standard',
-      'Gold Standard for the Global Goals',
-      mockAuditCtx,
-    );
-    expect(result).toEqual({
-      registered: true,
-      name: 'Gold Standard',
-      description: 'Gold Standard for the Global Goals',
+    it('should write audit row with action pause_contract', async () => {
+      await service.pauseContract(mockAuditCtx);
+      expect(auditRepo.save).toHaveBeenCalledTimes(1);
+      const createArg = auditRepo.create.mock.calls[0][0];
+      expect(createArg.action).toBe('pause_contract');
+      expect(createArg.actor).toBe(mockAuditCtx.actor);
     });
   });
 
-  it('should return the exact name and description passed in', () => {
-    const result = service.registerMethodology(
-      'CDM',
-      'Clean Development Mechanism',
-      mockAuditCtx,
-    );
-    expect(result.name).toBe('CDM');
-    expect(result.description).toBe('Clean Development Mechanism');
-  });
-});
+  describe('unpauseContract', () => {
+    it('should invoke unpause on the credit registry and return paused: false', async () => {
+      const result = await service.unpauseContract(mockAuditCtx);
+      expect(result).toEqual({ paused: false });
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'unpause',
+        expect.any(Array),
+        mockAdminKeypair,
+      );
+    });
 
-describe('getNonce', () => {
-  it('should return a nonce object with the requested address from on-chain', async () => {
-    stellarService.readContract.mockResolvedValue(
-      nativeToScVal(5n, { type: 'u64' }),
-    );
-    const result = await service.getNonce('GADMINPUBLICKEY');
-    expect(result.address).toBe('GADMINPUBLICKEY');
-    expect(typeof result.nonce).toBe('number');
+    it('should write audit row with action unpause_contract', async () => {
+      await service.unpauseContract(mockAuditCtx);
+      const createArg = auditRepo.create.mock.calls[0][0];
+      expect(createArg.action).toBe('unpause_contract');
+    });
   });
 
-  it('should fall back to nonce 0 when contract call fails', async () => {
-    stellarService.readContract.mockRejectedValue(
-      new Error('Contract unavailable'),
-    );
-    const result = await service.getNonce('GADMINPUBLICKEY');
-    expect(result.address).toBe('GADMINPUBLICKEY');
-    expect(result.nonce).toBe(0);
-  });
-});
+  describe('registerMethodology', () => {
+    it('should return registered: true with the provided name and description', () => {
+      const result = service.registerMethodology(
+        'Gold Standard',
+        'Gold Standard for the Global Goals',
+        mockAuditCtx,
+      );
+      expect(result).toEqual({
+        registered: true,
+        name: 'Gold Standard',
+        description: 'Gold Standard for the Global Goals',
+      });
+    });
 
-describe('setRequiredApprovals', () => {
-  it('should call set_required_approvals on-chain and return the threshold', async () => {
-    stellarService.readContract.mockResolvedValue(
-      nativeToScVal(0n, { type: 'u64' }),
-    );
-    const result = await service.setRequiredApprovals(2, mockAuditCtx);
-    expect(result).toEqual({ requiredApprovals: 2 });
-    expect(stellarService.invokeContract).toHaveBeenCalledWith(
-      expect.any(String),
-      'set_required_approvals',
-      expect.any(Array),
-      mockAdminKeypair,
-    );
-  });
-
-  it('should write an audit row for set_required_approvals', async () => {
-    stellarService.readContract.mockResolvedValue(
-      nativeToScVal(0n, { type: 'u64' }),
-    );
-    await service.setRequiredApprovals(3, mockAuditCtx);
-    const createArg = auditRepo.create.mock.calls[0][0];
-    expect(createArg.action).toBe('set_required_approvals');
-    expect(createArg.afterState).toMatchObject({ requiredApprovals: 3 });
+    it('should return the exact name and description passed in', () => {
+      const result = service.registerMethodology(
+        'CDM',
+        'Clean Development Mechanism',
+        mockAuditCtx,
+      );
+      expect(result.name).toBe('CDM');
+      expect(result.description).toBe('Clean Development Mechanism');
+    });
   });
 
-  it('should return requiredApprovals: 1 when threshold is 1', async () => {
-    stellarService.readContract.mockResolvedValue(
-      nativeToScVal(0n, { type: 'u64' }),
-    );
-    const result = await service.setRequiredApprovals(1, mockAuditCtx);
-    expect(result.requiredApprovals).toBe(1);
+  describe('getNonce', () => {
+    it('should return a nonce object with the requested address from on-chain', async () => {
+      stellarService.readContract.mockResolvedValue(
+        nativeToScVal(5n, { type: 'u64' }),
+      );
+      const result = await service.getNonce('GADMINPUBLICKEY');
+      expect(result.address).toBe('GADMINPUBLICKEY');
+      expect(typeof result.nonce).toBe('number');
+    });
+
+    it('should fall back to nonce 0 when contract call fails', async () => {
+      stellarService.readContract.mockRejectedValue(
+        new Error('Contract unavailable'),
+      );
+      const result = await service.getNonce('GADMINPUBLICKEY');
+      expect(result.address).toBe('GADMINPUBLICKEY');
+      expect(result.nonce).toBe(0);
+    });
   });
-});
+
+  describe('setRequiredApprovals', () => {
+    it('should call set_required_approvals on-chain and return the threshold', async () => {
+      stellarService.readContract.mockResolvedValue(
+        nativeToScVal(0n, { type: 'u64' }),
+      );
+      const result = await service.setRequiredApprovals(2, mockAuditCtx);
+      expect(result).toEqual({ requiredApprovals: 2 });
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'set_required_approvals',
+        expect.any(Array),
+        mockAdminKeypair,
+      );
+    });
+
+    it('should write an audit row for set_required_approvals', async () => {
+      stellarService.readContract.mockResolvedValue(
+        nativeToScVal(0n, { type: 'u64' }),
+      );
+      await service.setRequiredApprovals(3, mockAuditCtx);
+      const createArg = auditRepo.create.mock.calls[0][0];
+      expect(createArg.action).toBe('set_required_approvals');
+      expect(createArg.afterState).toMatchObject({ requiredApprovals: 3 });
+    });
+
+    it('should return requiredApprovals: 1 when threshold is 1', async () => {
+      stellarService.readContract.mockResolvedValue(
+        nativeToScVal(0n, { type: 'u64' }),
+      );
+      const result = await service.setRequiredApprovals(1, mockAuditCtx);
+      expect(result.requiredApprovals).toBe(1);
+    });
+  });
 
   describe('getAuditLog', () => {
     it('should return rows and total from repository query', async () => {
-      const fakeRow = { id: 'uuid-1', action: 'pause_contract', actor: 'GADMIN' };
+      const fakeRow = {
+        id: 'uuid-1',
+        action: 'pause_contract',
+        actor: 'GADMIN',
+      };
       const mockQb = {
         orderBy: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
