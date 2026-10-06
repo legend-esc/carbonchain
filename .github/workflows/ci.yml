@@ -504,7 +504,7 @@ jobs:
       # upload time. Angular CLI's `define` option injects it into the bundle as
       # the string literal __SENTRY_RELEASE__ which `sentry-config.ts` reads.
       - name: Build
-        run: cd frontend && npm run build
+        run: cd frontend && ng build --define __SENTRY_RELEASE__="\\\"${{ env.SENTRY_RELEASE }}\\\""
         env:
           SENTRY_RELEASE: ${{ env.SENTRY_RELEASE }}
       # Issue #971: after the build, assert that the release string injected into

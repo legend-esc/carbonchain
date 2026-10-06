@@ -60,7 +60,7 @@
                 "hidden": true
               },
               "define": {
-                "__SENTRY_RELEASE__": "\"dummy\""dummy""
+                "__SENTRY_RELEASE__": "\"0.0.0+dev\""
               }
             },
             "development": {
