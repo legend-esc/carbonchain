@@ -159,12 +159,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
     );
 
     try {
+      // Capture the intended status code before the handler runs, since the handler
+      // may overwrite res.statusCode (e.g., to 200). For idempotent operations the
+      // default is 201 Created.
+      const statusCode =
+        (res as unknown as { statusCode?: number }).statusCode ?? 201;
+
       const result = await new Promise<unknown>((resolve, reject) => {
         next.handle().subscribe({ next: resolve, error: reject });
       });
-
-      const statusCode =
-        (res as unknown as { statusCode?: number }).statusCode ?? 201;
 
       // Persist the completed response separately from the lease with 24 h TTL.
       await this.cache.set(

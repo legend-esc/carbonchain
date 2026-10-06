@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { CacheService } from '../common/cache.service';
+import { StellarService } from '../stellar/stellar.service';
 import { VerifiersController } from './verifiers.controller';
 import { VerifiersService } from './verifiers.service';
 import { VerifierReputation } from '../../../shared';
@@ -20,6 +23,25 @@ const mockVerifiersService = {
   getReputation: jest.fn(),
 };
 
+const mockConfigService = {
+  get: jest.fn((key: string) => {
+    if (key === 'STELLAR_NETWORK') return 'testnet';
+    if (key === 'JWT_SECRET') return 'test-secret';
+    return undefined;
+  }),
+};
+
+const mockStellarService = {
+  readContract: jest.fn(),
+  invokeContract: jest.fn(),
+};
+
+const mockCacheService = {
+  get: jest.fn(),
+  set: jest.fn(),
+  del: jest.fn(),
+};
+
 describe('VerifiersController', () => {
   let controller: VerifiersController;
 
@@ -28,6 +50,9 @@ describe('VerifiersController', () => {
       controllers: [VerifiersController],
       providers: [
         { provide: VerifiersService, useValue: mockVerifiersService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarService, useValue: mockStellarService },
+        { provide: CacheService, useValue: mockCacheService },
       ],
     }).compile();
 

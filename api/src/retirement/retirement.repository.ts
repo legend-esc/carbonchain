@@ -20,6 +20,8 @@ export interface IRetirementRepository {
   findPaginated(dto: ListRetirementsDto): Promise<[RetirementEntity[], number]>;
   /** Issue #921 — records whose certificate hash still needs an on-chain write. */
   findPendingCertHash(limit: number): Promise<RetirementEntity[]>;
+  /** Returns the total number of retirement records. */
+  count(): Promise<number>;
 }
 
 export const RETIREMENT_REPOSITORY = 'RETIREMENT_REPOSITORY';
@@ -64,6 +66,10 @@ export class InMemoryRetirementRepository implements IRetirementRepository {
     limit: number,
   ): Promise<PageResult<RetirementEntity>> {
     return this.paginate(Array.from(this.store.values()), page, limit);
+  }
+
+  async count(): Promise<number> {
+    return this.store.size;
   }
 
   /**
@@ -192,6 +198,10 @@ export class TypeOrmRetirementRepository implements IRetirementRepository {
       order: { retiredAt: 'ASC' },
       take: limit,
     });
+  }
+
+  async count(): Promise<number> {
+    return this.repository.count();
   }
 
   private async paginate(

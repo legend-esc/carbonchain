@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { CertificateService, CertificateData } from './certificate.service';
 import { computeFileCid } from '../common/ipfs-cid.util';
+import client from 'prom-client';
 
 const SAMPLE_DATA: CertificateData = {
   retirementId: 'abc123',
@@ -18,6 +19,7 @@ const VALID_CID = computeFileCid(Buffer.from('certificate pdf bytes'));
 function makeService(
   overrides: Record<string, unknown> = {},
 ): Promise<CertificateService> {
+  client.register.clear(); // Clear prom-client registry to avoid "metric already registered" errors
   return Test.createTestingModule({
     providers: [
       CertificateService,

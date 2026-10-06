@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CreditsController } from './credits.controller';
 import { CreditsService } from './credits.service';
+import { RetirementService } from '../retirement/retirement.service';
 
-// === Mock service
+// === Mock services
 
 const mockCreditsService = {
   listCredits: jest.fn(),
@@ -22,6 +23,14 @@ const mockCreditsService = {
   mergeCredits: jest.fn(),
 };
 
+const mockRetirementService = {
+  retire: jest.fn(),
+  getRetirement: jest.fn(),
+  listRetirements: jest.fn(),
+  getRetirementsByAccount: jest.fn(),
+  verifyCertificate: jest.fn(),
+};
+
 // === Setup
 
 describe('CreditsController — listCredits pagination bounds', () => {
@@ -30,7 +39,10 @@ describe('CreditsController — listCredits pagination bounds', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [CreditsController],
-      providers: [{ provide: CreditsService, useValue: mockCreditsService }],
+      providers: [
+        { provide: CreditsService, useValue: mockCreditsService },
+        { provide: RetirementService, useValue: mockRetirementService },
+      ],
     }).compile();
 
     controller = module.get<CreditsController>(CreditsController);

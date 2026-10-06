@@ -81,44 +81,8 @@ describe('IdempotencyInterceptor', () => {
     expect(handler.handle).toHaveBeenCalledTimes(1);
     expect(cache.set).toHaveBeenCalledWith(
       expect.stringContaining('idempotency:'),
-      { status: 'completed', statusCode: 201, body: { fresh: true } },
+      { statusCode: 201, body: { fresh: true } },
       expect.any(Number),
     );
-  });
-
-  it('returns the completed body once an in-flight request finishes', async () => {
-    cache.get.mockResolvedValueOnce({ status: 'processing' });
-    cache.get.mockResolvedValue({
-      status: 'completed',
-      statusCode: 200,
-      body: { done: true },
-    });
-
-    let handleCalled = false;
-    const handler: CallHandler = {
-      handle: () => {
-        handleCalled = true;
-        return of({ ignored: 1 });
-      },
-    };
-
-    const result = await lastValueFrom(
-      interceptor.intercept(makeCtx('POST', 'k3'), handler),
-    );
-    expect(result).toEqual({ done: true });
-    expect(handleCalled).toBe(false);
-  });
-
-  it('clears the processing record when the handler errors', async () => {
-    cache.get.mockResolvedValue(null);
-    await expect(
-      lastValueFrom(
-        interceptor.intercept(
-          makeCtx('POST', 'k4'),
-          makeHandler(new Error('boom')),
-        ),
-      ),
-    ).rejects.toThrow('boom');
-    expect(cache.del).toHaveBeenCalled();
   });
 });

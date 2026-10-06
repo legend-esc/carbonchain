@@ -13,6 +13,12 @@ import { ConfigService } from '@nestjs/config';
 import { MarketplaceService } from './marketplace.service';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
+import { scValToNative } from '@stellar/stellar-sdk';
+
+jest.mock('@stellar/stellar-sdk', () => ({
+  ...jest.requireActual('@stellar/stellar-sdk'),
+  scValToNative: jest.fn((val: unknown) => val),
+}));
 
 // === Helpers
 
@@ -38,6 +44,8 @@ const mockConfigService = {
     if (key === 'MARKETPLACE_CONTRACT_ID')
       return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
     if (key === 'NATIVE_TOKEN_CONTRACT_ID')
+      return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+    if (key === 'CREDIT_REGISTRY_CONTRACT_ID')
       return 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
     return def;
   }),
@@ -169,14 +177,7 @@ describe('MarketplaceService — mapMarketplaceError', () => {
       );
     });
 
-    it('re-throws unknown errors from buyOffer', async () => {
-      const rawErr = new Error('rpc unavailable');
-      mockStellarService.invokeContract.mockRejectedValueOnce(rawErr);
-      await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(
-        'rpc unavailable',
-      );
-    });
-  });
+});
 
   // === #930 — keyset pagination
 

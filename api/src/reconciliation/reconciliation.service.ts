@@ -183,10 +183,11 @@ export class ReconciliationService {
       if (chainStatus === null) continue;
 
       if (chainStatus !== String(credit.status)) {
+        const dbStatus = credit.status;
         await this.correctDrift(credit, chainStatus as CreditStatus);
         drifts.push({
           creditId: id,
-          dbStatus: credit.status,
+          dbStatus,
           chainStatus,
           correctedAt: new Date(),
         });

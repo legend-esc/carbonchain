@@ -7,6 +7,7 @@ import {
 import { RetirementController } from './retirement.controller';
 import { RetirementService } from './retirement.service';
 import { CertificateService } from './certificate.service';
+import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { RetirementRecord } from '../../../shared';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
 
@@ -23,6 +24,10 @@ const mockCertificateService = {
   generatePdf: jest.fn(),
 };
 
+const mockCertHashReconciler = {
+  reconcile: jest.fn(),
+};
+
 // A valid Stellar ed25519 public key (G + 55 base32 chars, 56 total).
 const VALID_STELLAR_ADDRESS =
   'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
@@ -36,6 +41,7 @@ describe('RetirementController', () => {
       providers: [
         { provide: RetirementService, useValue: mockRetirementService },
         { provide: CertificateService, useValue: mockCertificateService },
+        { provide: CertHashReconciler, useValue: mockCertHashReconciler },
         StellarAddressPipe,
       ],
     }).compile();

@@ -27,6 +27,8 @@ describe('AdminController', () => {
               totalRetirements: 5,
               activeVerifiers: 3,
               paused: false,
+              contractPauseStatus: 'unpaused',
+              health: { degraded: false },
             }),
             registerVerifier: jest
               .fn()
@@ -35,7 +37,11 @@ describe('AdminController', () => {
             // #924 — flagCredit and configureVerifier throw 501
             flagCredit: jest
               .fn()
-              .mockRejectedValue(new NotImplementedException()),
+              .mockResolvedValue({
+                flagged: true,
+                creditId: 'abc',
+                status: CreditStatus.Flagged,
+              }),
             configureVerifier: jest
               .fn()
               .mockRejectedValue(new NotImplementedException()),

@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { Keypair, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
+import { EventEmitter } from 'events';
 import { SequenceNumberManager } from './sequence-number-manager.service';
+import { METRICS_EVENT_EMITTER } from '../metrics/metrics-listener';
+import { CacheService } from '../common/cache.service';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -66,6 +69,13 @@ function buildModule(
       StellarService,
       SequenceNumberManager,
       {
+        provide: 'RedisSequenceNumberManager',
+        useValue: {
+          getNextSequenceNumberAtomic: jest.fn().mockResolvedValue(42),
+          cacheSequenceNumber: jest.fn().mockResolvedValue(undefined),
+        },
+      },
+      {
         provide: ConfigService,
         useValue: {
           get: jest.fn((key: string, def?: unknown) => {
@@ -77,9 +87,30 @@ function buildModule(
               return 'https://soroban-testnet.stellar.org';
             }
             if (key === 'STELLAR_NETWORK') return 'TESTNET';
+            if (key === 'SEQ_CACHE_TTL_MS') return '60000';
             return def;
           }),
         },
+      },
+      {
+        provide: CacheService,
+        useValue: {
+          isConnected: true,
+          get: jest.fn(),
+          set: jest.fn(),
+          del: jest.fn(),
+          client: {
+            set: jest.fn().mockResolvedValue('OK'),
+            get: jest.fn().mockResolvedValue(null),
+            del: jest.fn().mockResolvedValue(1),
+            pexpire: jest.fn().mockResolvedValue(1),
+            incr: jest.fn().mockResolvedValue(1),
+          },
+        },
+      },
+      {
+        provide: METRICS_EVENT_EMITTER,
+        useValue: new EventEmitter(),
       },
     ],
   }).compile();

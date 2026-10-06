@@ -211,6 +211,11 @@ describe('ProjectsService', () => {
 
   describe('verifyProjectCid (#928)', () => {
     it('returns pinned=true and hashOk=true when CID is active and matches', async () => {
+      // Mock uploadToIpfs to return VALID_CID before creating project
+      mockedAxios.post = jest
+        .fn()
+        .mockResolvedValue({ data: { IpfsHash: VALID_CID } });
+
       const project = await service.createProject({
         name: 'Pinned Project',
         developer: 'Dev',
@@ -219,17 +224,6 @@ describe('ProjectsService', () => {
         methodology: 'VCS',
         documents: { data: 'test' },
       });
-      // Make createProject use VALID_CID
-      mockedAxios.post = jest
-        .fn()
-        .mockResolvedValue({ data: { IpfsHash: VALID_CID } });
-
-      // Override the repo entry to have a valid CID.
-      const entity = await repo.findById(project.id);
-      if (entity) {
-        entity.documentsCid = VALID_CID;
-        await repo.save(entity);
-      }
 
       // Mock isPinned → pinned.
       mockedAxios.get = jest.fn().mockResolvedValue({ data: { count: 1 } });
