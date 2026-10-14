@@ -25,5 +25,12 @@
 - [ ] Error codes follow the stable range (100–120)
 - [ ] Breaking changes documented below
 
+### Contract upgrade checklist (if modifying smart contracts)
+- [ ] Pre-upgrade: Storage layout and event schema verified backward compatible
+- [ ] Pre-upgrade: Migration tested on testnet
+- [ ] Upgrade: WASM hash verified against built artifact
+- [ ] Post-upgrade: Cross-contract consistency & rollback plan documented
+- [ ] Approvals: Signed off by at least 2 maintainers + security review
+
 ## Breaking changes
 <!-- Leave blank if none. -->

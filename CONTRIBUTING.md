@@ -590,6 +590,32 @@ When adding a new error code, pick the **next available number** within the cont
 
 ---
 
+## Contract Upgrade Safety Checklist
+
+Contract upgrades across CarbonChain's on-chain components (`credit_registry`, `retirement`, `marketplace`, `mrv_oracle`) are high-risk operations. All contract changes must adhere strictly to the following safety checklist prior to merging and deployment.
+
+### 1. Pre-Upgrade Verification
+- [ ] **Migration Dry-Run on Testnet:** Execute full deployment and state migration on Stellar testnet and verify behavior against historical test transactions.
+- [ ] **Storage Layout Compatibility:** Verify that existing Soroban instance and persistent storage keys and data structures remain backward compatible (no silent deserialization failures or unmapped keys).
+- [ ] **Event Schema Compatibility:** Ensure contract events maintain expected topic structures and payloads for downstream indexers and the NestJS API.
+- [ ] **Error Code Stability:** Confirm that any new or existing error codes comply with the assigned numbering scheme in [`docs/features/ERROR_CODES_REFERENCE.md`](docs/features/ERROR_CODES_REFERENCE.md) and never reassign existing numbers.
+
+### 2. Upgrade Execution Protocol
+- [ ] **WASM Hash Verification:** Verify the compiled WASM cryptographic hash against the reproducible build artifact.
+- [ ] **Admin Nonce Freshness:** Confirm administrative authorization signatures and ensure nonces are fresh before submitting upgrade transactions.
+- [ ] **Migration Execution Order:** Sequence dependency upgrades properly (e.g., core registries before peripheral oracles and marketplaces).
+
+### 3. Post-Upgrade Validation
+- [ ] **Event Emission Verification:** Trigger test operations to ensure all required lifecycle events are emitted properly by the new contract binary.
+- [ ] **Cross-Contract Consistency:** Validate state integrity across interdependent contracts (e.g. credit status synchronization between `credit_registry` and `retirement`).
+- [ ] **Rollback & Contingency Plan:** Document explicit fallback procedures, including administrative pause capabilities and rollback triggers.
+
+### 4. Required Approvals & Reviews
+- [ ] **Dual Maintainer Sign-Off:** Review and sign-off by at least two project maintainers.
+- [ ] **Security Review:** Formal security review required for any changes touching state transition logic, authorization guards, or token transfers.
+
+---
+
 ## Documentation
 
 ### Existing Documentation
