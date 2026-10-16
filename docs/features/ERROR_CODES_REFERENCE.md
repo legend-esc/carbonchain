@@ -33,32 +33,40 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 124 | `InvalidApprovalThreshold` | `required_approvals` is 0 or exceeds verifier count |
 | 125 | `AlreadyApproved` | Verifier has already approved this credit |
 
-## Retirement (110–118)
+## Retirement (200–210)
 
-| Code | Name | Description |
-|------|------|-------------|
-| 110 | `CreditNotActive` | Credit is not in `Active` status |
-| 111 | `AlreadyInitialized` | Contract has already been initialized |
-| 112 | `NotInitialized` | Contract has not been initialized |
-| 113 | `Unauthorized` | Caller is not the credit owner or admin |
-| 114 | `ContractPaused` | Contract is paused |
-| 115 | `InvalidNonce` | Replay-protection nonce mismatch |
-| 116 | `NoPendingAdmin` | No pending admin transfer |
-| 117 | `InvalidTonnes` | `tonnes` is zero or negative |
-| 118 | `InvalidInput` | Input vectors have mismatched lengths or batch exceeds `MAX_BATCH_SIZE` (20) |
+| Code | Name | Description | Triggering Functions |
+|------|------|-------------|----------------------|
+| 200 | `CreditNotActive` | Credit is not in `Active` status when retirement is attempted | `retire`, `batch_retire` |
+| 201 | `AlreadyInitialized` | Contract has already been initialized | `initialize` |
+| 202 | `NotInitialized` | Contract has not been initialized | `pause`, `unpause`, `upgrade`, `propose_admin`, `set_certificate_hash` |
+| 203 | `Unauthorized` | Caller is not the credit owner or admin | `retire`, `batch_retire`, `pause`, `unpause`, `upgrade`, `propose_admin`, `set_certificate_hash` |
+| 204 | `ContractPaused` | Contract is paused; state-mutating operations are blocked | `retire`, `batch_retire` |
+| 205 | `InvalidNonce` | Replay-protection nonce does not match expected value | `retire`, `batch_retire`, `upgrade`, `set_certificate_hash` |
+| 206 | `NoPendingAdmin` | No admin transfer is currently pending | `accept_admin` |
+| 207 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 | `retire`, `batch_retire` |
+| 208 | `InvalidInput` | Input vectors have mismatched lengths, or batch exceeds `MAX_BATCH_SIZE` (20) | `batch_retire` |
+| 209 | `DowngradeNotAllowed` | Installing an older WASM version is not allowed | `upgrade` |
+| 210 | `RecordNotFound` | A retirement record with the given ID does not exist in storage | `set_certificate_hash` |
 
-## Marketplace (115–125)
+## Marketplace (115–128)
 
-| Code | Name | Description |
-|------|------|-------------|
-| 115 | `OfferNotFound` | Offer ID does not exist |
-| 116 | `Unauthorized` | Caller is not the offer owner or admin |
-| 117 | `InvalidPrice` | Offer price is zero or negative |
-| 118 | `AlreadyClosed` | Offer has already been closed or filled |
-| 119 | `CreditNotActive` | Credit linked to the offer is not active |
-| 120 | `NotInitialized` | Contract has not been initialized |
-| 121 | `ContractPaused` | Contract is paused |
-| 125 | `InvalidTonnes` | `tonnes` is zero or negative |
+| Code | Name | Description | Triggering Functions |
+|------|------|-------------|----------------------|
+| 115 | `OfferNotFound` | Offer ID does not exist | `buy_offer`, `cancel_offer`, `get_offer` |
+| 116 | `Unauthorized` | Caller is not the offer owner or admin | `cancel_offer`, `update_offer` |
+| 117 | `InvalidPrice` | Offer price is zero, negative, or below minimum | `create_offer`, `create_offer_with_asset` |
+| 118 | `AlreadyClosed` | Offer has already been cancelled or filled | `buy_offer`, `cancel_offer` |
+| 119 | `CreditNotActive` | Credit linked to the offer is not in `Active` status | `create_offer`, `create_offer_with_asset` |
+| 120 | `NotInitialized` | Contract has not been initialized | All state-mutating ops |
+| 121 | `ContractPaused` | Contract is paused | All state-mutating ops |
+| 122 | `InvalidNonce` | Replay-protection nonce mismatch | `create_offer`, `buy_offer`, `cancel_offer` |
+| 123 | `OfferExpired` | Offer's `expires_at` timestamp has passed | `buy_offer` |
+| 124 | `Overflow` | Price is zero or negative (corrupt offer state) | `buy_offer` |
+| 125 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 | `create_offer`, `create_offer_with_asset` |
+| 126 | `AlreadyInitialized` | Contract has already been initialized | `initialize` |
+| 127 | `InsufficientFunds` | Buyer balance is less than the offer price | `buy_offer` |
+| 128 | `EscrowFailed` | Escrow transfer succeeded but offer record failed to persist | `create_offer`, `create_offer_with_asset` |
 
 ## MRV Oracle (119–129)
 
@@ -80,4 +88,5 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 
 - Error codes are **stable** — they will not change across contract upgrades.
 - All `tonnes` values use scaled units: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (0.1 tonne).
-- `InvalidInput` (retirement code 118) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
+- `InvalidInput` (retirement code 208) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
+- `RecordNotFound` (retirement code 210) is returned by `set_certificate_hash` when the retirement ID is not found; `CreditNotActive` (200) is returned when the credit being retired is not in `Active` status.

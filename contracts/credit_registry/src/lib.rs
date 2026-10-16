@@ -3703,4 +3703,264 @@ mod tests {
         assert_eq!(recipient_credits.len(), 1, "recipient should have 1 credit");
         assert!(recipient_credits.contains(&transferred_id));
     }
+
+    // ── Issue #1085: Verifier stake withdrawal integration tests ─────────────
+
+    /// Minimal mock token contract used exclusively in staking tests.
+    /// Implements the `balance` and `transfer` interfaces expected by `deposit_stake`
+    /// and `withdraw_stake`.
+    mod stake_token_mock {
+        use soroban_sdk::{contract, contractimpl, Address, Env};
+
+        #[contract]
+        pub struct StakeToken;
+
+        #[contractimpl]
+        impl StakeToken {
+            /// Seed the mock balance for an address.
+            pub fn set_balance(env: Env, addr: Address, amount: i128) {
+                env.storage().persistent().set(&addr, &amount);
+            }
+
+            /// Token `balance` interface.
+            pub fn balance(env: Env, addr: Address) -> i128 {
+                env.storage().persistent().get(&addr).unwrap_or(0i128)
+            }
+
+            /// Token `transfer` interface.
+            /// Subtracts from sender, adds to recipient. Panics if sender has insufficient funds.
+            pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+                let from_bal: i128 = env.storage().persistent().get(&from).unwrap_or(0);
+                assert!(from_bal >= amount, "insufficient balance");
+                env.storage().persistent().set(&from, &(from_bal - amount));
+                let to_bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+                env.storage().persistent().set(&to, &(to_bal + amount));
+            }
+        }
+    }
+
+    use stake_token_mock::StakeToken;
+    use stake_token_mock::StakeTokenClient;
+
+    /// Deploy a fresh registry with staking enabled (min_stake > 0) and a
+    /// mock token.  Returns (env, registry_client, admin, token_client).
+    fn setup_staking() -> (
+        Env,
+        CreditRegistryClient<'static>,
+        Address,
+        StakeTokenClient<'static>,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_700_000_000u64);
+
+        let contract_id = env.register(CreditRegistry, ());
+        let client = CreditRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let retirement = Address::generate(&env);
+
+        // Initialize with min_stake = 0 first (init helper resets to 0),
+        // then raise it so we can test the full stake flow.
+        client.initialize(&admin, &retirement, &1u32);
+        let nonce = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &1_000_000i128, &nonce);
+
+        // Deploy mock token and give the admin some tokens for seeding.
+        let token_id = env.register(StakeToken, ());
+        let token = StakeTokenClient::new(&env, &token_id);
+
+        (env, client, admin, token)
+    }
+
+    #[test]
+    fn test_full_stake_deposit_unbond_withdraw_flow() {
+        let (env, client, admin, token) = setup_staking();
+
+        let verifier = Address::generate(&env);
+        let stake_amount = 5_000_000i128;
+
+        // Seed verifier with tokens.
+        token.set_balance(&verifier, &stake_amount);
+
+        // Register verifier (min_stake is 1_000_000; verifier will deposit separately).
+        // Lower min_stake so registration passes without prior deposit.
+        let nonce = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &0i128, &nonce);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &reg_nonce);
+
+        // Raise min_stake again.
+        let nonce2 = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &1_000_000i128, &nonce2);
+
+        // Step 1 — Deposit stake.
+        let dep_nonce = client.get_nonce(&verifier);
+        client
+            .deposit_stake(&verifier, &token.address, &stake_amount, &dep_nonce)
+            .unwrap();
+
+        assert_eq!(client.get_verifier_stake(&verifier), stake_amount);
+        assert_eq!(token.balance(&verifier), 0i128);
+
+        // Step 2 — Admin removes verifier → unbonding initiated.
+        let rem_nonce = client.get_nonce(&admin);
+        client
+            .remove_verifier(&admin, &verifier, &rem_nonce)
+            .unwrap();
+
+        // Stake should be zero (locked in unbonding).
+        assert_eq!(client.get_verifier_stake(&verifier), 0i128);
+
+        // Step 3 — Attempt withdraw before unbonding period elapses → UnbondingNotReady.
+        let early_nonce = client.get_nonce(&verifier);
+        let early_result =
+            client.try_withdraw_stake(&verifier, &token.address, &early_nonce);
+        assert_eq!(
+            early_result,
+            Err(Ok(CarbonChainError::UnbondingNotReady))
+        );
+
+        // Step 4 — Advance ledger past UNBONDING_PERIOD_SECS (30 days).
+        env.ledger()
+            .set_timestamp(1_700_000_000u64 + UNBONDING_PERIOD_SECS + 1);
+
+        // Step 5 — Withdraw stake after unbonding period.
+        let with_nonce = client.get_nonce(&verifier);
+        client
+            .withdraw_stake(&verifier, &token.address, &with_nonce)
+            .unwrap();
+
+        // Tokens should be back with the verifier.
+        assert_eq!(token.balance(&verifier), stake_amount);
+    }
+
+    #[test]
+    fn test_withdraw_stake_early_fails() {
+        let (env, client, admin, token) = setup_staking();
+
+        let verifier = Address::generate(&env);
+        let stake_amount = 2_000_000i128;
+        token.set_balance(&verifier, &stake_amount);
+
+        // Register verifier with zero min_stake, then deposit.
+        let nonce = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &0i128, &nonce);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &reg_nonce);
+
+        let dep_nonce = client.get_nonce(&verifier);
+        client
+            .deposit_stake(&verifier, &token.address, &stake_amount, &dep_nonce)
+            .unwrap();
+
+        // Remove verifier → unbonding starts.
+        let rem_nonce = client.get_nonce(&admin);
+        client
+            .remove_verifier(&admin, &verifier, &rem_nonce)
+            .unwrap();
+
+        // Timestamp has NOT advanced — should fail with UnbondingNotReady.
+        let with_nonce = client.get_nonce(&verifier);
+        let result = client.try_withdraw_stake(&verifier, &token.address, &with_nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::UnbondingNotReady)));
+
+        // Token must still be locked — verifier balance unchanged.
+        assert_eq!(token.balance(&verifier), 0i128);
+    }
+
+    #[test]
+    fn test_withdraw_stake_no_unbonding_request_fails() {
+        let (env, client, admin, token) = setup_staking();
+
+        let verifier = Address::generate(&env);
+        let stake_amount = 2_000_000i128;
+        token.set_balance(&verifier, &stake_amount);
+
+        // Register and deposit, but do NOT remove — no unbonding request exists.
+        let nonce = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &0i128, &nonce);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &reg_nonce);
+
+        let dep_nonce = client.get_nonce(&verifier);
+        client
+            .deposit_stake(&verifier, &token.address, &stake_amount, &dep_nonce)
+            .unwrap();
+
+        // Fast-forward well past unbonding period.
+        env.ledger()
+            .set_timestamp(1_700_000_000u64 + UNBONDING_PERIOD_SECS + 1);
+
+        // Should fail because remove_verifier was never called.
+        let with_nonce = client.get_nonce(&verifier);
+        let result = client.try_withdraw_stake(&verifier, &token.address, &with_nonce);
+        assert_eq!(result, Err(Ok(CarbonChainError::NoUnbondingRequest)));
+    }
+
+    #[test]
+    fn test_stake_withdrawn_event_emitted() {
+        let (env, client, admin, token) = setup_staking();
+
+        let verifier = Address::generate(&env);
+        let stake_amount = 3_000_000i128;
+        token.set_balance(&verifier, &stake_amount);
+
+        let nonce = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &0i128, &nonce);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &reg_nonce);
+
+        let dep_nonce = client.get_nonce(&verifier);
+        client
+            .deposit_stake(&verifier, &token.address, &stake_amount, &dep_nonce)
+            .unwrap();
+
+        let rem_nonce = client.get_nonce(&admin);
+        client
+            .remove_verifier(&admin, &verifier, &rem_nonce)
+            .unwrap();
+
+        env.ledger()
+            .set_timestamp(1_700_000_000u64 + UNBONDING_PERIOD_SECS + 1);
+
+        let with_nonce = client.get_nonce(&verifier);
+        client
+            .withdraw_stake(&verifier, &token.address, &with_nonce)
+            .unwrap();
+
+        // Verify at least one event was emitted during the withdraw_stake call.
+        assert!(!env.events().all().events().is_empty());
+        // Token should be back with verifier, confirming withdrawal succeeded.
+        assert_eq!(token.balance(&verifier), stake_amount);
+    }
+
+    #[test]
+    fn test_unbonding_initiated_event_emitted_on_remove_verifier() {
+        let (env, client, admin, token) = setup_staking();
+
+        let verifier = Address::generate(&env);
+        let stake_amount = 2_000_000i128;
+        token.set_balance(&verifier, &stake_amount);
+
+        let nonce = client.get_nonce(&admin);
+        client.set_min_stake(&admin, &0i128, &nonce);
+        let reg_nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &reg_nonce);
+
+        let dep_nonce = client.get_nonce(&verifier);
+        client
+            .deposit_stake(&verifier, &token.address, &stake_amount, &dep_nonce)
+            .unwrap();
+
+        let rem_nonce = client.get_nonce(&admin);
+        client
+            .remove_verifier(&admin, &verifier, &rem_nonce)
+            .unwrap();
+
+        // Verify at least one event was emitted during remove_verifier
+        // (UnbondingInitiated event should be among them).
+        assert!(!env.events().all().events().is_empty());
+        // Stake locked in unbonding — verifier stake reads 0.
+        assert_eq!(client.get_verifier_stake(&verifier), 0i128);
+    }
 }

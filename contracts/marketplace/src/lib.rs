@@ -2173,4 +2173,178 @@ mod tests {
         // Offer should no longer appear in active list
         assert_eq!(client.list_active_offers(&0, &50).len(), 0);
     }
+
+    // ── Issue #1086: SAC token (USDC/EURC) buy_offer tests ───────────────────
+
+    /// Helper: create an offer priced in a SAC token (AssetType::Asset) and
+    /// return (client, seller, registry, credit_id, usdc_token, offer_id, price).
+    fn setup_sac_offer(
+        env: &Env,
+    ) -> (
+        MarketplaceClient<'static>,
+        Address,
+        RegistryHelper,
+        BytesN<32>,
+        MockTokenClient<'static>,
+        u64,
+        i128,
+    ) {
+        let (client, seller, _admin, registry, credit_id) = setup_with_registry(env);
+
+        // Deploy a mock SAC token representing USDC (7 decimals: 1 USDC = 10_000_000).
+        let usdc_id = env.register(MockToken, ());
+        let usdc = MockTokenClient::new(env, &usdc_id);
+
+        let price: i128 = 10_000_000; // 1 USDC
+
+        let seller_nonce = client.get_nonce(&seller);
+        let offer_id = client.create_offer_with_asset(
+            &seller,
+            &credit_id,
+            &price,
+            &AssetType::Asset(usdc.address.clone()),
+            &500_000,
+            &registry.id,
+            &None,
+            &seller_nonce,
+        );
+
+        (client, seller, registry, credit_id, usdc, offer_id, price)
+    }
+
+    #[test]
+    fn test_buy_offer_with_sac_token_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, seller, registry, credit_id, usdc, offer_id, price) =
+            setup_sac_offer(&env);
+
+        let buyer = Address::generate(&env);
+        // Seed buyer with exactly the right USDC amount.
+        usdc.set_balance(&buyer, &price);
+
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &usdc.address, // token_id (ignored for SAC offers, but required by signature)
+            &buyer_nonce,
+        );
+
+        assert!(result.is_ok(), "SAC token buy should succeed");
+
+        // Offer must be closed.
+        assert!(!client.get_offer(&offer_id).active);
+
+        // Credit must be owned by buyer.
+        let credit = registry.get_credit(&credit_id);
+        assert_eq!(credit.owner, buyer);
+
+        // USDC must have moved: buyer → seller.
+        assert_eq!(usdc.balance(&buyer), 0i128);
+        assert_eq!(usdc.balance(&seller), price);
+    }
+
+    #[test]
+    fn test_buy_offer_sac_token_insufficient_balance_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _seller, registry, _credit_id, usdc, offer_id, price) =
+            setup_sac_offer(&env);
+
+        let buyer = Address::generate(&env);
+        // Give buyer less than the required price.
+        usdc.set_balance(&buyer, &(price - 1));
+
+        let buyer_nonce = client.get_nonce(&buyer);
+        let result = client.try_buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &usdc.address,
+            &buyer_nonce,
+        );
+
+        assert_eq!(result, Err(Ok(MarketplaceError::InsufficientFunds)));
+
+        // Offer must still be active — no state was changed.
+        assert!(client.get_offer(&offer_id).active);
+    }
+
+    #[test]
+    fn test_buy_offer_sac_token_transfers_correct_amount_to_seller() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, seller, registry, _credit_id, usdc, offer_id, price) =
+            setup_sac_offer(&env);
+
+        let buyer = Address::generate(&env);
+        // Give buyer more than needed — only `price` should be transferred.
+        let surplus = 5_000_000i128;
+        usdc.set_balance(&buyer, &(price + surplus));
+
+        let buyer_nonce = client.get_nonce(&buyer);
+        client
+            .buy_offer(&buyer, &offer_id, &registry.id, &usdc.address, &buyer_nonce)
+            .unwrap();
+
+        // Exactly `price` transferred: buyer retains the surplus.
+        assert_eq!(usdc.balance(&buyer), surplus);
+        assert_eq!(usdc.balance(&seller), price);
+    }
+
+    #[test]
+    fn test_buy_offer_sac_token_offer_closed_after_purchase() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _seller, registry, _credit_id, usdc, offer_id, price) =
+            setup_sac_offer(&env);
+
+        let buyer1 = Address::generate(&env);
+        usdc.set_balance(&buyer1, &price);
+        let b1_nonce = client.get_nonce(&buyer1);
+        client
+            .buy_offer(&buyer1, &offer_id, &registry.id, &usdc.address, &b1_nonce)
+            .unwrap();
+
+        // Second buyer attempts to buy the now-closed offer.
+        let buyer2 = Address::generate(&env);
+        usdc.set_balance(&buyer2, &price);
+        let b2_nonce = client.get_nonce(&buyer2);
+        let result = client.try_buy_offer(
+            &buyer2,
+            &offer_id,
+            &registry.id,
+            &usdc.address,
+            &b2_nonce,
+        );
+
+        assert_eq!(result, Err(Ok(MarketplaceError::AlreadyClosed)));
+    }
+
+    #[test]
+    fn test_buy_offer_sac_token_removed_from_active_index() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _seller, registry, _credit_id, usdc, offer_id, price) =
+            setup_sac_offer(&env);
+
+        assert_eq!(client.list_active_offers(&0, &50).len(), 1);
+
+        let buyer = Address::generate(&env);
+        usdc.set_balance(&buyer, &price);
+        let buyer_nonce = client.get_nonce(&buyer);
+        client
+            .buy_offer(&buyer, &offer_id, &registry.id, &usdc.address, &buyer_nonce)
+            .unwrap();
+
+        // Offer must be removed from the active index after purchase.
+        assert_eq!(client.list_active_offers(&0, &50).len(), 0);
+    }
 }

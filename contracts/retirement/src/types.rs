@@ -62,6 +62,9 @@ pub enum DataKey {
     Paused,
     Nonce(Address),
     PendingAdmin,
+    /// Contract schema version, used by `run_migrations` to track which
+    /// migration steps have been applied.
+    Version,
 }
 
 /// A single failed retirement entry within a partial-success batch.

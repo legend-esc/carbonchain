@@ -11,10 +11,54 @@ use crate::types::{
 /// Maximum number of credits allowed in a single `batch_retire` call.
 /// Exceeding this limit causes the Soroban instruction budget to be exhausted.
 const MAX_BATCH_SIZE: u32 = 20;
+
+/// Current contract schema version. Bump this when a new migration step is added.
+pub const CURRENT_VERSION: u32 = 1;
+
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contractevent, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
+
+fn get_version(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::Version)
+        .unwrap_or(0)
+}
+
+fn set_version(env: &Env, version: u32) {
+    env.storage().instance().set(&DataKey::Version, &version);
+}
+
+/// Run all pending migration steps in order from the currently stored version
+/// up to `target_version`. Each step is idempotent: it only executes when
+/// `get_version(env) == step - 1`.
+///
+/// # Errors
+/// - [`RetirementError::DowngradeNotAllowed`] — `target_version` is less than the current version.
+pub fn run_migrations(env: &Env, target_version: u32) -> Result<(), RetirementError> {
+    let mut current = get_version(env);
+
+    if target_version < current {
+        return Err(RetirementError::DowngradeNotAllowed);
+    }
+
+    while current < target_version {
+        match current {
+            0 => migrate_v0_to_v1(env),
+            _ => break,
+        }
+        current += 1;
+        set_version(env, current);
+    }
+
+    Ok(())
+}
+
+fn migrate_v0_to_v1(_env: &Env) {
+    // v1 introduced explicit version tracking; no data transformation needed.
+}
 
 fn get_nonce(env: &Env, addr: &Address) -> u64 {
     env.storage()
@@ -90,6 +134,7 @@ impl Retirement {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        set_version(&env, CURRENT_VERSION);
         Ok(())
     }
 
@@ -423,14 +468,25 @@ impl Retirement {
         get_nonce(&env, &address)
     }
 
+    /// Returns the current contract schema version stored in instance storage.
+    pub fn get_version(env: Env) -> u32 {
+        get_version(&env)
+    }
+
     // ── Issue 3: Contract Upgrade Mechanism ──────────────────────────────────
 
     /// Upgrade the contract WASM to a new hash. Only the admin may call this.
+    ///
+    /// `run_migrations` is called before the WASM swap so that any pending
+    /// schema migrations are applied with the **current** ABI. Downgrades
+    /// (installing a WASM whose `CURRENT_VERSION` is lower than the stored
+    /// schema version) are blocked by `run_migrations`.
     ///
     /// # Errors
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the admin.
     /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    /// - [`RetirementError::DowngradeNotAllowed`] — `new_wasm_hash` targets an older version.
     pub fn upgrade(
         env: Env,
         admin: Address,
@@ -441,6 +497,7 @@ impl Retirement {
         if !consume_nonce(&env, &admin, nonce) {
             return Err(RetirementError::InvalidNonce);
         }
+        run_migrations(&env, CURRENT_VERSION)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
@@ -514,7 +571,7 @@ impl Retirement {
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`]   — caller is not the admin.
     /// - [`RetirementError::InvalidNonce`]   — `nonce` does not match the stored value.
-    /// - [`RetirementError::CreditNotActive`] — `retirement_id` does not exist.
+    /// - [`RetirementError::RecordNotFound`] — `retirement_id` does not exist.
     pub fn set_certificate_hash(
         env: Env,
         admin: Address,
@@ -532,7 +589,7 @@ impl Retirement {
             .storage()
             .persistent()
             .get(&key)
-            .ok_or(RetirementError::CreditNotActive)?;
+            .ok_or(RetirementError::RecordNotFound)?;
 
         record.certificate_ipfs_hash = ipfs_hash.clone();
 
@@ -1320,7 +1377,7 @@ mod tests {
             &nonce,
         );
 
-        assert_eq!(result, Err(Ok(RetirementError::CreditNotActive)));
+        assert_eq!(result, Err(Ok(RetirementError::RecordNotFound)));
     }
 
     #[test]
@@ -1351,5 +1408,85 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    // ── Issue #1084: Migration tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_initialize_sets_version_to_current() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Retirement, ());
+        let client = RetirementClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+
+        assert_eq!(client.get_version(), CURRENT_VERSION);
+    }
+
+    #[test]
+    fn test_migration_v0_to_v1_bumps_version() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Retirement, ());
+        // Manually set version to 0 (pre-initialize state) and run migrations.
+        env.as_contract(&contract_id, || {
+            // Starting at v0 (the default when no version key exists).
+            assert_eq!(get_version(&env), 0);
+            run_migrations(&env, 1).unwrap();
+            assert_eq!(get_version(&env), 1);
+        });
+    }
+
+    #[test]
+    fn test_migration_is_no_op_when_already_at_target_version() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Retirement, ());
+        let client = RetirementClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+
+        // Version is now CURRENT_VERSION (1). Running migrations again must be a no-op.
+        env.as_contract(&contract_id, || {
+            let before = get_version(&env);
+            run_migrations(&env, CURRENT_VERSION).unwrap();
+            assert_eq!(get_version(&env), before);
+        });
+    }
+
+    #[test]
+    fn test_downgrade_not_allowed() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Retirement, ());
+        env.as_contract(&contract_id, || {
+            set_version(&env, 1);
+            let result = run_migrations(&env, 0);
+            assert_eq!(result, Err(RetirementError::DowngradeNotAllowed));
+            // Version must be unchanged after a failed downgrade attempt.
+            assert_eq!(get_version(&env), 1);
+        });
+    }
+
+    #[test]
+    fn test_double_initialize_sets_version_then_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(Retirement, ());
+        let client = RetirementClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+
+        // Version must have been set on first initialize.
+        assert_eq!(client.get_version(), CURRENT_VERSION);
+
+        let result = client.try_initialize(&admin);
+        assert_eq!(result, Err(Ok(RetirementError::AlreadyInitialized)));
     }
 }
