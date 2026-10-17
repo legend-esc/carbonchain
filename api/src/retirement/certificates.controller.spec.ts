@@ -125,7 +125,20 @@ describe('CertificatesController', () => {
       const result = await controller.downloadCertificate('R1');
 
       expect(result).toBeInstanceOf(StreamableFile);
-      expect(certificateService.generatePdf).toHaveBeenCalled();
+      const headers = result.getHeaders();
+      expect(headers['type']).toBe('application/pdf');
+      expect(headers['disposition']).toBe(
+        'attachment; filename="retirement-certificate-R1.pdf"',
+      );
+      expect(certificateService.generatePdf).toHaveBeenCalledWith({
+        retirementId: 'R1',
+        creditId: 'CR-1',
+        buyer: 'GXYZ',
+        tonnes: '500',
+        reason: 'Scope 1 compensation',
+        timestamp: 1_700_000_000,
+        vintageYear: 2023,
+      });
     });
 
     it('throws NotFoundException when the retirement is missing', async () => {

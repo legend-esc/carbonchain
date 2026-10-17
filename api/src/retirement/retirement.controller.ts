@@ -128,6 +128,7 @@ export class RetirementController {
   @UseGuards(JwtAuthGuard)
   @Throttle({ limit: 10, ttl: 60_000 })
   @Get(':id/certificate')
+  @Get('certificates/:id/download')
   @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
