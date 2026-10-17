@@ -137,6 +137,22 @@ export interface CertificateVerification {
   mismatch_reason?: string;
 }
 
+/**
+ * Metadata and payload definitions for retirement certificate download responses.
+ */
+export interface CertificateDownloadMetadata {
+  id: string;
+  filename: string;
+  contentType: 'application/pdf';
+  contentDisposition: string;
+  sizeBytes?: number;
+}
+
+export interface CertificateDownloadResponse<TBuffer = ArrayBuffer | Blob | Uint8Array> {
+  metadata: CertificateDownloadMetadata;
+  content: TBuffer;
+}
+
 export interface MrvDataPoint {
   project_id: string;
   oracle: string;
