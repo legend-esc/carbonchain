@@ -45,6 +45,10 @@ export class WebhooksController {
     status: 400,
     description: 'Invalid or SSRF-blocked URL',
   })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
   @Post()
   async registerWebhook(
     @Body() body: { url: string; events: string[] },
@@ -54,6 +58,11 @@ export class WebhooksController {
 
   @ApiOperation({ summary: 'List all registered webhooks' })
   @ApiResponse({ status: 200, description: 'List of webhooks' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
   @Get()
   async getWebhooks(): Promise<Webhook[]> {
     return this.webhooksService.getWebhooks();
@@ -61,6 +70,11 @@ export class WebhooksController {
 
   @ApiOperation({ summary: 'Get webhook by ID' })
   @ApiResponse({ status: 200, description: 'Webhook details' })
+  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
   @ApiResponse({ status: 404, description: 'Webhook not found' })
   @Get(':id')
   async getWebhook(@Param('id') id: string): Promise<Webhook> {
@@ -73,6 +87,12 @@ export class WebhooksController {
 
   @ApiOperation({ summary: 'Delete a webhook' })
   @ApiResponse({ status: 200, description: 'Webhook deleted' })
+  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
   @Delete(':id')
   async deleteWebhook(@Param('id') id: string): Promise<{ success: boolean }> {
     const success = await this.webhooksService.deleteWebhook(id);
@@ -81,6 +101,12 @@ export class WebhooksController {
 
   @ApiOperation({ summary: 'List deliveries, optionally filtered by webhook' })
   @ApiResponse({ status: 200, description: 'List of deliveries' })
+  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
   @Get(':id/deliveries')
   async getDeliveries(@Param('id') id: string): Promise<WebhookDelivery[]> {
     return this.webhooksService.getDeliveries(id);
