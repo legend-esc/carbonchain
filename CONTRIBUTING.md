@@ -14,11 +14,10 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Running Tests](#running-tests)
 - [Code Style Guidelines](#code-style-guidelines)
 - [Adding Error Codes](#adding-error-codes)
-- [Commit Message Conventions](#commit-message-conventions)
-- [Commit Message Conventions](#commit-message-conventions)
 - [Branch Naming Conventions](#branch-naming-conventions)
 - [Pull Request Process](#pull-request-process)
 - [Issue and PR Templates](#issue-and-pr-templates)
+- [Contract Upgrade Approvals Policy](#contract-upgrade-approvals-policy)
 - [Stellar Wave Contributions](#stellar-wave-contributions)
 - [Documentation](#documentation)
 
@@ -590,7 +589,24 @@ When adding a new error code, pick the **next available number** within the cont
 
 ---
 
-## Documentation
+## Contract Upgrade Approvals Policy
+
+Smart contract modifications govern tokenized carbon assets and settlement integrity. As such, any contract upgrade requires strict approval and governance sign-offs before deployment.
+
+### 1. Required Maintainer Approvals
+- **Minimum 2+ Core Maintainers**: At least two authorized project maintainers must explicitly review and approve the pull request containing the contract upgrade and migration code.
+- Self-approval by the author does not count toward the approval threshold.
+
+### 2. Mandatory Security Review for Logic Changes
+- **Security Review Required**: Any change altering business logic, state transition guards, storage key structures, or authentication checks must undergo a dedicated security review.
+- The security review verifies:
+  - Prevention of unauthorized administrative privilege escalation.
+  - Reentrancy, arithmetic overflow, and denial-of-service vulnerabilities.
+  - Correct authorization checks (`require_auth()`) on all mutating entrypoints.
+  - Compatibility of migration logic with existing ledger state.
+- The review sign-off and risk assessment must be documented directly in the release pull request before multisig execution.
+
+---
 
 ### Existing Documentation
 
