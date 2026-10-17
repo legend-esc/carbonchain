@@ -109,6 +109,36 @@ describe('RetirementController', () => {
       });
     });
 
+    it('should include vintageYear in CertificateData when present on record', async () => {
+      const retirementId = 'abc-vintage';
+      const mockRetirement: RetirementRecord = {
+        id: retirementId,
+        credit_id: 'credit-vintage',
+        buyer: 'GBUYER',
+        tonnes_retired: '500000',
+        reason: 'Scope 1',
+        retired_at: 1700000000,
+        tx_hash: 'txhash-vintage',
+        vintage_year: 2025,
+      };
+      const mockPdfBuffer = Buffer.from('%PDF-1.4');
+
+      mockRetirementService.getRetirement.mockResolvedValueOnce(mockRetirement);
+      mockCertificateService.generatePdf.mockResolvedValueOnce(mockPdfBuffer);
+
+      await controller.downloadCertificate(retirementId);
+
+      expect(mockCertificateService.generatePdf).toHaveBeenCalledWith({
+        retirementId,
+        creditId: mockRetirement.credit_id,
+        buyer: mockRetirement.buyer,
+        tonnes: mockRetirement.tonnes_retired,
+        reason: mockRetirement.reason,
+        timestamp: mockRetirement.retired_at,
+        vintageYear: 2025,
+      });
+    });
+
     it('should throw NotFoundException when retirement is not found', async () => {
       const retirementId = 'non-existent-id';
 
