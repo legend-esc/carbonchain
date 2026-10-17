@@ -14,11 +14,10 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Running Tests](#running-tests)
 - [Code Style Guidelines](#code-style-guidelines)
 - [Adding Error Codes](#adding-error-codes)
-- [Commit Message Conventions](#commit-message-conventions)
-- [Commit Message Conventions](#commit-message-conventions)
 - [Branch Naming Conventions](#branch-naming-conventions)
 - [Pull Request Process](#pull-request-process)
 - [Issue and PR Templates](#issue-and-pr-templates)
+- [Contract Upgrade Execution](#contract-upgrade-execution)
 - [Stellar Wave Contributions](#stellar-wave-contributions)
 - [Documentation](#documentation)
 
@@ -590,7 +589,28 @@ When adding a new error code, pick the **next available number** within the cont
 
 ---
 
-## Documentation
+## Contract Upgrade Execution
+
+When performing contract upgrades on Soroban, execution must follow strict security and operational protocols.
+
+### 1. WASM Hash Verification
+- Before submitting the upgrade transaction, independently compute the SHA-256 hash of the compiled release WASM binary using `sha256sum <contract>.wasm` or `soroban contract inspect`.
+- Cross-verify the computed hash against the multisig upgrade proposal payload and build provenance records.
+- Confirm that the bytecode deployed via `soroban contract install` precisely matches the approved build artifact.
+
+### 2. Admin Nonce Freshness
+- Query the current sequence number and authorization nonce for all administrative signing keys prior to building the upgrade transaction.
+- Ensure the transaction bounds (time-to-live and ledger bounds) reflect current network height to prevent signature expiration or stale submission.
+- Ensure replay protection by validating that signatures are single-use and nonces increment as expected.
+
+### 3. Migration Execution Order
+Execute upgrade transactions in strict atomic sequence:
+1. **Bytecode Installation**: Install the verified WASM binary on-chain (`soroban contract install --wasm ...`).
+2. **Contract Code Update**: Call the contract's upgrade authorization entrypoint (`update_current_contract_wasm`) signed by authorized maintainers.
+3. **State Migration**: Immediately invoke the migration function (`migrate(...)`) in the same batch or next transaction to transition any data structures before client traffic resumes.
+4. **Post-Upgrade Smoke Verification**: Run read-only query checks to confirm contract state, version numbers, and operational readiness.
+
+---
 
 ### Existing Documentation
 
