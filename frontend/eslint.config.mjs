@@ -45,6 +45,13 @@ export default tseslint.config(
     rules: {
       '@angular-eslint/template/banana-in-box': 'error',
       '@angular-eslint/template/no-negated-async': 'warn',
+      '@angular-eslint/template/alt-text': 'error',
+      '@angular-eslint/template/elements-content': 'warn',
+      '@angular-eslint/template/label-has-associated-control': 'warn',
+      '@angular-eslint/template/table-scope': 'warn',
+      '@angular-eslint/template/valid-aria': 'error',
+      '@angular-eslint/template/interactive-supports-focus': 'warn',
+      '@angular-eslint/template/role-has-required-aria': 'error',
     },
   },
 );
