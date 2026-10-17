@@ -10,3 +10,4 @@
 ## Guides
 - [Quick Start](QUICK_START.md)
 - [Doctor Command](guides/DOCTOR_COMMAND.md)
+- [Accessibility Developer Guide](guides/A11Y_DEVELOPER_GUIDE.md)
