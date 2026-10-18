@@ -391,4 +391,164 @@ export class AuthService {
     const blocked = await this.cache.get<boolean>(blocklistKey);
     return blocked === true;
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Token introspection (Issue #1172)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Introspect a JWT or refresh token and return its status and claims.
+   *
+   * Issue #1172 — Supports both access tokens (JWT) and refresh tokens (UUID).
+   *
+   * For **access tokens**: decodes the JWT, verifies the signature and
+   * expiry, then checks the blocklist for the `jti`.  Returns:
+   *   { active, account, jti, exp, iat, token_type: 'access' }
+   *
+   * For **refresh tokens**: looks up the UUID in Redis.  Returns:
+   *   { active, account, jti, exp, token_type: 'refresh' }
+   *   `exp` is not available for refresh tokens (no embedded expiry); the
+   *   `active` flag reflects whether the token still exists in Redis and its
+   *   family has not been revoked.
+   *
+   * If the token is malformed, expired, blocklisted, or the refresh family
+   * has been revoked, `active` is `false` and claims are omitted.
+   */
+  async introspectToken(token: string): Promise<{
+    active: boolean;
+    account?: string;
+    jti?: string;
+    exp?: number;
+    iat?: number;
+    token_type?: 'access' | 'refresh';
+  }> {
+    if (!token || typeof token !== 'string') {
+      return { active: false };
+    }
+
+    const trimmed = token.trim();
+
+    // ── Try JWT (access token) first ────────────────────────────────────────
+    // JWTs contain exactly two dots: header.payload.signature
+    if (trimmed.split('.').length === 3) {
+      return this.introspectAccessToken(trimmed);
+    }
+
+    // ── Otherwise treat as a refresh token (UUID) ───────────────────────────
+    return this.introspectRefreshToken(trimmed);
+  }
+
+  /**
+   * Introspect an access token (JWT).
+   * Verifies signature + expiry, then checks the blocklist.
+   */
+  private async introspectAccessToken(token: string): Promise<{
+    active: boolean;
+    account?: string;
+    jti?: string;
+    exp?: number;
+    iat?: number;
+    token_type?: 'access' | 'refresh';
+  }> {
+    let payload: {
+      account?: string;
+      jti?: string;
+      exp?: number;
+      iat?: number;
+    };
+
+    try {
+      // verifyAsync throws on invalid signature or expired token.
+      payload = await this.jwtService.verifyAsync<{
+        account?: string;
+        jti?: string;
+        exp?: number;
+        iat?: number;
+      }>(token);
+    } catch {
+      // Try decoding without verification so we can still return claims
+      // for expired tokens (active: false but with metadata).
+      const decoded = this.jwtService.decode<{
+        account?: string;
+        jti?: string;
+        exp?: number;
+        iat?: number;
+      }>(token);
+
+      return {
+        active: false,
+        ...(decoded?.account ? { account: decoded.account } : {}),
+        ...(decoded?.jti ? { jti: decoded.jti } : {}),
+        ...(decoded?.exp ? { exp: decoded.exp } : {}),
+        ...(decoded?.iat ? { iat: decoded.iat } : {}),
+        token_type: 'access',
+      };
+    }
+
+    // Check blocklist for revoked access tokens
+    if (payload.jti && (await this.isTokenRevoked(payload.jti))) {
+      return {
+        active: false,
+        ...(payload.account ? { account: payload.account } : {}),
+        jti: payload.jti,
+        ...(payload.exp ? { exp: payload.exp } : {}),
+        ...(payload.iat ? { iat: payload.iat } : {}),
+        token_type: 'access',
+      };
+    }
+
+    return {
+      active: true,
+      account: payload.account,
+      jti: payload.jti,
+      ...(payload.exp ? { exp: payload.exp } : {}),
+      ...(payload.iat ? { iat: payload.iat } : {}),
+      token_type: 'access',
+    };
+  }
+
+  /**
+   * Introspect a refresh token (UUID stored in Redis).
+   * Checks that the token exists and its family is still active.
+   */
+  private async introspectRefreshToken(token: string): Promise<{
+    active: boolean;
+    account?: string;
+    jti?: string;
+    exp?: number;
+    iat?: number;
+    token_type?: 'access' | 'refresh';
+  }> {
+    const tokenKey = `${REFRESH_TOKEN_PREFIX}${token}`;
+    const tokenData = await this.cache.get<{
+      account: string;
+      familyId: string;
+    }>(tokenKey);
+
+    if (!tokenData) {
+      return { active: false, token_type: 'refresh' };
+    }
+
+    // Check that the family is still active (not revoked).
+    const currentRefreshId = await this.cache.get<string>(
+      `${REFRESH_FAMILY_PREFIX}${tokenData.familyId}`,
+    );
+
+    if (!currentRefreshId) {
+      // Family has been revoked
+      return {
+        active: false,
+        account: tokenData.account,
+        token_type: 'refresh',
+      };
+    }
+
+    return {
+      active: true,
+      account: tokenData.account,
+      // For refresh tokens, jti maps to the token UUID itself
+      jti: token,
+      token_type: 'refresh',
+    };
+  }
 }

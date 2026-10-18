@@ -9,9 +9,10 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags, ApiBody, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { AuthTokenDto } from './dto/auth-token.dto';
+import { IntrospectTokenDto } from './dto/introspect-token.dto';
 import {
   Throttle,
   ThrottlerGuard,
@@ -124,5 +125,74 @@ export class AuthController {
   @Get('me')
   getMe(@Request() req: { user: { account: string } }): { account: string } {
     return { account: req.user.account };
+  }
+
+  // ── Issue #1172: JWT Token Introspection ──────────────────────────────────
+
+  /**
+   * POST /auth/introspect — Introspect a token's validity, claims, and
+   * expiration without full authentication.  Public endpoint, rate-limited.
+   *
+   * Supports both access tokens (JWT) and refresh tokens (UUID).
+   *
+   * Response shape (RFC 7662-inspired):
+   *   {
+   *     active: boolean,
+   *     account?: string,
+   *     jti?: string,
+   *     exp?: number,         // access tokens only
+   *     iat?: number,         // access tokens only
+   *     token_type?: 'access' | 'refresh'
+   *   }
+   *
+   * For **access tokens**: verifies signature + expiry, then checks the
+   *   blocklist for revoked jti.
+   * For **refresh tokens**: looks up the UUID in Redis and checks that the
+   *   family has not been revoked.
+   */
+  @ApiOperation({
+    summary: 'Introspect a JWT or refresh token (Issue #1172)',
+  })
+  @ApiBody({ type: IntrospectTokenDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Token introspection result — { active, account?, jti?, exp?, iat?, token_type? }',
+    schema: {
+      type: 'object',
+      properties: {
+        active: { type: 'boolean', description: 'Whether the token is currently valid' },
+        account: { type: 'string', description: 'Stellar account address (when active)' },
+        jti: { type: 'string', description: 'Token identifier' },
+        exp: { type: 'number', description: 'Expiration timestamp (access tokens only)' },
+        iat: { type: 'number', description: 'Issued-at timestamp (access tokens only)' },
+        token_type: {
+          type: 'string',
+          enum: ['access', 'refresh'],
+          description: 'Token type',
+        },
+      },
+      required: ['active'],
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Token is required' })
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ limit: 30, ttl: 60_000 })
+  @Post('introspect')
+  @HttpCode(HttpStatus.OK)
+  async introspect(
+    @Body() body: IntrospectTokenDto,
+  ): Promise<{
+    active: boolean;
+    account?: string;
+    jti?: string;
+    exp?: number;
+    iat?: number;
+    token_type?: 'access' | 'refresh';
+  }> {
+    if (!body?.token) {
+      throw new Error('token is required');
+    }
+    return this.authService.introspectToken(body.token);
   }
 }

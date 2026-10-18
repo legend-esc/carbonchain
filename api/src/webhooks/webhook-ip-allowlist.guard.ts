@@ -3,29 +3,54 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import ipRangeCheck from 'ip-range-check';
+import { WebhookIpAllowlistService } from './webhook-ip-allowlist.service';
 
 /**
  * Guard that restricts webhook endpoints to a configured IP allowlist.
- * Set WEBHOOK_ALLOWED_IPS to a comma-separated list of IPs or CIDR ranges.
- * When the env var is empty all IPs are allowed (open — suitable for development).
+ *
+ * Issue #1170 — The guard now consults a dynamic, admin-managed allowlist
+ * stored in Redis (via WebhookIpAllowlistService) in addition to the static
+ * WEBHOOK_ALLOWED_IPS env var.  The dynamic list takes precedence; when it
+ * is non-empty only IPs in that list are allowed.  When the dynamic list is
+ * empty the guard falls back to the env-var-based static list.  When both
+ * are empty all IPs are allowed (open — suitable for development).
  */
 @Injectable()
 export class WebhookIpAllowlistGuard implements CanActivate {
-  private readonly allowlist: string[];
+  private readonly staticAllowlist: string[];
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional()
+    private readonly allowlistService?: WebhookIpAllowlistService,
+  ) {
     const raw = this.configService.get<string>('WEBHOOK_ALLOWED_IPS', '');
-    this.allowlist = raw
+    this.staticAllowlist = raw
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
   }
 
-  canActivate(context: ExecutionContext): boolean {
-    if (this.allowlist.length === 0) {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    // Dynamic allowlist takes precedence when available (Issue #1170)
+    let allowlist: string[];
+
+    if (this.allowlistService) {
+      const dynamic = await this.allowlistService.getAllowlist();
+      if (dynamic.length > 0) {
+        allowlist = dynamic;
+      } else {
+        allowlist = this.staticAllowlist;
+      }
+    } else {
+      allowlist = this.staticAllowlist;
+    }
+
+    if (allowlist.length === 0) {
       return true;
     }
 
@@ -46,7 +71,7 @@ export class WebhookIpAllowlistGuard implements CanActivate {
     // Strip IPv4-mapped IPv6 prefix (::ffff:)
     const ip = raw.replace(/^::ffff:/, '');
 
-    if (!ipRangeCheck(ip, this.allowlist)) {
+    if (!ipRangeCheck(ip, allowlist)) {
       throw new ForbiddenException('IP address not in webhook allowlist');
     }
 

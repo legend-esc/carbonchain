@@ -45,6 +45,10 @@ __snapshots__/
 *.test-snapshot
 test_snapshots/
 **/test_snapshots/
+testsnapshot/
+**/testsnapshot/
+test-snapshot/
+**/test-snapshot/
 
 # Test result / reporter output
 junit.xml

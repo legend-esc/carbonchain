@@ -13,17 +13,49 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CacheService } from '../common/cache.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
+import { ApiProperty } from '@nestjs/swagger';
 import { MrvDataPoint } from '../../../shared';
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
 export class MrvWebhookDto {
+  @ApiProperty({
+    description: 'Oracle Stellar public key (G... address)',
+    example: 'GABCDE...',
+  })
   oraclePublicKey: string;
+
+  @ApiProperty({
+    description: 'Project identifier',
+    example: 'PROJ-001',
+  })
   projectId: string;
+
+  @ApiProperty({
+    description: 'Tonnes sequestered (as string for BigInt safety)',
+    example: '1000000',
+  })
   tonnesSequestered: string;
-  timestamp: number; // unix seconds; must be within TIMESTAMP_SKEW_SECONDS of server time
-  nonce: string; // unique per-request value; rejected on replay
-  signature: string; // HMAC-SHA256 hex of `${oraclePublicKey}:${projectId}:${tonnesSequestered}:${timestamp}:${nonce}` with ORACLE_WEBHOOK_SECRET
+
+  @ApiProperty({
+    description:
+      'Unix timestamp in seconds; must be within 300s of server time',
+    example: 1735689600,
+  })
+  timestamp: number;
+
+  @ApiProperty({
+    description: 'Unique per-request nonce for replay protection',
+    example: 'a1b2c3d4',
+  })
+  nonce: string;
+
+  @ApiProperty({
+    description:
+      'HMAC-SHA256 hex signature of `${oraclePublicKey}:${projectId}:${tonnesSequestered}:${timestamp}:${nonce}` signed with ORACLE_WEBHOOK_SECRET',
+    example: 'deadbeef...',
+  })
+  signature: string;
 }
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -55,10 +87,30 @@ export interface MrvAggregateResponse {
   monthlyBreakdown: MonthlyBucket[];
 }
 
+// ── Issue #1169: Oracle status response ──────────────────────────────────────
+
+export interface ProjectLastUpdate {
+  projectId: string;
+  lastUpdate: MrvDataPoint | null;
+}
+
+export interface OracleStatusResponse {
+  /** Whether the oracle contract is paused */
+  paused: boolean;
+  /** Number of registered oracle addresses */
+  oracleCount: number;
+  /** Global anomaly threshold in basis points (e.g. 2000 = 20%) */
+  globalThresholdBps: number;
+  /** Last MRV update per project (projects with at least one reading) */
+  lastUpdatePerProject: ProjectLastUpdate[];
+}
+
 // ── Cache keys ────────────────────────────────────────────────────────────────
 
 const HISTORY_CACHE_TTL = 30; // seconds
 const AGGREGATE_CACHE_TTL = 60; // seconds
+const STATUS_CACHE_TTL = 30; // seconds — Issue #1169
+const STATUS_CACHE_KEY = 'oracle:status';
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -145,6 +197,145 @@ export class OracleService {
       );
     }
     this.webhookSecret = webhookSecret ?? 'test-only-secret-do-not-use';
+  }
+
+  // ── Issue #1169: Oracle health/status ──────────────────────────────────────
+
+  /**
+   * Fetch the oracle contract health status: paused flag, registered oracle
+   * count, global anomaly threshold, and last MRV update per project.
+   *
+   * Calls three contract read methods (paused, get_oracle_count,
+   * get_anomaly_threshold) and also attempts to fetch the latest reading for
+   * each known project.  The result is cached for 30 seconds (STATUS_CACHE_TTL).
+   */
+  async getOracleStatus(): Promise<OracleStatusResponse> {
+    const cached =
+      await this.cacheService.get<OracleStatusResponse>(STATUS_CACHE_KEY);
+    if (cached) return cached;
+
+    // Run all three contract reads in parallel for lower latency.
+    const [paused, oracleCount, globalThresholdBps] = await Promise.all([
+      this.readPaused(),
+      this.readOracleCount(),
+      this.readAnomalyThreshold(),
+    ]);
+
+    const result: OracleStatusResponse = {
+      paused,
+      oracleCount,
+      globalThresholdBps,
+      lastUpdatePerProject: await this.getLastUpdatePerProject(),
+    };
+
+    await this.cacheService.set(STATUS_CACHE_KEY, result, STATUS_CACHE_TTL);
+    return result;
+  }
+
+  /** Read the paused flag from the contract. Defaults to false on error. */
+  private async readPaused(): Promise<boolean> {
+    try {
+      const rv = await this.stellarService.readContract(
+        this.contractId,
+        'paused',
+        [],
+      );
+      if (!rv) return false;
+      return Boolean(scValToNative(rv as Parameters<typeof scValToNative>[0]));
+    } catch (err) {
+      this.logger.warn(
+        `Oracle status: paused() call failed: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** Read the registered oracle count from the contract. Defaults to 0 on error. */
+  private async readOracleCount(): Promise<number> {
+    try {
+      const rv = await this.stellarService.readContract(
+        this.contractId,
+        'get_oracle_count',
+        [],
+      );
+      if (!rv) return 0;
+      return Number(scValToNative(rv as Parameters<typeof scValToNative>[0]));
+    } catch (err) {
+      this.logger.warn(
+        `Oracle status: get_oracle_count() call failed: ${(err as Error).message}`,
+      );
+      return 0;
+    }
+  }
+
+  /** Read the global anomaly threshold (basis points). Defaults to 2000 on error. */
+  private async readAnomalyThreshold(): Promise<number> {
+    try {
+      const rv = await this.stellarService.readContract(
+        this.contractId,
+        'get_anomaly_threshold',
+        [],
+      );
+      if (!rv) return 2000;
+      return Number(scValToNative(rv as Parameters<typeof scValToNative>[0]));
+    } catch (err) {
+      this.logger.warn(
+        `Oracle status: get_anomaly_threshold() call failed: ${(err as Error).message}`,
+      );
+      return 2000;
+    }
+  }
+
+  /**
+   * Best-effort fetch of the latest MRV reading per project.
+   *
+   * The contract does not expose a list of all project IDs, so we rely on a
+   * configured list of known projects (ORACLE_STATUS_PROJECTS env var,
+   * comma-separated).  When unset or empty, returns an empty array.
+   */
+  private async getLastUpdatePerProject(): Promise<ProjectLastUpdate[]> {
+    const rawProjects = this.configService.get<string>(
+      'ORACLE_STATUS_PROJECTS',
+      '',
+    );
+    const projectIds = rawProjects
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (projectIds.length === 0) return [];
+
+    const results = await Promise.all(
+      projectIds.map(async (projectId) => {
+        try {
+          const rv = await this.stellarService.readContract(
+            this.contractId,
+            'get_latest',
+            [nativeToScVal(projectId, { type: 'string' })],
+          );
+          if (!rv) return { projectId, lastUpdate: null };
+          const point = scValToNative(
+            rv as Parameters<typeof scValToNative>[0],
+          ) as Record<string, unknown> | null;
+          if (!point) return { projectId, lastUpdate: null };
+          return {
+            projectId,
+            lastUpdate: {
+              oracle: String(point['oracle'] ?? ''),
+              project_id: String(point['project_id'] ?? projectId),
+              tonnes_sequestered: BigInt(point['tonnes'] ?? 0).toString(),
+              measurement_date: Number(point['recorded_at'] ?? 0),
+              methodology: '',
+              anomaly_flag: Boolean(point['anomaly'] ?? false),
+            } as MrvDataPoint,
+          };
+        } catch {
+          return { projectId, lastUpdate: null };
+        }
+      }),
+    );
+
+    return results;
   }
 
   // ── HMAC validation ──────────────────────────────────────────────────────────
