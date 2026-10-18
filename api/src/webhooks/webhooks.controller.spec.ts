@@ -17,6 +17,7 @@ const mockWebhooksService = {
   getWebhook: jest.fn(),
   deleteWebhook: jest.fn(),
   validateWebhookUrl: jest.fn().mockResolvedValue(undefined),
+  getDeliveries: jest.fn(),
 };
 
 describe('WebhooksController', () => {
@@ -121,6 +122,58 @@ describe('WebhooksController', () => {
       const result = await controller.deleteWebhook('nonexistent-id');
 
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('getDeliveries', () => {
+    it('forwards parsed query params to the service and returns paginated result', async () => {
+      const query = {
+        webhookId: 'webhook_123',
+        status: 'failed',
+        eventType: 'credit_submitted',
+        from: '2024-01-01T00:00:00.000Z',
+        to: '2024-01-31T23:59:59.999Z',
+        page: 2,
+        pageSize: 10,
+      };
+      const expectedResult = {
+        data: [
+          {
+            id: 'delivery_1',
+            webhookId: 'webhook_123',
+            eventType: 'credit_submitted',
+            status: 'failed',
+            attempts: 3,
+            createdAt: new Date(),
+          },
+        ],
+        total: 11,
+        page: 2,
+        pageSize: 10,
+        totalPages: 2,
+      };
+      mockWebhooksService.getDeliveries.mockResolvedValueOnce(expectedResult);
+
+      const result = await controller.getDeliveries(query);
+
+      expect(mockWebhooksService.getDeliveries).toHaveBeenCalledWith(query);
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('passes through an empty query object', async () => {
+      const expectedResult = {
+        data: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        totalPages: 0,
+      };
+      mockWebhooksService.getDeliveries.mockResolvedValueOnce(expectedResult);
+
+      const result = await controller.getDeliveries({});
+
+      expect(mockWebhooksService.getDeliveries).toHaveBeenCalledWith({});
+      expect(result).toEqual(expectedResult);
     });
   });
 });

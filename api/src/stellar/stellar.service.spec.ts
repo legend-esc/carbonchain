@@ -561,6 +561,195 @@ describe('StellarService - sequence number integration', () => {
     });
   });
 
+  // ── submitTransaction (#1178) ──────────────────────────────────────────────
+
+  describe('submitTransaction (#1178)', () => {
+    const { TransactionBuilder: RealTxBuilder, Networks, Asset, Account } =
+      jest.requireActual<typeof import('@stellar/stellar-sdk')>(
+        '@stellar/stellar-sdk',
+      );
+
+    function buildSignedXdr(sourceKeypair: Keypair): string {
+      const account = new Account(sourceKeypair.publicKey(), '100');
+      const tx = new RealTxBuilder(account, {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(Operation.bumpSequence({ bumpTo: '101' }))
+        .setTimeout(30)
+        .build();
+      tx.sign(sourceKeypair);
+      return tx.toXDR();
+    }
+
+    it('submits a pre-signed XDR and returns the hash and status', async () => {
+      const signedXdr = buildSignedXdr(signerKeypair);
+      mockSendTransaction.mockResolvedValue({
+        status: 'PENDING',
+        hash: 'submitted-hash',
+      });
+      mockGetTransaction.mockResolvedValue({
+        status: 'SUCCESS',
+        hash: 'submitted-hash',
+      });
+
+      const result = await service.submitTransaction(signedXdr);
+
+      expect(mockSendTransaction).toHaveBeenCalledTimes(1);
+      expect(result.hash).toBe('submitted-hash');
+      expect(result.status).toBe('SUCCESS');
+    });
+
+    it('resets the sequence cache and retries on tx_bad_seq', async () => {
+      jest.useFakeTimers();
+      const signedXdr = buildSignedXdr(signerKeypair);
+      const resetSpy = jest.spyOn(seqNoManager, 'reset');
+
+      mockSendTransaction.mockRejectedValueOnce(new Error('tx_bad_seq'));
+      mockSendTransaction.mockResolvedValueOnce({
+        status: 'PENDING',
+        hash: 'retry-submit-hash',
+      });
+      mockGetTransaction.mockResolvedValue({
+        status: 'SUCCESS',
+        hash: 'retry-submit-hash',
+      });
+
+      const resultPromise = service.submitTransaction(signedXdr);
+      await jest.runAllTimersAsync();
+      const result = await resultPromise;
+
+      expect(resetSpy).toHaveBeenCalled();
+      expect(mockSendTransaction).toHaveBeenCalledTimes(2);
+      expect(result.hash).toBe('retry-submit-hash');
+      expect(result.status).toBe('SUCCESS');
+    });
+
+    it('throws once BAD_SEQ_MAX_RETRIES is exhausted', async () => {
+      jest.useFakeTimers();
+      const signedXdr = buildSignedXdr(signerKeypair);
+
+      mockSendTransaction.mockRejectedValue(new Error('tx_bad_seq'));
+
+      const resultPromise = service.submitTransaction(signedXdr);
+      // Attach a catch handler before advancing timers to avoid unhandled rejections
+      const assertion = expect(resultPromise).rejects.toThrow('tx_bad_seq');
+      await jest.runAllTimersAsync();
+      await assertion;
+
+      // initial attempt + BAD_SEQ_MAX_RETRIES retries
+      expect(mockSendTransaction.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('propagates non-bad-seq errors without retrying', async () => {
+      const signedXdr = buildSignedXdr(signerKeypair);
+      mockSendTransaction.mockRejectedValue(new Error('tx_insufficient_fee'));
+
+      await expect(service.submitTransaction(signedXdr)).rejects.toThrow(
+        'tx_insufficient_fee',
+      );
+
+      expect(mockSendTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── simulateContractCall (#1179) ───────────────────────────────────────────
+
+  describe('simulateContractCall (#1179)', () => {
+    const { xdr: realXdr, Address, nativeToScVal } =
+      jest.requireActual<typeof import('@stellar/stellar-sdk')>(
+        '@stellar/stellar-sdk',
+      );
+
+    it('builds the simulation transaction with the supplied source account', async () => {
+      const sourceAccount = Keypair.random().publicKey();
+      mockLoadAccount.mockResolvedValue({
+        sequenceNumber: '77',
+        accountId: () => sourceAccount,
+      });
+      mockSimulateTransaction.mockResolvedValue({
+        transactionData: 'AAAAAA==',
+        minResourceFee: '400',
+        result: { retval: 'ok' },
+      });
+
+      const args = [nativeToScVal(42, { type: 'u32' })];
+      await service.simulateContractCall(
+        CONTRACT_ID,
+        'quote',
+        args,
+        sourceAccount,
+      );
+
+      expect(mockLoadAccount).toHaveBeenCalledWith(sourceAccount);
+      expect(mockSimulateTransaction).toHaveBeenCalledTimes(1);
+
+      const simulatedTx = mockSimulateTransaction.mock.calls[0][0];
+      expect(simulatedTx.source).toBe(sourceAccount);
+      expect(simulatedTx.sequence).toBe('78');
+
+      // The operation must target the requested contract and method.
+      const op = simulatedTx.operations[0];
+      expect(op.type).toBe('invokeHostFunction');
+      const invocation = realXdr.HostFunction.fromXDR(
+        op.func,
+        'base64',
+      ) as InstanceType<typeof realXdr.HostFunction>;
+      const invokeContractArgs = invocation.invokeContract();
+      expect(
+        Address.fromScAddress(invokeContractArgs.contractAddress()).toString(),
+      ).toBe(CONTRACT_ID);
+      expect(invokeContractArgs.functionName().toString()).toBe('quote');
+    });
+
+    it('returns the raw SimulateTransactionResponse', async () => {
+      const sourceAccount = Keypair.random().publicKey();
+      mockLoadAccount.mockResolvedValue({
+        sequenceNumber: '10',
+        accountId: () => sourceAccount,
+      });
+      const simulationResponse = {
+        transactionData: 'BBBBBB==',
+        minResourceFee: '1234',
+        result: { retval: 'value' },
+      };
+      mockSimulateTransaction.mockResolvedValue(simulationResponse);
+
+      const result = await service.simulateContractCall(
+        CONTRACT_ID,
+        'quote',
+        [],
+        sourceAccount,
+      );
+
+      expect(result).toBe(simulationResponse);
+    });
+
+    it('does not sign the transaction before simulating', async () => {
+      const sourceAccount = Keypair.random().publicKey();
+      mockLoadAccount.mockResolvedValue({
+        sequenceNumber: '5',
+        accountId: () => sourceAccount,
+      });
+      mockSimulateTransaction.mockResolvedValue({
+        transactionData: 'AAAAAA==',
+        minResourceFee: '100',
+        result: { retval: 'ok' },
+      });
+
+      await service.simulateContractCall(
+        CONTRACT_ID,
+        'quote',
+        [],
+        sourceAccount,
+      );
+
+      const simulatedTx = mockSimulateTransaction.mock.calls[0][0];
+      expect(simulatedTx.signatures).toHaveLength(0);
+      expect(mockSendTransaction).not.toHaveBeenCalled();
+    });
+  });
+
   // ── Dynamic fee estimation (#472) ──────────────────────────────────────────
 
   describe('dynamic fee estimation (#472)', () => {

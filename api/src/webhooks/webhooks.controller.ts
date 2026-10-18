@@ -5,10 +5,17 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+} from '@nestjs/swagger';
 import type {
   Webhook,
   WebhookDelivery,
@@ -66,6 +73,138 @@ export class WebhooksController {
   @Get()
   async getWebhooks(): Promise<Webhook[]> {
     return this.webhooksService.getWebhooks();
+  }
+
+  @ApiOperation({
+    summary: 'List webhook deliveries with optional filters and pagination',
+  })
+  @ApiQuery({
+    name: 'webhookId',
+    required: false,
+    description: 'Filter deliveries by webhook ID',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter by delivery status (e.g. success, failed, pending)',
+  })
+  @ApiQuery({
+    name: 'eventType',
+    required: false,
+    description: 'Filter by event type',
+  })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    description: 'ISO 8601 lower bound (inclusive) on delivery timestamp',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    description: 'ISO 8601 upper bound (inclusive) on delivery timestamp',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Page number (1-based, defaults to 1)',
+  })
+  @ApiQuery({
+    name: 'pageSize',
+    required: false,
+    description: 'Page size (defaults to 20, max 100)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list of deliveries',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid query parameters' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @Get('deliveries')
+  async getFilteredDeliveries(@Query() query: Record<string, unknown>): Promise<{
+    data: WebhookDelivery[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const filters: {
+      webhookId?: string;
+      status?: string;
+      eventType?: string;
+      from?: Date;
+      to?: Date;
+      page?: number;
+      pageSize?: number;
+    } = {};
+
+    if (query.webhookId !== undefined && query.webhookId !== '') {
+      if (typeof query.webhookId !== 'string') {
+        throw new BadRequestException('webhookId must be a string');
+      }
+      filters.webhookId = query.webhookId;
+    }
+
+    if (query.status !== undefined && query.status !== '') {
+      if (typeof query.status !== 'string') {
+        throw new BadRequestException('status must be a string');
+      }
+      filters.status = query.status;
+    }
+
+    if (query.eventType !== undefined && query.eventType !== '') {
+      if (typeof query.eventType !== 'string') {
+        throw new BadRequestException('eventType must be a string');
+      }
+      filters.eventType = query.eventType;
+    }
+
+    if (query.from !== undefined && query.from !== '') {
+      if (typeof query.from !== 'string') {
+        throw new BadRequestException('from must be an ISO 8601 date string');
+      }
+      const from = new Date(query.from);
+      if (Number.isNaN(from.getTime())) {
+        throw new BadRequestException('from must be a valid ISO 8601 date');
+      }
+      filters.from = from;
+    }
+
+    if (query.to !== undefined && query.to !== '') {
+      if (typeof query.to !== 'string') {
+        throw new BadRequestException('to must be an ISO 8601 date string');
+      }
+      const to = new Date(query.to);
+      if (Number.isNaN(to.getTime())) {
+        throw new BadRequestException('to must be a valid ISO 8601 date');
+      }
+      filters.to = to;
+    }
+
+    if (filters.from && filters.to && filters.from > filters.to) {
+      throw new BadRequestException('from must be before or equal to to');
+    }
+
+    if (query.page !== undefined && query.page !== '') {
+      const page = Number(query.page);
+      if (!Number.isInteger(page) || page < 1) {
+        throw new BadRequestException('page must be a positive integer');
+      }
+      filters.page = page;
+    }
+
+    if (query.pageSize !== undefined && query.pageSize !== '') {
+      const pageSize = Number(query.pageSize);
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+        throw new BadRequestException(
+          'pageSize must be an integer between 1 and 100',
+        );
+      }
+      filters.pageSize = pageSize;
+    }
+
+    return this.webhooksService.getDeliveries(filters);
   }
 
   @ApiOperation({ summary: 'Get webhook by ID' })

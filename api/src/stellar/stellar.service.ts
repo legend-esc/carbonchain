@@ -608,12 +608,104 @@ export class StellarService implements OnModuleInit {
   }
 
   /**
-   * Issue #952 — Submit a pre-signed transaction XDR from the user's wallet.
+   * Issue #1178 — Submit a pre-signed transaction XDR from the user's wallet.
+   *
+   * The XDR is parsed with the configured network passphrase, the source
+   * account is extracted, and the raw signed envelope is submitted to Soroban
+   * RPC. On `tx_bad_seq` the sequence manager is reset and the submission is
+   * retried with exponential backoff up to `BAD_SEQ_MAX_RETRIES` times.
+   *
+   * After submission the transaction is polled to finality so the returned
+   * object carries the transaction hash and the final status.
    */
-  async submitTransaction(signedXdr: string): Promise<unknown> {
-    this.logger.log('Submitting pre-signed transaction');
-    return this.sorobanRpcServer.sendTransaction(
-      TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase),
+  async submitTransaction(
+    signedXdr: string,
+  ): Promise<Horizon.HorizonApi.SubmitTransactionResponse> {
+    const tx = TransactionBuilder.fromXDR(
+      signedXdr,
+      this.networkPassphrase,
+    ) as Transaction;
+
+    const pk = tx.source;
+    const hash = Buffer.from(tx.hash()).toString('hex');
+
+    this.logger.log(
+      `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] ` +
+        `Submitting pre-signed transaction hash=${hash.slice(0, 16)}... source=${pk}`,
+    );
+
+    for (let attempt = 0; attempt <= BAD_SEQ_MAX_RETRIES; attempt++) {
+      try {
+        const response = await this.withTimeout(
+          this.sorobanRpcServer.sendTransaction(tx),
+          'sendTransaction',
+        );
+
+        // Invalidate the cached account info — the sequence has advanced.
+        this.invalidateAccountInfoCache(pk);
+
+        const status = String(response.status);
+
+        if (status === 'ERROR') {
+          // RPC reports an error envelope — surface it as a thrown error so
+          // callers do not mistake it for a successful submission.
+          throw new Error(
+            `Transaction submission failed with status ERROR (hash: ${response.hash ?? hash})`,
+          );
+        }
+
+        // Poll to finality so the caller receives the confirmed status.
+        let finalStatus: string = status;
+        try {
+          const result = await this.pollTransactionStatus(
+            response.hash ?? hash,
+          );
+          finalStatus = String(result.status);
+        } catch (pollError) {
+          this.logger.warn(
+            `[#1178] Failed to poll final status for hash=${hash.slice(0, 16)}...: ${(pollError as Error).message}`,
+          );
+        }
+
+        return {
+          hash: response.hash ?? hash,
+          status: finalStatus,
+        } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
+      } catch (error: unknown) {
+        const isBadSeq = this.isBadSequenceError(error);
+
+        if (isBadSeq && attempt < BAD_SEQ_MAX_RETRIES) {
+          const delay = BAD_SEQ_INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
+
+          this.logger.warn(
+            `[#1178] tx_bad_seq for ${pk} (submitTransaction), attempt ${attempt + 1}/${BAD_SEQ_MAX_RETRIES}, ` +
+              `resetting sequence and retrying in ${delay}ms`,
+          );
+
+          this.metricsEmitter?.emit(TX_BAD_SEQ, {
+            publicKey: pk,
+            method: 'submitTransaction',
+            attempt: attempt + 1,
+          } satisfies TxBadSeqEvent);
+
+          // Reset both the Redis-backed and in-memory sequence caches so the
+          // next attempt re-fetches the current sequence from Horizon.
+          await this.seqNoManager.reset(pk);
+          if (this.inMemorySeqManager) {
+            await this.inMemorySeqManager.reset(pk);
+          }
+
+          await new Promise<void>((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    // Should be unreachable — the loop either returns or throws.
+    throw new Error(
+      `Max tx_bad_seq retries (${BAD_SEQ_MAX_RETRIES}) exceeded for submitTransaction (source: ${pk})`,
     );
   }
 
@@ -921,17 +1013,28 @@ export class StellarService implements OnModuleInit {
     contractId: string,
     method: string,
     args: xdr.ScVal[] = [],
+    sourceAccount?: string,
   ): Promise<rpc.Api.SimulateTransactionResponse> {
-    const tx = new TransactionBuilder(
-      new Account(
+    // Issue #1179 — When a custom source account is supplied, load it from
+    // Horizon so the simulation uses the real sequence number and the
+    // resulting fee/resource estimates are accurate for client-side signing.
+    let account: Account;
+    if (sourceAccount) {
+      const accountInfo = await this.getAccountInfo(sourceAccount);
+      account = new Account(sourceAccount, accountInfo.sequenceNumber);
+    } else {
+      // Dummy source account (all-zeroes) is valid for simulation-only calls
+      // because the RPC node does not enforce account existence.
+      account = new Account(
         'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         '0',
-      ),
-      {
-        fee: '100',
-        networkPassphrase: this.networkPassphrase,
-      },
-    )
+      );
+    }
+
+    const tx = new TransactionBuilder(account, {
+      fee: '100',
+      networkPassphrase: this.networkPassphrase,
+    })
       .addOperation(
         Operation.invokeHostFunction({
           func: xdr.HostFunction.hostFunctionTypeInvokeContract(
@@ -947,7 +1050,11 @@ export class StellarService implements OnModuleInit {
       .setTimeout(30)
       .build();
 
-    return this.sorobanRpcServer.simulateTransaction(tx);
+    // Simulate without signing — the RPC node only needs the envelope.
+    return this.withTimeout(
+      this.sorobanRpcServer.simulateTransaction(tx),
+      'simulateContractCall',
+    );
   }
 
   async getContractEvents(

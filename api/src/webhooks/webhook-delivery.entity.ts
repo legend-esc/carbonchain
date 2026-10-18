@@ -14,6 +14,7 @@ import { WebhookEntity } from './webhook.entity';
  * consistent across pods.
  */
 @Entity('webhook_deliveries')
+@Index(['webhookId', 'createdAt'])
 export class WebhookDeliveryEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -29,6 +30,15 @@ export class WebhookDeliveryEntity {
   @Column()
   eventId: string;
 
+  /**
+   * #1182 — event type used by the delivery history filters.  Indexed so
+   * filtered queries can do an index scan instead of a sequential scan.
+   */
+  @Index()
+  @Column({ type: 'varchar', nullable: true })
+  eventType?: string;
+
+  @Index()
   @Column({ default: 'pending' })
   status: 'pending' | 'success' | 'failed';
 

@@ -33,6 +33,7 @@ const VALID_BUYER = 'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
 const mockStellarService = {
   invokeContract: jest.fn(),
   readContract: jest.fn(),
+  simulateContractCall: jest.fn(),
 };
 
 const mockKeypairService = {
@@ -174,6 +175,86 @@ describe('MarketplaceService — mapMarketplaceError', () => {
       );
       await expect(service.buyOffer(VALID_BUYER, 1)).rejects.toThrow(
         BadGatewayException,
+      );
+    });
+  });
+
+  // === #1179 — quoteOffer simulation with custom source account
+
+  describe('#1179 — quoteOffer simulation', () => {
+    const OFFER_ID = 1;
+    const REQUESTER =
+      'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
+
+    function makeOffer() {
+      return {
+        id: BigInt(OFFER_ID),
+        seller: 'GSELLER',
+        credit_id: new Uint8Array(32),
+        price_xlm: BigInt(10_000_000),
+        tonnes: BigInt(1_000_000),
+        created_at: BigInt(1700000000),
+        active: true,
+        methodology: 'VCS',
+        payment_asset_code: 'XLM',
+        payment_asset_issuer: null,
+      };
+    }
+
+    function makeSimulation(minResourceFee: string) {
+      return {
+        latestLedger: 1234,
+        minResourceFee,
+        transactionData: {},
+        result: { retval: null },
+        cost: { cpuInsns: '1000', memBytes: '2000' },
+        _parsed: true,
+      };
+    }
+
+    beforeEach(() => {
+      mockStellarService.readContract.mockResolvedValue(makeOffer());
+    });
+
+    it('calls simulateContractCall with the requester public key as source account', async () => {
+      mockStellarService.simulateContractCall.mockResolvedValueOnce(
+        makeSimulation('100'),
+      );
+
+      await service.quoteOffer(OFFER_ID, REQUESTER);
+
+      expect(mockStellarService.simulateContractCall).toHaveBeenCalledTimes(1);
+      const [contractId, method, args, sourceAccount] =
+        mockStellarService.simulateContractCall.mock.calls[0];
+      expect(typeof contractId).toBe('string');
+      expect(typeof method).toBe('string');
+      expect(Array.isArray(args)).toBe(true);
+      expect(sourceAccount).toBe(REQUESTER);
+    });
+
+    it('derives the fee estimate from the simulation response', async () => {
+      mockStellarService.simulateContractCall.mockResolvedValueOnce(
+        makeSimulation('250'),
+      );
+
+      const quote = await service.quoteOffer(OFFER_ID, REQUESTER);
+
+      expect(quote).toBeDefined();
+      expect(mockStellarService.simulateContractCall).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(Array),
+        REQUESTER,
+      );
+    });
+
+    it('propagates simulation errors', async () => {
+      mockStellarService.simulateContractCall.mockRejectedValueOnce(
+        contractError(309),
+      );
+
+      await expect(service.quoteOffer(OFFER_ID, REQUESTER)).rejects.toThrow(
+        GoneException,
       );
     });
   });

@@ -86,6 +86,9 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
+    // RequestIdMiddleware must run first so that LoggingMiddleware,
+    // RequestMetricsMiddleware and downstream service calls can read the
+    // request id from RequestContextStore.
     consumer
       .apply(RequestIdMiddleware, LoggingMiddleware, RequestMetricsMiddleware)
       .forRoutes('*');

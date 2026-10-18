@@ -68,6 +68,35 @@ export interface WebhookDelivery {
   nextRetryAt?: Date;
 }
 
+/** #1182 — filters accepted by getDeliveries. */
+export interface WebhookDeliveryFilters {
+  webhookId?: string;
+  status?: 'pending' | 'success' | 'failed';
+  eventType?: string;
+  /** ISO date string or Date — inclusive lower bound on created_at. */
+  from?: string | Date;
+  /** ISO date string or Date — inclusive upper bound on created_at. */
+  to?: string | Date;
+  page?: number | string;
+  pageSize?: number | string;
+}
+
+/** #1182 — paginated delivery query result. */
+export interface PaginatedWebhookDeliveries {
+  data: WebhookDelivery[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+const VALID_DELIVERY_STATUSES: readonly ('pending' | 'success' | 'failed')[] = [
+  'pending',
+  'success',
+  'failed',
+];
+const DEFAULT_DELIVERY_PAGE_SIZE = 50;
+const MAX_DELIVERY_PAGE_SIZE = 200;
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -500,7 +529,70 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
 
   // ── Delivery queries ────────────────────────────────────────────────────────
 
-  async getDeliveries(webhookId?: string): Promise<WebhookDelivery[]> {
+  /**
+   * #1182 — Query delivery history with optional filters and pagination.
+   *
+   * Accepts either a bare `webhookId` string (legacy call signature) or a
+   * filter object.  All filters are applied in SQL; results are paginated.
+   */
+  async getDeliveries(
+    filters?: string | WebhookDeliveryFilters,
+  ): Promise<PaginatedWebhookDeliveries> {
+    const f: WebhookDeliveryFilters =
+      typeof filters === 'string' ? { webhookId: filters } : (filters ?? {});
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (f.webhookId) {
+      params.push(f.webhookId);
+      where.push(`webhook_id = $${params.length}`);
+    }
+
+    if (f.status) {
+      if (!VALID_DELIVERY_STATUSES.includes(f.status)) {
+        throw new BadRequestException(
+          `Invalid status "${f.status}" — must be one of: ${VALID_DELIVERY_STATUSES.join(', ')}`,
+        );
+      }
+      params.push(f.status);
+      where.push(`status = $${params.length}`);
+    }
+
+    if (f.eventType) {
+      params.push(f.eventType);
+      where.push(`event_type = $${params.length}`);
+    }
+
+    if (f.from !== undefined && f.from !== null && f.from !== '') {
+      const from = this.parseFilterDate(f.from, 'from');
+      params.push(from);
+      where.push(`created_at >= $${params.length}`);
+    }
+
+    if (f.to !== undefined && f.to !== null && f.to !== '') {
+      const to = this.parseFilterDate(f.to, 'to');
+      params.push(to);
+      where.push(`created_at <= $${params.length}`);
+    }
+
+    const page = this.parsePositiveInt(f.page, 1, 'page');
+    const pageSize = Math.min(
+      this.parsePositiveInt(f.pageSize, DEFAULT_DELIVERY_PAGE_SIZE, 'pageSize'),
+      MAX_DELIVERY_PAGE_SIZE,
+    );
+    const offset = (page - 1) * pageSize;
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countRows = await this.dataSource.query<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM webhook_deliveries
+         ${whereClause}`,
+      params,
+    );
+    const total = Number(countRows[0]?.count ?? 0);
+
     const rows = await this.dataSource.query<
       {
         id: string;
@@ -514,30 +606,61 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         created_at: Date;
       }[]
     >(
-      webhookId
-        ? `SELECT id, webhook_id, event_id, event_type, status, attempts,
-                  last_attempt_at, next_retry_at, created_at
-             FROM webhook_deliveries
-            WHERE webhook_id = $1
-            ORDER BY created_at DESC`
-        : `SELECT id, webhook_id, event_id, event_type, status, attempts,
-                  last_attempt_at, next_retry_at, created_at
-             FROM webhook_deliveries
-            ORDER BY created_at DESC`,
-      webhookId ? [webhookId] : [],
+      `SELECT id, webhook_id, event_id, event_type, status, attempts,
+              last_attempt_at, next_retry_at, created_at
+         FROM webhook_deliveries
+         ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${params.length + 1}
+        OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset],
     );
 
-    return rows.map((r) => ({
-      id: r.id,
-      webhookId: r.webhook_id,
-      eventId: r.event_id,
-      eventType: r.event_type,
-      status: r.status as 'pending' | 'success' | 'failed',
-      attempts: r.attempts,
-      createdAt: r.created_at,
-      lastAttemptAt: r.last_attempt_at ?? undefined,
-      nextRetryAt: r.next_retry_at ?? undefined,
-    }));
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        webhookId: r.webhook_id,
+        eventId: r.event_id,
+        eventType: r.event_type,
+        status: r.status as 'pending' | 'success' | 'failed',
+        attempts: r.attempts,
+        createdAt: r.created_at,
+        lastAttemptAt: r.last_attempt_at ?? undefined,
+        nextRetryAt: r.next_retry_at ?? undefined,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  /** #1182 — parse and validate a date filter value. */
+  private parseFilterDate(value: string | Date, field: string): Date {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        `Invalid "${field}" date filter: "${String(value)}"`,
+      );
+    }
+    return date;
+  }
+
+  /** #1182 — parse a positive integer query param, falling back to a default. */
+  private parsePositiveInt(
+    value: number | string | undefined,
+    fallback: number,
+    field: string,
+  ): number {
+    if (value === undefined || value === null || value === '') {
+      return fallback;
+    }
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException(
+        `Invalid "${field}" value: "${String(value)}" — must be a positive integer`,
+      );
+    }
+    return parsed;
   }
 
   /**
