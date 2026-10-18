@@ -199,6 +199,63 @@ export class CacheService implements OnModuleDestroy {
   }
 
   /**
+   * Retrieve multiple cached values in a single Redis MGET round-trip.
+   * Returns an array aligned with `keys`; missing keys and unparseable values
+   * map to `null`. Returns an all-`null` array when the cache is unavailable.
+   */
+  async mget<T>(keys: string[]): Promise<(T | null)[]> {
+    if (keys.length === 0) return [];
+    if (!this.isCacheAvailable()) return keys.map(() => null);
+    try {
+      const raws = await this.client!.mget(keys);
+      return raws.map((raw) => {
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw) as T;
+        } catch {
+          return null;
+        }
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Cache MGET failed for ${keys.length} keys: ${(err as Error).message}`,
+      );
+      this.recordFailure();
+      return keys.map(() => null);
+    }
+  }
+
+  /**
+   * Enumerate all keys matching a glob pattern using SCAN (non-blocking).
+   * Returns an empty array when the cache is unavailable.
+   */
+  async scanKeys(pattern: string): Promise<string[]> {
+    if (!this.isCacheAvailable()) return [];
+    try {
+      const keys: string[] = [];
+      let cursor: string = '0';
+      do {
+        const [nextCursor, matchedKeys] = await this.client!.scan(
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          100,
+        );
+        cursor = nextCursor;
+        keys.push(...matchedKeys);
+      } while (cursor !== '0');
+      return keys;
+    } catch (err) {
+      this.logger.warn(
+        `Cache SCAN "${pattern}" failed: ${(err as Error).message}`,
+      );
+      this.recordFailure();
+      return [];
+    }
+  }
+
+  /**
    * Store a value with an optional TTL (seconds). Defaults to CACHE_TTL_SECONDS env var.
    *
    * Returns `false` when the value could not be persisted (cache unavailable or
