@@ -12,6 +12,7 @@ const MOCK_CREDIT = {
   id: 'abc123',
   project_id: 'proj_1',
   issuer: 'GABC',
+  owner: 'GABC',
   vintage_year: 2024,
   methodology: 'VCS',
   geography: 'NG',

@@ -4,6 +4,7 @@ import {
   IsArray,
   ArrayMinSize,
   ArrayMaxSize,
+  IsNumber,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -42,4 +43,12 @@ export class MergeCreditsDto {
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   creditIds: string[];
+
+  @ApiProperty({
+    example: 1,
+    description: 'Nonce for replay protection',
+  })
+  @IsNumber()
+  @IsNotEmpty()
+  nonce: number;
 }

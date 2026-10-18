@@ -4,11 +4,12 @@ import { SwUpdate } from '@angular/service-worker';
 import { CreditMetadata, CreditStatus } from '@shared';
 import { ApiService } from '../services/api.service';
 import { ToastService } from '../services/toast.service';
+import { WalletScopedStore } from './wallet-scope';
 
 export type LoadingState = 'idle' | 'loading' | 'loaded' | 'error';
 
 @Injectable({ providedIn: 'root' })
-export class CreditStore {
+export class CreditStore extends WalletScopedStore {
   private readonly api = inject(ApiService);
   private readonly toast = inject(ToastService);
   private readonly swUpdate = inject(SwUpdate, { optional: true });
@@ -19,6 +20,14 @@ export class CreditStore {
   private readonly _loadingState = signal<LoadingState>('idle');
   private readonly _error = signal<string | null>(null);
   private readonly _selectedId = signal<string | null>(null);
+
+  constructor() {
+    super();
+    // Issue #965: the connected (network, address) owns everything cached here.
+    // Switching account or network drops the previous account's rows before any
+    // component can render them.
+    this.watchScope(() => this.reset());
+  }
 
   // ── Public readonly signals ────────────────────────────────────────────────
 
@@ -61,15 +70,66 @@ export class CreditStore {
 
   /** Load all credit IDs for a project, then fetch each credit's metadata. */
   async loadByProject(projectId: string): Promise<void> {
+    const scope = this.beginWrite();
     this._loadingState.set('loading');
     this._error.set(null);
 
     try {
       const ids = await firstValueFrom(this.api.listCreditsByProject(projectId));
       const credits = await Promise.all(ids.map((id) => firstValueFrom(this.api.getCredit(id))));
+      if (!this.commitWrite(`project=${projectId}`, scope)) {
+        this._loadingState.set('idle');
+        return;
+      }
       this._credits.set(credits);
       this._loadingState.set('loaded');
     } catch (err) {
+      this.discardWrite();
+      const msg = err instanceof Error ? err.message : 'Failed to load credits.';
+      this._error.set(msg);
+      this._loadingState.set('error');
+    }
+  }
+
+  /**
+   * Load all credits owned by an account (the wallet public key) via the
+   * paginated owner endpoint, then fetch each credit's metadata.
+   *
+   * Issue #965 — the result is filed under the active `(network, address)` and
+   * filtered to the requested owner, so a response that races an account switch
+   * can never surface another account's holdings.
+   */
+  async loadByOwner(owner: string): Promise<void> {
+    const scope = this.beginWrite();
+    this._loadingState.set('loading');
+    this._error.set(null);
+
+    try {
+      const limit = 50;
+      const allIds: string[] = [];
+      let offset = 0;
+
+      // The owner endpoint is paginated; collect pages until a short page.
+      for (let page = 0; page < 100; page++) {
+        const res = await firstValueFrom(this.api.listCreditsByOwner(owner, offset, limit));
+        allIds.push(...res.data);
+        if (res.data.length < limit) break;
+        offset += limit;
+      }
+
+      const fetched = await Promise.all(allIds.map((id) => firstValueFrom(this.api.getCredit(id))));
+      // Defence in depth: the API is the authority, but never let a row owned
+      // by somebody else into an account-scoped cache.
+      const credits = fetched.filter((c) => c.owner === owner);
+
+      if (!this.commitWrite(`owner=${owner} rows=${credits.length}`, scope)) {
+        this._loadingState.set('idle');
+        return;
+      }
+      this._credits.set(credits);
+      this._loadingState.set('loaded');
+    } catch (err) {
+      this.discardWrite();
       const msg = err instanceof Error ? err.message : 'Failed to load credits.';
       this._error.set(msg);
       this._loadingState.set('error');
@@ -78,11 +138,16 @@ export class CreditStore {
 
   /** Load a single credit and merge it into the store. */
   async loadOne(id: string): Promise<void> {
+    const scope = this.beginWrite();
     this._loadingState.set('loading');
     this._error.set(null);
 
     try {
       const credit = await firstValueFrom(this.api.getCredit(id));
+      if (!this.commitWrite(`credit=${id}`, scope)) {
+        this._loadingState.set('idle');
+        return;
+      }
       this._credits.update((list) => {
         const idx = list.findIndex((c) => c.id === id);
         return idx >= 0
@@ -91,6 +156,7 @@ export class CreditStore {
       });
       this._loadingState.set('loaded');
     } catch (err) {
+      this.discardWrite();
       const msg = err instanceof Error ? err.message : `Failed to load credit ${id}.`;
       this._error.set(msg);
       this._loadingState.set('error');
@@ -108,6 +174,7 @@ export class CreditStore {
     this._loadingState.set('idle');
     this._error.set(null);
     this._selectedId.set(null);
+    this.clearCacheKey();
   }
 
   /**
@@ -140,11 +207,17 @@ export class CreditStore {
    * On success, replaces temporary IDs with real IDs from the API response.
    * On failure, rolls back the optimistic update and shows an error toast.
    */
-  async splitCredit(creditId: string, splitTonnes: string, token: string): Promise<void> {
+  async splitCredit(
+    creditId: string,
+    splitTonnes: string,
+    token: string,
+  ): Promise<{ childCredit1: string; childCredit2: string }> {
+    const scope = this.beginWrite();
     const parent = this._credits().find((c) => c.id === creditId);
     if (!parent) {
+      this.discardWrite();
       this.toast.showError('Credit not found');
-      return;
+      throw new Error('Credit not found');
     }
 
     const splitTonnesBigInt = BigInt(splitTonnes);
@@ -180,6 +253,15 @@ export class CreditStore {
     try {
       const response = await firstValueFrom(this.api.splitCredit(creditId, splitTonnes, token));
 
+      // Issue #965 — if the account changed mid-flight the optimistic rows
+      // belong to the previous account, so leave the (already cleared) store
+      // alone rather than writing real IDs into the new account's cache.
+      if (this.cacheKey() !== scope) {
+        this.discardWrite();
+        return response;
+      }
+      this.annotate('split reconcile', scope, `credit=${creditId}`);
+
       // Reconcile: replace temporary IDs with real IDs
       this._credits.update((list) =>
         list.map((c) => {
@@ -197,7 +279,9 @@ export class CreditStore {
       await this.invalidateSwCache();
 
       this.toast.showSuccess('Credit split successfully');
+      return response;
     } catch (err) {
+      this.discardWrite();
       // Rollback: remove children, restore parent status
       this._credits.update((list) =>
         list
@@ -208,6 +292,38 @@ export class CreditStore {
       const msg = err instanceof Error ? err.message : 'Failed to split credit.';
       this._error.set(msg);
       this.toast.showError(msg);
+      throw err;
+    }
+  }
+
+  /** POST /credits/merge — merge multiple credits into one */
+  async mergeCredits(creditIds: string[], token: string): Promise<{ mergedCreditId: string }> {
+    const scope = this.beginWrite();
+    try {
+      const response = await firstValueFrom(this.api.mergeCredits(creditIds, token));
+
+      // Issue #965 — if the account changed mid-flight the optimistic rows
+      // belong to the previous account, so leave the (already cleared) store
+      // alone rather than writing real IDs into the new account's cache.
+      if (this.cacheKey() !== scope) {
+        this.discardWrite();
+        return response;
+      }
+      this.annotate('merge reconcile', scope, `credits=${creditIds.join(',')}`);
+
+      // Remove merged credits from local store
+      this._credits.update((list) => list.filter((c) => !creditIds.includes(c.id)));
+
+      await this.invalidateSwCache();
+
+      this.toast.showSuccess('Credits merged successfully');
+      return response;
+    } catch (err) {
+      this.discardWrite();
+      const msg = err instanceof Error ? err.message : 'Failed to merge credits.';
+      this._error.set(msg);
+      this.toast.showError(msg);
+      throw err;
     }
   }
 }

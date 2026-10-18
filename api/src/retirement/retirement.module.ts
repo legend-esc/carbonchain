@@ -1,4 +1,4 @@
-import { Module, OnApplicationBootstrap } from '@nestjs/common';
+import { Module, OnApplicationBootstrap, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitter } from 'events';
 import { RetirementService, EVENT_EMITTER } from './retirement.service';
@@ -6,6 +6,7 @@ import { RetirementController } from './retirement.controller';
 import { CreditRetirementController } from './credit-retirement.controller';
 import { CertificatesController } from './certificates.controller';
 import { CertificateService } from './certificate.service';
+import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { StellarModule } from '../stellar/stellar.module';
 import { AuthModule } from '../auth/auth.module';
 import { CreditsModule } from '../credits/credits.module';
@@ -16,7 +17,12 @@ import {
 import { NonceService } from '../common/nonce.service';
 
 @Module({
-  imports: [ConfigModule, StellarModule, AuthModule, CreditsModule],
+  imports: [
+    ConfigModule,
+    StellarModule,
+    AuthModule,
+    forwardRef(() => CreditsModule),
+  ],
   controllers: [
     RetirementController,
     CreditRetirementController,
@@ -25,6 +31,7 @@ import { NonceService } from '../common/nonce.service';
   providers: [
     RetirementService,
     CertificateService,
+    CertHashReconciler,
     NonceService,
     { provide: RETIREMENT_REPOSITORY, useClass: InMemoryRetirementRepository },
     {
@@ -32,7 +39,7 @@ import { NonceService } from '../common/nonce.service';
       useValue: new EventEmitter(),
     },
   ],
-  exports: [RetirementService],
+  exports: [RetirementService, CertHashReconciler],
 })
 export class RetirementModule implements OnApplicationBootstrap {
   constructor(private readonly nonceService: NonceService) {}

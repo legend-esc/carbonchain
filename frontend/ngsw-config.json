@@ -39,6 +39,26 @@
       }
     },
     {
+      "name": "portfolio-holdings",
+      "urls": ["/api/v1/credits", "/api/v1/credits/**", "/api/v1/portfolio/**"],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 50,
+        "maxAge": "5m",
+        "timeout": "5s"
+      }
+    },
+    {
+      "name": "marketplace-listings",
+      "urls": ["/api/v1/marketplace/**", "/api/v1/projects", "/api/v1/projects/**"],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 50,
+        "maxAge": "5m",
+        "timeout": "5s"
+      }
+    },
+    {
       "name": "api-performance",
       "urls": ["/api/v1/**"],
       "cacheConfig": {

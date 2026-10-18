@@ -200,18 +200,66 @@ export class CacheService implements OnModuleDestroy {
 
   /**
    * Store a value with an optional TTL (seconds). Defaults to CACHE_TTL_SECONDS env var.
+   *
+   * Returns `false` when the value could not be persisted (cache unavailable or
+   * the write failed) so callers relying on the write for correctness (e.g.
+   * token revocation) can fail closed instead of assuming success.
    */
-  async set(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
-    if (!this.isCacheAvailable()) return;
+  async set(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
+    if (!this.isCacheAvailable()) return false;
     try {
       const ttl = ttlSeconds ?? this.defaultTtlSeconds;
       await this.client!.set(key, JSON.stringify(value), 'EX', ttl);
+      return true;
     } catch (err) {
       this.logger.warn(
         `Cache SET failed for key "${key}": ${(err as Error).message}`,
       );
       this.recordFailure();
+      return false;
     }
+  }
+
+  async setIfAbsent(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
+    if (!this.client) throw new Error('Redis is unavailable');
+    const ttl = ttlSeconds ?? this.defaultTtlSeconds;
+    const result = await this.client.set(
+      key,
+      JSON.stringify(value),
+      'EX',
+      ttl,
+      'NX',
+    );
+    return result === 'OK';
+  }
+
+  async setRequired(
+    key: string,
+    value: unknown,
+    ttlSeconds?: number,
+  ): Promise<void> {
+    if (!this.client) throw new Error('Redis is unavailable');
+    const ttl = ttlSeconds ?? this.defaultTtlSeconds;
+    await this.client.set(key, JSON.stringify(value), 'EX', ttl);
+  }
+
+  async increment(key: string, ttlSeconds: number): Promise<number> {
+    if (!this.client) throw new Error('Redis is unavailable');
+    const count = await this.client.incr(key);
+    if (count === 1) await this.client.expire(key, ttlSeconds);
+    return count;
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.del(key);
   }
 
   /**

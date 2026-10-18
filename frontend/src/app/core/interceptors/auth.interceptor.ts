@@ -21,9 +21,11 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const toast = inject(ToastService);
   const router = inject(Router);
 
-  // Only attach the JWT to requests aimed at our own API (relative paths
-  // starting with /api, or absolute URLs containing /api/).
-  const isApiRequest = req.url.startsWith('/api') || req.url.includes('/api/');
+  // Only attach the JWT to requests aimed at our own API. The API is always
+  // reached via relative paths starting with /api, so never match absolute
+  // (external) URLs — that would leak the token to third-party hosts whose
+  // path merely contains "/api/".
+  const isApiRequest = !/^https?:\/\//i.test(req.url) && req.url.startsWith('/api');
 
   const token = auth.token();
 

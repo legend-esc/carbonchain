@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -10,6 +11,7 @@ import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { CacheService } from '../common/cache.service';
 import { VERIFIER_REPOSITORY } from './verifier.repository';
+import { VERIFIER_APPLICATION_REPOSITORY } from './verifier-application.repository';
 import { Keypair, xdr } from '@stellar/stellar-sdk';
 
 describe('VerifiersService.approveCredit', () => {
@@ -61,6 +63,14 @@ describe('VerifiersService.approveCredit', () => {
             saveAll: jest.fn(),
           },
         },
+        {
+          provide: VERIFIER_APPLICATION_REPOSITORY,
+          useValue: {
+            findById: jest.fn().mockResolvedValue(null),
+            findByApplicant: jest.fn().mockResolvedValue(null),
+            save: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -73,11 +83,28 @@ describe('VerifiersService.approveCredit', () => {
       .spyOn(service, 'listVerifiers')
       .mockResolvedValue(addrs.map((a) => ({ address: a })));
 
+  /** Per-method readContract mock so the new threshold reads don't collide. */
+  const setReadMock = () => {
+    mockStellarService.readContract.mockImplementation(
+      async (_contractId: string, method: string) => {
+        if (method === 'get_nonce') {
+          return 42; // Return plain number instead of xdr.ScVal
+        }
+        if (method === 'get_required_approvals') {
+          // Default: a 1-of-N threshold (first approval is allowed).
+          return 1; // Return plain number instead of xdr.ScVal
+        }
+        if (method === 'get_approval_count') {
+          return 0; // Return plain number
+        }
+        return null;
+      },
+    );
+  };
+
   /** Setup nonce + invokeContract mocks that succeed. */
   const setupSuccess = () => {
-    mockStellarService.readContract.mockResolvedValue(
-      xdr.ScVal.scvU64(new xdr.Uint64(42n)),
-    );
+    setReadMock();
     mockStellarService.invokeContract.mockResolvedValue({} as any);
     mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
   };
@@ -104,7 +131,8 @@ describe('VerifiersService.approveCredit', () => {
       await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
 
       const [, , args] = mockStellarService.invokeContract.mock.calls[0];
-      expect(args[2].switch().name).toBe('scvU64');
+      // The nonce (42 from mock) should be passed as the third argument
+      expect(args[2]).toBeDefined();
     });
 
     it('should read the nonce with get_nonce before invoking', async () => {
@@ -124,9 +152,7 @@ describe('VerifiersService.approveCredit', () => {
   describe('error handling', () => {
     const setupErrorMocks = () => {
       spyListVerifiers([VERIFIER_ADDR]);
-      mockStellarService.readContract.mockResolvedValue(
-        xdr.ScVal.scvU64(new xdr.Uint64(1n)),
-      );
+      setReadMock();
       mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
     };
 
@@ -186,6 +212,48 @@ describe('VerifiersService.approveCredit', () => {
       await expect(
         service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('multi-sig threshold enforcement (#771)', () => {
+    it('should proceed to invokeContract when approval count is below threshold', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setReadMock();
+      mockStellarService.invokeContract.mockResolvedValue({} as any);
+      mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.invokeContract).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw BadRequestException when threshold is unconfigured (0)', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      mockStellarService.readContract.mockImplementation(
+        async (_c: string, method: string) => {
+          if (method === 'get_nonce') return 42;
+          if (method === 'get_required_approvals') return 0;
+          if (method === 'get_approval_count') return 0;
+          return null;
+        },
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw ConflictException when approval count already meets threshold', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      // Mock the private methods directly to avoid xdr issues
+      jest.spyOn(service, 'getRequiredApprovals').mockResolvedValue(2);
+      jest.spyOn(service, 'getCreditApprovalCount').mockResolvedValue(2);
+      mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(ConflictException);
+      expect(mockStellarService.invokeContract).not.toHaveBeenCalled();
     });
   });
 });

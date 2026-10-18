@@ -41,6 +41,7 @@ describe('DashboardComponent', () => {
   function createStoreSpy() {
     return {
       loadByProject: vi.fn().mockReturnValue(Promise.resolve()),
+      loadByOwner: vi.fn().mockReturnValue(Promise.resolve()),
       select: vi.fn(),
       credits: signal([mockCredit]),
       activeCredits: signal([mockCredit]),

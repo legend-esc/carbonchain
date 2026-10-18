@@ -5,7 +5,11 @@ import { TranslationService } from '../services/translation.service';
 export class TranslatePipe implements PipeTransform {
   private readonly i18n = inject(TranslationService);
 
-  transform(key: string): string {
-    return this.i18n.t(key);
+  /**
+   * #961 — optional `{placeholder}` params, e.g.
+   * `{{ 'retire.selectedCount' | translate: { n: 2 } }}`.
+   */
+  transform(key: string, params?: Record<string, string | number>): string {
+    return this.i18n.t(key, params);
   }
 }

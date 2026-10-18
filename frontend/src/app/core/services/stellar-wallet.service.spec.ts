@@ -243,5 +243,23 @@ describe('StellarWalletService', () => {
       expect(matches).toBe(true);
       expect(service.networkMismatch()).toBe(false);
     });
+
+    it('checkNetworkMatch() verifies persisted testnet and Freighter on testnet results in no mismatch', async () => {
+      (window as any).freighter = {
+        isConnected: async () => true,
+        getPublicKey: async () => 'GABC123XYZ',
+        getNetworkDetails: async () => ({
+          network: 'TESTNET',
+          networkPassphrase: 'Test SDF Network ; September 2015',
+        }),
+      };
+      await service.connect();
+      expect(service.network()).toBe('testnet');
+      expect(service.networkMismatch()).toBe(false);
+
+      const matches = await service.checkNetworkMatch();
+      expect(matches).toBe(true);
+      expect(service.networkMismatch()).toBe(false);
+    });
   });
 });

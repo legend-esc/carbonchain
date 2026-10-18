@@ -21,7 +21,9 @@ export class MrvWebhookDto {
   oraclePublicKey: string;
   projectId: string;
   tonnesSequestered: string;
-  signature: string; // HMAC-SHA256 hex of `${projectId}:${tonnesSequestered}` with ORACLE_WEBHOOK_SECRET
+  timestamp: number; // unix seconds; must be within TIMESTAMP_SKEW_SECONDS of server time
+  nonce: string; // unique per-request value; rejected on replay
+  signature: string; // HMAC-SHA256 hex of `${oraclePublicKey}:${projectId}:${tonnesSequestered}:${timestamp}:${nonce}` with ORACLE_WEBHOOK_SECRET
 }
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -122,6 +124,7 @@ export class OracleService {
   private readonly logger = new Logger(OracleService.name);
   private readonly contractId: string;
   private readonly webhookSecret: string;
+  private static readonly TIMESTAMP_SKEW_SECONDS = 300;
 
   constructor(
     private readonly stellarService: StellarService,
@@ -133,20 +136,29 @@ export class OracleService {
       'MRV_ORACLE_CONTRACT_ID',
       '',
     );
-    this.webhookSecret = this.configService.get<string>(
+    const webhookSecret = this.configService.get<string>(
       'ORACLE_WEBHOOK_SECRET',
-      'changeme',
     );
+    if (!webhookSecret && process.env.NODE_ENV !== 'test') {
+      throw new Error(
+        'ORACLE_WEBHOOK_SECRET must be set — refusing to start with an insecure default',
+      );
+    }
+    this.webhookSecret = webhookSecret ?? 'test-only-secret-do-not-use';
   }
 
   // ── HMAC validation ──────────────────────────────────────────────────────────
 
   /**
-   * Validate HMAC-SHA256 signature over `${projectId}:${tonnesSequestered}`.
+   * Validate HMAC-SHA256 signature over
+   * `${oraclePublicKey}:${projectId}:${tonnesSequestered}:${timestamp}:${nonce}`,
+   * reject stale timestamps, and reject replayed nonces.
    */
-  private validateSignature(dto: MrvWebhookDto): void {
+  private async validateSignature(dto: MrvWebhookDto): Promise<void> {
     const expected = createHmac('sha256', this.webhookSecret)
-      .update(`${dto.projectId}:${dto.tonnesSequestered}`)
+      .update(
+        `${dto.oraclePublicKey}:${dto.projectId}:${dto.tonnesSequestered}:${dto.timestamp}:${dto.nonce}`,
+      )
       .digest('hex');
 
     const expectedBuf = Buffer.from(expected, 'hex');
@@ -158,6 +170,24 @@ export class OracleService {
     ) {
       throw new UnauthorizedException('Invalid oracle signature');
     }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - dto.timestamp) > OracleService.TIMESTAMP_SKEW_SECONDS) {
+      throw new UnauthorizedException(
+        'Oracle webhook payload timestamp is stale or in the future',
+      );
+    }
+
+    const nonceKey = `oracle:webhook:nonce:${dto.oraclePublicKey}:${dto.nonce}`;
+    const alreadySeen = await this.cacheService.get<boolean>(nonceKey);
+    if (alreadySeen) {
+      throw new UnauthorizedException('Oracle webhook payload replay detected');
+    }
+    await this.cacheService.set(
+      nonceKey,
+      true,
+      OracleService.TIMESTAMP_SKEW_SECONDS,
+    );
   }
 
   // ── Issue #474: ingestMrvData — timestamp passed correctly, rejection handled ─
@@ -172,7 +202,7 @@ export class OracleService {
    * gracefully instead of surfacing a raw contract panic.
    */
   async ingestMrvData(dto: MrvWebhookDto): Promise<{ anomaly: boolean }> {
-    this.validateSignature(dto);
+    await this.validateSignature(dto);
 
     const tonnes = BigInt(dto.tonnesSequestered);
     if (tonnes <= 0n) {

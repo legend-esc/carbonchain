@@ -14,11 +14,10 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Running Tests](#running-tests)
 - [Code Style Guidelines](#code-style-guidelines)
 - [Adding Error Codes](#adding-error-codes)
-- [Commit Message Conventions](#commit-message-conventions)
-- [Commit Message Conventions](#commit-message-conventions)
 - [Branch Naming Conventions](#branch-naming-conventions)
 - [Pull Request Process](#pull-request-process)
 - [Issue and PR Templates](#issue-and-pr-templates)
+- [Contract Upgrade Checklist](#contract-upgrade-checklist)
 - [Stellar Wave Contributions](#stellar-wave-contributions)
 - [Documentation](#documentation)
 
@@ -590,7 +589,28 @@ When adding a new error code, pick the **next available number** within the cont
 
 ---
 
-## Documentation
+## Contract Upgrade Checklist
+
+Before deploying updates or modifications to any Soroban smart contracts on CarbonChain, contributors and maintainers must strictly follow this upgrade checklist.
+
+### Pre-Upgrade Verification
+
+1. **Migration Test on Testnet**:
+   - Deploy the new contract WASM to the Stellar Testnet.
+   - Run the full migration script against existing testnet contract state containing realistic data (e.g., active credits, retirements, and offer states).
+   - Validate that all post-migration queries match expected state and that no historical entries are corrupted or inaccessible.
+
+2. **Storage Layout Verification**:
+   - Ensure complete backward compatibility of Soroban storage data keys (`DataKey` enum).
+   - Verify that existing storage enum discriminants and field order remain unchanged; new keys must be appended or namespaced.
+   - Run storage layout diff tests ensuring existing persistent and temporary ledger entries deserialize cleanly into new schema structs.
+
+3. **Event Schema Compatibility**:
+   - Validate that contract events (`env.events().publish(...)`) maintain consistent topic structures.
+   - Ensure external indexers (such as the CarbonChain NestJS API event listeners) can consume both pre-upgrade and post-upgrade event payloads without deserialization failures.
+   - Document any new event topics or schema versions in `docs/features/`.
+
+---
 
 ### Existing Documentation
 

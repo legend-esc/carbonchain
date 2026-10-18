@@ -16,6 +16,7 @@ import { GlobalErrorHandler } from './core/handlers/global-error.handler';
 import { TranslationService } from './core/services/translation.service';
 import { initSentry } from './core/services/sentry-config';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
+import { conditionalRequestInterceptor } from './core/interceptors/conditional-request.interceptor';
 
 function initializeTranslations(): () => Promise<void> {
   const i18n = inject(TranslationService);
@@ -37,7 +38,10 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
 
     provideRouter(routes),
-    provideHttpClient(withFetch(), withInterceptors([authInterceptor])),
+    provideHttpClient(
+      withFetch(),
+      withInterceptors([authInterceptor, conditionalRequestInterceptor]),
+    ),
     { provide: ErrorHandler, useClass: GlobalErrorHandler },
     { provide: APP_INITIALIZER, useFactory: initializeTranslations, multi: true },
     provideServiceWorker('ngsw-worker.js', {

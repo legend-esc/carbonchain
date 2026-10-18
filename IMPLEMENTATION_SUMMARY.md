@@ -1,68 +1,66 @@
+> Last audited: 2026-09-29
+
 # Implementation Summary: Issues #96-99
 
 ## Overview
-All four GitHub issues have been successfully implemented in a single branch (`feat/96-97-98-99-marketplace-mrv-events-webhooks`). The implementation includes both Soroban smart contract enhancements and NestJS API features.
+This document summarises the implementation status of GitHub issues #96–99.
+Every DONE claim **must** cite a file reference on the same line — see `docs/CLAIMS_AUDIT.md`
+for the contributor guidance and audit trail.
 
-## Issue #96: Implement Marketplace Fee Collection ✅
-**Status**: Already implemented in contracts
-**Location**: `/workspaces/carbonchain/contracts/marketplace/src/lib.rs`
-
-### Features:
-- Added `fee_bps` (basis points) and `fee_recipient` to marketplace initialization
-- Fee deduction logic in `buy_offer` function
-- `update_fee` admin function to modify fee percentage
-- Comprehensive tests for fee collection
-
-### Key Changes:
-- `initialize(env, admin, fee_bps, fee_recipient)` - Initialize with fee configuration
-- `buy_offer()` - Deducts fee from buyer payment and sends to fee_recipient
-- `update_fee(new_fee_bps)` - Admin function to update fee percentage
-- `get_fee_bps()` and `get_fee_recipient()` - Query functions
+> **Contributor rule:** To keep this document accurate, every DONE entry must include
+> a `(see path/to/file)` citation. Entries without a citation will fail the
+> `docs-drift` CI job. Aspirational or unverified claims belong in the Roadmap
+> section of `README.md`, not here.
 
 ---
 
-## Issue #97: Implement MRV Data Aggregation View Function ✅
-**Status**: Already implemented in contracts
-**Location**: `/workspaces/carbonchain/contracts/mrv_oracle/src/lib.rs`
+## Issue #96: Implement Marketplace Fee Collection
 
-### Features:
-- `get_mrv_aggregate(project_id, from_ts, to_ts)` function
-- Returns sum and average of sequestration readings in time range
-- Efficient filtering over historical data
+⚠️ **Not Yet Implemented** — Described in this summary but code not found — see Roadmap Phase 3
 
-### Key Changes:
-- `get_mrv_aggregate()` - Aggregates MRV readings over time range
-- Returns tuple `(sum_tonnes, average_tonnes)`
+**What was claimed:** `initialize()` would accept `fee_bps` and `fee_recipient` parameters;
+`buy_offer()` would deduct a fee and send it to the fee recipient; an `update_fee()` admin
+function would allow changing the rate at runtime.
+
+**What the code actually does:** `initialize()` accepts `admin`, `min_price_per_tonne`,
+`registry_id`, and `token_id` — no fee parameters. `buy_offer()` transfers the full price
+directly from buyer to seller with no deduction.
+(see `contracts/marketplace/src/lib.rs` — `initialize` at line 223, `buy_offer` at line 959)
+
+---
+
+## Issue #97: Implement MRV Data Aggregation View Function ✅ (see `contracts/mrv_oracle/src/lib.rs`)
+
+**Status**: Implemented in the MRV oracle contract.
+
+### Features
+- `get_mrv_aggregate(project_id, from_ts, to_ts)` — aggregates MRV readings over a time range
+- Returns a tuple `(sum_tonnes, average_tonnes)`
 - Comprehensive tests with known datasets
 
+### Key entry points
+- `get_mrv_aggregate()` (see `contracts/mrv_oracle/src/lib.rs`)
+
 ---
 
-## Issue #98: Implement Soroban Events Indexer in NestJS API ✅
-**Status**: Newly implemented
-**Location**: `/workspaces/carbonchain/api/src/events/`
+## Issue #98: Implement Soroban Events Indexer in NestJS API ✅ (see `api/src/events/events.service.ts`)
 
-### Features:
-- `EventsService` with cron-based polling (every 30 seconds)
+**Status**: Implemented as a NestJS module.
+
+### Features
+- `EventsService` with cron-based polling every 30 seconds
 - Parses and stores `CreditSubmitted`, `CreditMinted`, `CreditRetired` events
 - `GET /events` endpoint with filtering support
-- Event storage in memory with query capabilities
 
-### Key Components:
-1. **EventsService** (`events.service.ts`)
-   - Polls Soroban RPC every 30 seconds
-   - Parses contract events from all four contracts
-   - Stores events in memory map
-   - Triggers webhooks on new events
+### Key components
+1. **EventsService** — polls Soroban RPC, stores events, triggers webhooks
+   (see `api/src/events/events.service.ts`)
+2. **EventsController** — `GET /events`, `GET /events/:eventId`
+   (see `api/src/events/events.controller.ts`)
+3. **EventsModule** — wires service and controller into AppModule
+   (see `api/src/events/events.module.ts`)
 
-2. **EventsController** (`events.controller.ts`)
-   - `GET /events` - List events with filters
-   - `GET /events/:eventId` - Get specific event
-
-3. **StellarService Enhancement** (`stellar.service.ts`)
-   - Added `getContractEvents()` method
-   - Queries Soroban RPC for contract events
-
-### API Endpoints:
+### API endpoints
 ```
 GET /events?contractId=<id>&eventType=<type>&limit=100
 GET /events/:eventId
@@ -70,143 +68,67 @@ GET /events/:eventId
 
 ---
 
-## Issue #99: Implement Webhook Delivery for Credit Status Changes ✅
-**Status**: Newly implemented
-**Location**: `/workspaces/carbonchain/api/src/webhooks/`
+## Issue #99: Implement Webhook Delivery for Credit Status Changes ✅ (see `api/src/webhooks/webhooks.service.ts`)
 
-### Features:
-- Webhook registration endpoint
+**Status**: Implemented as a NestJS module.
+
+### Features
+- Webhook registration, listing, and deletion
 - Automatic delivery on credit status changes
 - Retry logic with exponential backoff (max 5 retries)
 - Webhook delivery tracking
 
-### Key Components:
-1. **WebhooksService** (`webhooks.service.ts`)
-   - Register webhooks with URL and event filters
-   - Trigger webhooks on specific events
-   - Retry failed deliveries with exponential backoff
-   - Track delivery status and attempts
+### Key components
+1. **WebhooksService** — register, trigger, retry failed deliveries
+   (see `api/src/webhooks/webhooks.service.ts`)
+2. **WebhooksController** — `POST /webhooks`, `GET /webhooks`, `GET /webhooks/:id`, `DELETE /webhooks/:id`
+   (see `api/src/webhooks/webhooks.controller.ts`)
+3. **WebhooksModule** — wires service and controller into AppModule
+   (see `api/src/webhooks/webhooks.module.ts`)
 
-2. **WebhooksController** (`webhooks.controller.ts`)
-   - `POST /webhooks` - Register webhook
-   - `GET /webhooks` - List all webhooks
-   - `GET /webhooks/:id` - Get specific webhook
-   - `DELETE /webhooks/:id` - Delete webhook
-
-### API Endpoints:
+### API endpoints
 ```
-POST /webhooks
-{
-  "url": "https://example.com/webhook",
-  "events": ["credit_submitted", "credit_minted", "credit_retired"]
-}
-
-GET /webhooks
-GET /webhooks/:id
+POST   /webhooks
+GET    /webhooks
+GET    /webhooks/:id
 DELETE /webhooks/:id
 ```
 
-### Webhook Payload:
-```json
-{
-  "type": "credit_submitted",
-  "data": {
-    "id": "event-id",
-    "type": "credit_submitted",
-    "contractId": "contract-id",
-    "ledger": 12345,
-    "timestamp": 1234567890,
-    "data": { ... }
-  },
-  "timestamp": "2026-05-27T10:28:59.646Z"
-}
-```
-
-### Retry Logic:
-- Max 5 retry attempts
-- Exponential backoff: 5s, 10s, 15s, 20s, 25s
-- Failed webhooks are deactivated after max retries
+### Retry logic
+- Max 5 retry attempts with exponential backoff (5 s, 10 s, 15 s, 20 s, 25 s)
+- Webhooks deactivated after max retries
 - Automatic retry on next cron cycle
 
 ---
 
-## Technical Implementation Details
+## Marketplace Architecture Note
 
-### Dependencies Added:
-- `@nestjs/schedule@^6.1.3` - For cron-based event polling
-- `axios@^1.7.0` - For webhook HTTP delivery
+The marketplace contract is a **Soroban-native offer book** — sellers post offers and buyers
+fill them via `create_offer` / `buy_offer`. It does **not** currently integrate with the
+Stellar DEX path-payment or manage-offer operations. "Stellar DEX integration" in older
+references to this module referred to the aspiration described in Roadmap Phase 3 (limit
+order book, AMM pool). The current implementation is an independent offer-book contract.
+(see `contracts/marketplace/src/lib.rs`)
 
-### Module Structure:
-```
-api/src/
-├── events/
-│   ├── events.service.ts
-│   ├── events.controller.ts
-│   ├── events.module.ts
-│   ├── events.service.spec.ts
-│   └── events.controller.spec.ts
-├── webhooks/
-│   ├── webhooks.service.ts
-│   ├── webhooks.controller.ts
-│   ├── webhooks.module.ts
-│   ├── webhooks.service.spec.ts
-│   └── webhooks.controller.spec.ts
-└── app.module.ts (updated)
-```
+---
 
-### Integration:
-- EventsModule and WebhooksModule registered in AppModule
-- ScheduleModule enabled for cron jobs
-- EventsService triggers webhooks on new events
-- Automatic retry of failed deliveries every 30 seconds
+## Roadmap
+
+Features listed below are **not yet implemented** and are tracked in the Phase 3 roadmap
+section of `README.md`:
+
+- Marketplace fee collection (`fee_bps`, `fee_recipient`, `update_fee`) — Issue #96
+- Limit order book — price/quantity matching beyond single-offer listings
+- Automated market maker (AMM) pool for continuous liquidity
+- Price history charts and market analytics
 
 ---
 
 ## Testing
 
-All implementations include comprehensive unit tests:
-- ✅ EventsService tests
-- ✅ EventsController tests
-- ✅ WebhooksService tests
-- ✅ WebhooksController tests
-
-**Test Results**: 14 tests passed, 0 failed
-
----
-
-## Build Status
-
-- ✅ API builds successfully
-- ✅ All tests pass
-- ✅ No TypeScript errors
-- ✅ Ready for deployment
-
----
-
-## Git Commits
-
-All changes are in a single branch with clear commit messages:
-
-1. `feat(#96): Add marketplace fee collection mechanism`
-2. `feat(#97): Implement MRV data aggregation view function`
-3. `feat(#98): Implement Soroban events indexer in NestJS API`
-4. `feat(#99): Implement webhook delivery for credit status changes`
-
----
-
-## Next Steps for PR
-
-1. Review the implementation in the branch
-2. Run full test suite: `npm test`
-3. Build verification: `npm run build`
-4. Deploy to testnet for integration testing
-5. Merge to main after approval
-
----
-
-## Notes
-
-- All implementations follow the existing code patterns and conventions
-- Minimal, focused code changes without unnecessary abstractions
-- Comprehensive error handling and logging
-- Ready for production deployment
+Verified implementations include tests:
+- ✅ `get_mrv_aggregate` tests (see `contracts/mrv_oracle/src/lib.rs`)
+- ✅ EventsService tests (see `api/src/events/events.service.spec.ts`)
+- ✅ EventsController tests — implied by module (see `api/src/events/`)
+- ✅ WebhooksService tests (see `api/src/webhooks/webhooks.service.spec.ts`)
+- ✅ WebhooksController tests (see `api/src/webhooks/webhooks.controller.spec.ts`)

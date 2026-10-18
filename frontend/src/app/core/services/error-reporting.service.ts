@@ -1,4 +1,4 @@
-import { Injectable, inject, isDevMode } from '@angular/core';
+import { Injectable, isDevMode } from '@angular/core';
 import * as Sentry from '@sentry/browser';
 
 export interface ErrorReport {

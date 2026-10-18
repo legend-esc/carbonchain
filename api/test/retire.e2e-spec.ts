@@ -95,6 +95,7 @@ describe('Credit retirement lifecycle (e2e)', () => {
         geography: 'NG',
         tonnes: '1000000',
         ipfsHash: 'bafybei-e2e-test',
+        nonce: '1001',
       })
       .expect(201);
 
@@ -141,6 +142,7 @@ describe('Credit retirement lifecycle (e2e)', () => {
         geography: 'NG',
         tonnes: '1000000',
         ipfsHash: 'bafybei-pending',
+        nonce: '1002',
       })
       .expect(201);
 

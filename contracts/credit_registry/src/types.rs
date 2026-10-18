@@ -116,11 +116,22 @@ pub enum DataKey {
     CreditByProjectVintage(String, u32),
     Project(String),
     RetirementContract,
+    /// Credit ID nonce shared by the old (pre-#681) code path.
+    /// Kept for storage-format compatibility; new code uses the namespaced variants below.
     CreditNonce,
+    /// #681 — Namespaced nonce for submit_credit to prevent ID collisions with split/merge.
+    SubmitCreditNonce,
+    /// #681 — Namespaced nonce for split_credit child ID generation.
+    SplitCreditNonce,
+    /// #681 — Namespaced nonce for merge_credits merged ID generation.
+    MergeCreditNonce,
     Paused,
     IssuerSet,
     MethodologySet,
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection.
+    /// See `consume_nonce` in storage.rs for details.
+    NonceBitmap(Address),
     PendingAdmin,
     VerifierReputation(Address),
     /// Tracks how many Pending credits are assigned to a verifier for approval.
@@ -137,12 +148,21 @@ pub enum DataKey {
     AuditLog(BytesN<32>),
     /// Counter for audit log entries.
     AuditLogCount,
+    /// Monotonic counter for session IDs — kept separate from AuditLogCount so
+    /// that session IDs and audit-log IDs can never collide. (Issue #671)
+    SessionCount,
     /// Dispute evidence keyed by credit ID.
     Dispute(BytesN<32>),
     /// Verifier services keyed by verifier address.
     VerifierServices(Address),
-    /// Credit IDs indexed by owner address.
+    /// Stable numeric ID assigned to a verifier on registration.
+    VerifierId(Address),
+    /// Counter for assigning the next verifier ID.
+    NextVerifierId,
+    /// Bounded owner index: credits owned by `Address`, stored in fixed-size pages.
     CreditsByOwner(Address),
+    /// Bounded pending index: pending credits assigned to `Address`, stored in fixed-size pages.
+    PendingCreditsByVerifier(Address),
     /// Per-credit snapshot of verifiers assigned at submission time.
     /// Used by remove_verifier to correctly block removal only when
     /// the verifier is specifically assigned to a pending credit.
@@ -159,4 +179,10 @@ pub enum DataKey {
     MinStake,
     /// Pending unbonding request created when a verifier is removed.
     UnbondingRequest(Address),
+    /// Token contract address that was deposited as stake by a specific verifier.
+    /// Persisted at deposit_stake time; withdraw_stake must supply the same token.
+    VerifierStakeToken(Address),
+    /// Admin-configured token contract address that is the only accepted stake token.
+    /// deposit_stake validates the caller-supplied token_id against this value.
+    ApprovedStakeToken,
 }

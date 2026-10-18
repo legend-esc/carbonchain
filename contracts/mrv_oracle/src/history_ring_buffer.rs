@@ -65,6 +65,7 @@ impl HistoryRingBuffer {
     /// One-time migration: convert an existing Vec<MrvDataPoint> (old storage
     /// format) into ring-buffer slots + meta, keeping only the most recent
     /// HISTORY_CAPACITY entries.
+    #[allow(dead_code)]
     pub fn migrate_from_vec(
         env: &Env,
         old: &soroban_sdk::Vec<MrvDataPoint>,
@@ -73,11 +74,7 @@ impl HistoryRingBuffer {
         let mut meta = RingBufferMeta { head: 0, count: 0 };
 
         let len = old.len();
-        let start = if len > HISTORY_CAPACITY {
-            len - HISTORY_CAPACITY
-        } else {
-            0
-        };
+        let start = len.saturating_sub(HISTORY_CAPACITY);
         for i in start..len {
             Self::push(env, &mut slots, &mut meta, old.get(i).unwrap());
         }

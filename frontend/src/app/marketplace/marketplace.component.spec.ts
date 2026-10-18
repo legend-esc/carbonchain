@@ -42,6 +42,7 @@ describe('MarketplaceComponent', () => {
         return of({ data, next_cursor: null });
       }),
       createOffer: vi.fn().mockReturnValue(of({ offerId: 'new-offer' })),
+      buyOffer: vi.fn().mockReturnValue(of(undefined)),
     };
   }
 
@@ -229,12 +230,12 @@ describe('MarketplaceComponent', () => {
     const offer = MOCK_OFFERS[0];
     await component.buy(offer);
 
-    expect(apiMock.createOffer).toHaveBeenCalled();
+    expect(apiMock.buyOffer).toHaveBeenCalled();
     expect(toastMock.show).toHaveBeenCalledWith('Purchase submitted successfully!', 'success');
   });
 
   it('buy() shows error toast on failure', async () => {
-    apiMock.createOffer.mockReturnValue(throwError(() => new Error('Insufficient funds')));
+    apiMock.buyOffer.mockReturnValue(throwError(() => new Error('Insufficient funds')));
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();

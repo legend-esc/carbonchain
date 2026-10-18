@@ -1,0 +1,5 @@
+{
+  "_comment": "npm audit allowlist for api/ — reviewed exceptions only.",
+  "_policy": "Allowlisted advisories MUST include the advisory ID, affected package, severity, and a short justification. Each entry is reviewed during PR. High/critical advisories may only be allowlisted when: (a) the vulnerable code path is not reachable, or (b) a fix does not yet exist upstream. Remove entries as soon as a patched version is available.",
+  "allowlist": []
+}

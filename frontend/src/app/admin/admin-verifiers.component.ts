@@ -9,6 +9,9 @@ import { ToastService } from '../core/services/toast.service';
 const METHODOLOGY_OPTIONS = ['Verra VCS', 'Gold Standard', 'CAR', 'ACR', 'Plan Vivo'];
 const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 'North America'];
 
+type SortKey = 'reputation' | 'stake' | 'address';
+type SortDir = 'asc' | 'desc';
+
 @Component({
   selector: 'app-admin-verifiers',
   standalone: true,
@@ -17,7 +20,7 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
     <div class="admin-verifiers">
       <div class="toolbar">
         <div>
-          <h1 class="page-title">Verifier Management</h1>
+          <h1 class="page-title">Verifier Leaderboard</h1>
           @if (stats()) {
             <p class="stats-summary">
               Active verifiers: <strong>{{ stats()!.activeVerifiers }}</strong>
@@ -27,29 +30,62 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
         <button class="btn btn-primary" (click)="openRegister()">+ Register Verifier</button>
       </div>
 
+      <div class="sort-bar">
+        <label class="field-label" for="sort-key">Sort by</label>
+        <select
+          id="sort-key"
+          class="text-input"
+          [value]="sortKey()"
+          (change)="onSortKeyChange($event)"
+        >
+          <option value="reputation">Reputation</option>
+          <option value="stake">Stake (XLM)</option>
+          <option value="address">Address</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" (click)="toggleSortDir()">
+          {{ sortDir() === 'asc' ? '↑ Asc' : '↓ Desc' }}
+        </button>
+      </div>
+
       @if (error()) {
         <p class="alert alert--error" role="alert">{{ error() }}</p>
       } @else if (isLoading()) {
         <p class="status">Loading verifiers…</p>
-      } @else if (verifiers().length === 0) {
+      } @else if (sortedVerifiers().length === 0) {
         <p class="status">No verifiers registered.</p>
       } @else {
-        <table class="verifiers-table" aria-label="Registered verifiers">
+        <table class="verifiers-table" aria-label="Verifier leaderboard">
           <thead>
             <tr>
-              <th scope="col">Address</th>
+              <th scope="col">Rank</th>
+              <th scope="col" (click)="setSort('address')" class="sortable">
+                Address {{ sortIcon('address') }}
+              </th>
+              <th scope="col" (click)="setSort('stake')" class="sortable">
+                Stake (XLM) {{ sortIcon('stake') }}
+              </th>
+              <th scope="col" (click)="setSort('reputation')" class="sortable">
+                Reputation {{ sortIcon('reputation') }}
+              </th>
               <th scope="col">Approvals</th>
               <th scope="col">Disputes</th>
               <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            @for (v of verifiers(); track v.address) {
-              <tr class="verifier-row">
+            @for (v of sortedVerifiers(); track v.address; let i = $index) {
+              <tr
+                class="verifier-row"
+                (click)="openDetail(v.address)"
+                [class.verifier-row--selected]="selectedAddress() === v.address"
+              >
+                <td>{{ i + 1 }}</td>
                 <td class="mono" [title]="v.address">{{ v.address }}</td>
+                <td>{{ formatStake(v.address) }}</td>
+                <td>{{ reputationScore(v) }}</td>
                 <td>{{ v.reputation?.approvalCount ?? '—' }}</td>
                 <td>{{ v.reputation?.disputeCount ?? '—' }}</td>
-                <td class="actions-cell">
+                <td class="actions-cell" (click)="$event.stopPropagation()">
                   <button class="btn btn-sm btn-secondary" (click)="openConfigure(v.address)">
                     Configure
                   </button>
@@ -61,6 +97,145 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
             }
           </tbody>
         </table>
+      }
+
+      @if (selectedAddress()) {
+        <div class="drawer-backdrop" (click)="closeDetail()">
+          <div
+            class="drawer"
+            (click)="$event.stopPropagation()"
+            role="dialog"
+            aria-modal="true"
+            [attr.aria-label]="'Verifier detail: ' + selectedAddress()"
+          >
+            <div class="drawer-header">
+              <h2>Verifier Detail</h2>
+              <button class="btn btn-ghost btn-sm" (click)="closeDetail()">Close</button>
+            </div>
+
+            @if (detailLoading()) {
+              <p class="status">Loading details…</p>
+            } @else if (detailError()) {
+              <p class="alert alert--error" role="alert">{{ detailError() }}</p>
+            } @else {
+              <div class="drawer-section">
+                <h3>Identity</h3>
+                <p class="mono">{{ selectedAddress() }}</p>
+              </div>
+
+              <div class="drawer-section">
+                <h3>Stake</h3>
+                <p>
+                  {{ detailStake() !== null ? (detailStake()! | number: '1.7-7') + ' XLM' : '—' }}
+                </p>
+              </div>
+
+              <div class="drawer-section">
+                <h3>Reputation</h3>
+                <p>
+                  Approvals:
+                  <strong>{{ selectedVerifier()?.reputation?.approvalCount ?? '—' }}</strong>
+                </p>
+                <p>
+                  Disputes:
+                  <strong>{{ selectedVerifier()?.reputation?.disputeCount ?? '—' }}</strong>
+                </p>
+              </div>
+
+              <div class="drawer-section">
+                <h3>Methodologies & Geographies</h3>
+                @if (selectedVerifier()?.capabilities?.length) {
+                  <ul>
+                    @for (c of selectedVerifier()!.capabilities!; track c) {
+                      <li>{{ c }}</li>
+                    }
+                  </ul>
+                } @else {
+                  <p class="status">No capabilities configured.</p>
+                }
+              </div>
+
+              <div class="drawer-section">
+                <h3>Pending Credits</h3>
+                @if (detailPendingLoading()) {
+                  <p class="status">Loading…</p>
+                } @else if (detailPending().length === 0) {
+                  <p class="status">No pending credits.</p>
+                } @else {
+                  <ul class="history-list">
+                    @for (c of detailPending(); track c.id) {
+                      <li>
+                        <span class="mono">{{ c.id | slice: 0 : 12 }}…</span>
+                        <span>{{ c.tonnes | number: '1.2-2' }} t</span>
+                        <span>{{ c.status }}</span>
+                      </li>
+                    }
+                  </ul>
+                }
+              </div>
+
+              <div class="drawer-section">
+                <h3>Approval History</h3>
+                @if (detailHistoryLoading()) {
+                  <p class="status">Loading…</p>
+                } @else if (detailHistory().length === 0) {
+                  <p class="status">No approval history.</p>
+                } @else {
+                  <ul class="history-list">
+                    @for (c of detailHistory(); track c.id) {
+                      <li>
+                        <span class="mono">{{ c.id | slice: 0 : 12 }}…</span>
+                        <span>{{ c.tonnes | number: '1.2-2' }} t</span>
+                        <span>{{ c.status }}</span>
+                      </li>
+                    }
+                  </ul>
+                }
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+      @if (pendingApplications().length > 0) {
+        <section class="pending-section">
+          <h2 class="section-title">Pending Applications</h2>
+          <table class="verifiers-table" aria-label="Pending verifier applications">
+            <thead>
+              <tr>
+                <th scope="col">Address</th>
+                <th scope="col">Name</th>
+                <th scope="col">Documents CID</th>
+                <th scope="col">Stake Amount</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (app of pendingApplications(); track app.address) {
+                <tr>
+                  <td class="mono">{{ app.address }}</td>
+                  <td>{{ app.name || '—' }}</td>
+                  <td class="mono">
+                    {{ app.documentsCid | slice: 0 : 20
+                    }}{{ app.documentsCid && app.documentsCid.length > 20 ? '…' : '' }}
+                  </td>
+                  <td>{{ app.stakeAmount }}</td>
+                  <td class="actions-cell">
+                    <button
+                      class="btn btn-sm btn-primary"
+                      (click)="approveApplication(app.address)"
+                    >
+                      Approve
+                    </button>
+                    <button class="btn btn-sm btn-danger" (click)="rejectApplication(app.address)">
+                      Reject
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </section>
       }
     </div>
 
@@ -184,7 +359,7 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
   styles: [
     `
       .admin-verifiers {
-        max-width: 900px;
+        max-width: 1100px;
         margin: 2rem auto;
         padding: 0 1rem;
       }
@@ -203,6 +378,25 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
         margin: 0;
         font-size: 0.9rem;
         color: #666;
+      }
+
+      .sort-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .sort-bar .text-input {
+        width: auto;
+        padding: 0.35rem 0.6rem;
+        font-size: 0.85rem;
+      }
+      .sortable {
+        cursor: pointer;
+        user-select: none;
+      }
+      .sortable:hover {
+        background: #eaeaea;
       }
 
       .status {
@@ -232,6 +426,10 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
       }
       .verifier-row:hover {
         background: #fafafa;
+        cursor: pointer;
+      }
+      .verifier-row--selected {
+        background: #e3f2fd;
       }
       .actions-cell {
         display: flex;
@@ -360,6 +558,74 @@ const GEOGRAPHY_OPTIONS = ['Africa', 'Asia-Pacific', 'Europe', 'Latin America', 
         border-radius: 4px;
         margin: 0.25rem 0 0;
       }
+
+      .drawer-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 110;
+      }
+      .drawer {
+        background: #fff;
+        border-radius: 10px;
+        padding: 1.75rem 2rem;
+        min-width: 420px;
+        max-width: 560px;
+        width: 100%;
+        max-height: 85vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+      }
+      .drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.25rem;
+      }
+      .drawer-header h2 {
+        margin: 0;
+        font-size: 1.15rem;
+      }
+      .drawer-section {
+        margin-bottom: 1.25rem;
+      }
+      .drawer-section h3 {
+        margin: 0 0 0.4rem;
+        font-size: 0.95rem;
+        color: #444;
+      }
+      .drawer-section p {
+        margin: 0.2rem 0;
+        font-size: 0.9rem;
+      }
+      .history-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .history-list li {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-size: 0.85rem;
+        padding: 0.35rem 0.5rem;
+        background: #f5f5f5;
+        border-radius: 4px;
+      }
+
+      .pending-section {
+        margin-top: 2rem;
+      }
+      .section-title {
+        margin: 0 0 0.75rem;
+        font-size: 1.1rem;
+      }
     `,
   ],
 })
@@ -376,6 +642,29 @@ export class AdminVerifiersComponent implements OnInit {
     totalRetirements: number;
     activeVerifiers: number;
   } | null>(null);
+
+  protected readonly sortKey = signal<SortKey>('reputation');
+  protected readonly sortDir = signal<SortDir>('desc');
+  protected readonly stakes = signal<Map<string, string>>(new Map());
+
+  protected readonly selectedAddress = signal<string | null>(null);
+  protected readonly detailLoading = signal(false);
+  protected readonly detailError = signal<string | null>(null);
+  protected readonly detailStake = signal<number | null>(null);
+  protected readonly detailPending = signal<{ id: string; tonnes: string; status: string }[]>([]);
+  protected readonly detailPendingLoading = signal(false);
+  protected readonly detailHistory = signal<{ id: string; tonnes: string; status: string }[]>([]);
+  protected readonly detailHistoryLoading = signal(false);
+
+  protected readonly pendingApplications = signal<
+    {
+      address: string;
+      name: string | null;
+      documentsCid: string | null;
+      stakeAmount: string | null;
+      status: string;
+    }[]
+  >([]);
 
   // Register modal state
   protected readonly showRegister = signal(false);
@@ -404,18 +693,149 @@ export class AdminVerifiersComponent implements OnInit {
     this.error.set(null);
     try {
       const token = this.auth.token()!;
-      const [list, adminStats] = await Promise.all([
+      const [list, adminStats, applications] = await Promise.all([
         firstValueFrom(this.api.listVerifiers()),
         firstValueFrom(this.api.getAdminStats(token)),
+        firstValueFrom(this.api.listVerifierApplications(token, 'pending')),
       ]);
       this.verifiers.set(list);
       this.stats.set(adminStats);
+      this.pendingApplications.set(
+        applications.map((a) => ({
+          address: a.address,
+          name: a.name,
+          documentsCid: a.documentsCid,
+          stakeAmount: a.stakeAmount,
+          status: a.status,
+        })),
+      );
+      await this.loadStakes(list.map((v) => v.address));
     } catch (err) {
       this.error.set(err instanceof Error ? err.message : 'Failed to load verifiers.');
     } finally {
       this.isLoading.set(false);
     }
   }
+
+  private async loadStakes(addresses: string[]): Promise<void> {
+    const results = await Promise.all(
+      addresses.map((addr) =>
+        firstValueFrom(this.api.getVerifierStake(addr))
+          .then((r) => [addr, r.stake] as const)
+          .catch(() => [addr, '0'] as const),
+      ),
+    );
+    const map = new Map<string, string>();
+    for (const [addr, stake] of results) {
+      map.set(addr, stake);
+    }
+    this.stakes.set(map);
+  }
+
+  sortedVerifiers(): VerifierInfo[] {
+    const key = this.sortKey();
+    const dir = this.sortDir() === 'asc' ? 1 : -1;
+    const list = [...this.verifiers()];
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (key === 'address') {
+        cmp = a.address.localeCompare(b.address);
+      } else if (key === 'stake') {
+        const sa = BigInt(this.stakes().get(a.address) ?? '0');
+        const sb = BigInt(this.stakes().get(b.address) ?? '0');
+        cmp = sa < sb ? -1 : sa > sb ? 1 : 0;
+      } else if (key === 'reputation') {
+        const ea = this.reputationScore(a);
+        const eb = this.reputationScore(b);
+        cmp = ea < eb ? -1 : ea > eb ? 1 : 0;
+      }
+      return cmp * dir;
+    });
+    return list;
+  }
+
+  setSort(key: SortKey): void {
+    if (this.sortKey() === key) {
+      this.sortDir.update((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      this.sortKey.set(key);
+      this.sortDir.set('desc');
+    }
+  }
+
+  onSortKeyChange(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value as SortKey;
+    this.setSort(value);
+  }
+
+  toggleSortDir(): void {
+    this.sortDir.update((d) => (d === 'asc' ? 'desc' : 'asc'));
+  }
+
+  sortIcon(key: SortKey): string {
+    if (this.sortKey() !== key) return '';
+    return this.sortDir() === 'asc' ? '↑' : '↓';
+  }
+
+  formatStake(address: string): string {
+    const raw = this.stakes().get(address) ?? '0';
+    try {
+      const xlm = Number(BigInt(raw)) / 10_000_000;
+      return xlm.toLocaleString(undefined, { maximumFractionDigits: 7 });
+    } catch {
+      return '0';
+    }
+  }
+
+  reputationScore(v: VerifierInfo): number {
+    const approvals = v.reputation?.approvalCount ?? 0;
+    const disputes = v.reputation?.disputeCount ?? 0;
+    return approvals - disputes;
+  }
+
+  // ── Detail drawer ──────────────────────────────────────────────────────────
+
+  selectedVerifier(): VerifierInfo | undefined {
+    const addr = this.selectedAddress();
+    if (!addr) return undefined;
+    return this.verifiers().find((v) => v.address === addr);
+  }
+
+  async openDetail(address: string): Promise<void> {
+    this.selectedAddress.set(address);
+    this.detailLoading.set(true);
+    this.detailError.set(null);
+    this.detailPending.set([]);
+    this.detailHistory.set([]);
+
+    try {
+      const [stakeResp, pending, history] = await Promise.all([
+        firstValueFrom(this.api.getVerifierStake(address)).catch(() => ({ stake: '0' })),
+        firstValueFrom(this.api.getVerifierPending(address)).catch(() => []),
+        firstValueFrom(this.api.getVerifierHistory(address)).catch(() => []),
+      ]);
+      this.detailStake.set(Number(BigInt(stakeResp.stake)) / 10_000_000);
+      this.detailPending.set(
+        pending.map((c) => ({ id: c.id, tonnes: c.tonnes, status: c.status })),
+      );
+      this.detailHistory.set(
+        history.map((c) => ({ id: c.id, tonnes: c.tonnes, status: c.status })),
+      );
+    } catch (err) {
+      this.detailError.set(err instanceof Error ? err.message : 'Failed to load verifier details.');
+    } finally {
+      this.detailLoading.set(false);
+    }
+  }
+
+  closeDetail(): void {
+    this.selectedAddress.set(null);
+    this.detailError.set(null);
+    this.detailPending.set([]);
+    this.detailHistory.set([]);
+  }
+
+  // ── Register modal ─────────────────────────────────────────────────────────
 
   openRegister(): void {
     this.registerAddressValue = '';
@@ -441,6 +861,8 @@ export class AdminVerifiersComponent implements OnInit {
       this.isRegistering.set(false);
     }
   }
+
+  // ── Configure modal ────────────────────────────────────────────────────────
 
   openConfigure(address: string): void {
     this.configuringVerifier.set(address);
@@ -480,12 +902,15 @@ export class AdminVerifiersComponent implements OnInit {
       );
       this.toast.show('Capabilities saved.', 'success');
       this.configuringVerifier.set(null);
+      await this.load();
     } catch (err) {
       this.toast.show(err instanceof Error ? err.message : 'Configuration failed.', 'error');
     } finally {
       this.isConfiguring.set(false);
     }
   }
+
+  // ── Suspend confirmation ───────────────────────────────────────────────────
 
   openSuspend(address: string): void {
     this.suspendingVerifier.set(address);
@@ -508,6 +933,30 @@ export class AdminVerifiersComponent implements OnInit {
       this.toast.show(err instanceof Error ? err.message : 'Suspend failed.', 'error');
     } finally {
       this.isSuspending.set(false);
+    }
+  }
+
+  // ── Applications review (Issue #967) ───────────────────────────────────────
+
+  async approveApplication(address: string): Promise<void> {
+    const token = this.auth.token()!;
+    try {
+      await firstValueFrom(this.api.reviewVerifierApplication(address, 'approved', token));
+      this.toast.show('Application approved.', 'success');
+      await this.load();
+    } catch (err) {
+      this.toast.show(err instanceof Error ? err.message : 'Approval failed.', 'error');
+    }
+  }
+
+  async rejectApplication(address: string): Promise<void> {
+    const token = this.auth.token()!;
+    try {
+      await firstValueFrom(this.api.reviewVerifierApplication(address, 'rejected', token));
+      this.toast.show('Application rejected.', 'info');
+      await this.load();
+    } catch (err) {
+      this.toast.show(err instanceof Error ? err.message : 'Rejection failed.', 'error');
     }
   }
 }

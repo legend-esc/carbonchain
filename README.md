@@ -10,7 +10,7 @@ CarbonChain is a Soroban-native platform for issuing, trading, and retiring toke
 
 - Credit issuance with verifier multi-sig approval
 - Permanent on-chain retirement with tamper-proof certificates
-- Stellar DEX integration for liquid secondary market trading
+- On-chain offer-book marketplace for secondary market trading (Stellar DEX AMM integration is a Phase 3 roadmap item)
 - MRV oracle interface for real-time carbon sequestration monitoring
 - IPFS-anchored project documentation (methodology, satellite imagery, audits)
 - Session-based audit trail for all credit lifecycle operations
@@ -99,7 +99,7 @@ See `docs/guides/DOCTOR_COMMAND.md` for CLI environment diagnostics.
 
 - **Credit Registry:** Register projects, submit credits, enforce verifier approval before minting
 - **Retirement Engine:** Permanently burn tokens with an immutable on-chain retirement record
-- **Marketplace:** Native Stellar DEX listings with fractional credit support
+- **Marketplace:** On-chain offer-book listings with fractional credit support (Stellar DEX AMM integration is a Phase 3 roadmap item)
 - **MRV Oracle:** Authenticated data ingestion from IoT/satellite feeds with anomaly flagging
 - **Session Traceability:** Group operations into auditable sessions for compliance
 - **Audit Trail:** Immutable record of all lifecycle events
@@ -158,7 +158,7 @@ carbonchain/
 │   │   │   └── errors.rs       # Stable error codes
 │   │   └── Cargo.toml
 │   ├── retirement/             # Burn + retirement certificate logic
-│   ├── marketplace/            # Offer creation, Stellar DEX integration
+│   ├── marketplace/            # Offer creation, on-chain offer book (DEX AMM is Phase 3)
 │   └── mrv_oracle/             # Oracle interface for MRV data updates
 │
 ├── api/                        # NestJS backend
@@ -166,7 +166,7 @@ carbonchain/
 │   │   ├── stellar/            # Stellar SDK service layer
 │   │   ├── credits/            # Credit CRUD, issuance flow
 │   │   ├── retirement/         # Retirement endpoint + certificate gen
-│   │   ├── marketplace/        # Order book, DEX bridge
+│   │   ├── marketplace/        # Order book, DEX bridge (AMM is Phase 3)
 │   │   ├── projects/           # Project profiles, IPFS uploads
 │   │   ├── verifiers/          # Verifier registry, co-sign requests
 │   │   └── oracle/             # MRV data ingestion webhooks
@@ -332,6 +332,11 @@ JWT_EXPIRES_IN=7d
 IPFS_API_URL=https://api.pinata.cloud
 IPFS_API_KEY=your-pinata-api-key
 IPFS_SECRET_KEY=your-pinata-secret
+
+# Redis (#975 — password required; matches REDIS_PASSWORD in docker-compose.yml)
+# Generate a strong secret for production: openssl rand -hex 32
+REDIS_PASSWORD=changeme-local-dev
+REDIS_URL=redis://:changeme-local-dev@localhost:6379
 ```
 
 ### `frontend/src/environments/environment.ts`
@@ -363,8 +368,8 @@ cargo build --target wasm32-unknown-unknown --release
 | Contract | Stable Error Codes | Description |
 |---|---|---|
 | `credit_registry` | 100–126 | Mint CCR tokens, store metadata, enforce verifier multi-sig |
-| `retirement` | 200–210 | Burn tokens on retirement, write immutable retirement records |
-| `marketplace` | 300–309 | Manage offer listings, integrate with Stellar DEX |
+| `retirement` | 200–209 | Burn tokens on retirement, write immutable retirement records |
+| `marketplace` | 300–309 | Manage offer listings via on-chain offer book (Stellar DEX AMM is Phase 3) |
 | `mrv_oracle` | 400–409 | Accept MRV data updates, flag anomalies for re-verification |
 
 See `docs/features/ERROR_CODES_REFERENCE.md` for the full error code reference.
@@ -544,17 +549,74 @@ All existing contract methods remain unchanged. Session features are opt-in, all
 
 ## Roadmap
 
+### Phase 1 — Foundation ✅
 - [x] Project architecture & documentation
-- [ ] Soroban credit registry contract (v1)
-- [ ] Soroban retirement contract
-- [ ] NestJS API scaffold with Stellar SDK integration
-- [ ] Angular marketplace frontend
-- [ ] Verifier multi-sig flow
-- [ ] IPFS project document upload
-- [ ] Retirement certificate PDF generation
-- [ ] MRV oracle integration
-- [ ] Stellar DEX marketplace listing
-- [ ] Mainnet deployment
+- [x] Soroban credit registry contract (v1)
+- [x] Soroban retirement contract
+- [x] Soroban marketplace contract
+- [x] Soroban MRV oracle contract
+- [x] NestJS API scaffold with Stellar SDK integration
+- [x] Angular marketplace frontend
+- [x] Verifier multi-sig flow with reputation scoring
+- [x] IPFS project document upload
+- [x] MRV oracle integration
+- [x] Credit transfer (OTC), splitting, merging, and batch retirement
+- [x] Session traceability & immutable audit trail
+- [x] Nonce-based replay protection on all contract operations
+- [x] SEP-10 Freighter wallet authentication (JWT)
+- [x] Docker Compose full-stack setup
+- [x] CI/CD pipeline (GitHub Actions) with `cargo audit`
+- [x] Load testing scripts
+
+### Phase 2 — Complete & Polish
+- [ ] Retirement certificate PDF generation *(endpoint exists, CertificateService needs wiring)*
+- [ ] Retirement certificate viewer UI (`/certificates/:id`)
+- [ ] Mobile-responsive frontend layout
+- [ ] Mainnet deployment with production hardening
+
+### Phase 3 — Marketplace & Trading
+- [ ] Limit order book — price/quantity matching beyond single-offer DEX listings
+- [ ] Credit bundling — package multiple credits into a basket offer
+- [ ] Automated market maker (AMM) pool for continuous liquidity
+- [ ] Price history charts and market analytics dashboard
+- [ ] Watchlist & price alerts for specific project credits
+- [ ] Secondary market fee distribution to original project issuers
+
+### Phase 4 — Credit Lifecycle Extensions
+- [ ] Credit merging UI — frontend flow for the existing `merge_credits` contract function
+- [ ] Credit expiry enforcement — automated cron for `expire_credit` past vintage cutoff
+- [ ] Credit dispute resolution UI — verifier/admin panel for dispute workflow
+- [ ] Fractional credit splitting wizard — step-by-step UI for `split_credit`
+- [ ] Credit portfolio analytics — CO₂e exposure, vintage spread, methodology breakdown
+
+### Phase 5 — Verifier & MRV Ecosystem
+- [ ] Verifier onboarding flow — self-service registration with document upload to IPFS
+- [ ] Verifier reputation leaderboard — public ranking by approval count vs. dispute ratio
+- [ ] MRV data dashboard — real-time satellite/IoT feed visualisation per project
+- [ ] Anomaly alert notifications — push/email when MRV oracle flags a project
+- [ ] Multi-oracle consensus — require N-of-M oracles to agree before flagging anomaly
+- [ ] Automated re-verification triggers — disputed credits auto-queue for re-review
+
+### Phase 6 — Compliance & Reporting
+- [ ] Corporate buyer dashboard — aggregate retirement receipts grouped by scope (1/2/3)
+- [ ] Exportable compliance reports — PDF/CSV for annual ESG disclosures
+- [ ] API webhooks for retirement events — push notifications to buyer systems
+- [ ] CORSIA / Article 6 labelling — compliance framework tags on credits
+- [ ] Double-counting prevention registry — cross-check against national registries via API
+
+### Phase 7 — Ecosystem & Integrations
+- [ ] Freighter deep-link flows — one-click retirement from external dApps
+- [ ] Public embeddable retirement widget — iframe badge for corporate sustainability pages
+- [ ] REST API public developer portal — rate-limited open API with API key management
+- [ ] Stellar federation address support — human-readable identifiers (e.g. `company*carbonchain.io`)
+- [ ] Cross-chain bridge (EVM) — mirror retirement proofs on Ethereum/Polygon for DeFi integrations
+
+### Phase 8 — Operations & Scale
+- [ ] PostgreSQL read replica — geographic redundancy for high-read workloads
+- [ ] Multi-region deployment — geographic redundancy for API and IPFS pinning
+- [ ] On-chain governance — token-weighted voting on methodology standards and fee parameters
+- [ ] Contract upgrade governance — time-locked multi-sig for WASM upgrades
+- [ ] Public audit dashboard — real-time contract state explorer for transparency
 
 ---
 

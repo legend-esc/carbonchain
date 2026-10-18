@@ -61,10 +61,17 @@ pub enum DataKey {
     Admin,
     Paused,
     Nonce(Address),
+    /// Per-address sliding-window nonce bitmap for replay protection (#899).
+    NonceBitmap(Address),
     PendingAdmin,
-    /// Contract schema version, used by `run_migrations` to track which
-    /// migration steps have been applied.
+    Registry,
     Version,
+    /// IPFS hash of the off-chain retirement certificate PDF.
+    /// Set after retirement via `set_certificate_hash`.
+    CertificateHash(BytesN<32>),
+    /// Global index of all retirement IDs across all accounts (issue #1079).
+    /// Stored in instance storage. Used by `list_all_retirements` for admin auditing.
+    AllRetirements,
 }
 
 /// A single failed retirement entry within a partial-success batch.

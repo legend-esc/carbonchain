@@ -33,6 +33,26 @@ export class MetricsService implements OnModuleInit {
   /** Gauge: current number of active (non-retired) credits on-chain. */
   carbonchainCreditsActiveTotal: client.Gauge<string>;
 
+  /**
+   * Issue #916 — Counter: total tx_bad_seq retries by account/method.
+   * A sustained rate here indicates sequence coordination problems across
+   * replicas and should trigger an alert to investigate Redis connectivity.
+   */
+  txBadSeqTotal: client.Counter<string>;
+
+  /**
+   * Issue #944 — Histogram: per-method Stellar RPC latency in seconds, labelled
+   * by outcome. Surfaces which contract method is slow without needing the
+   * caller-side timing breakdown.
+   */
+  stellarRpcDurationSeconds: client.Histogram<string>;
+
+  /**
+   * Issue #944 — Counter: total Stellar contract operations by op type
+   * ("invoke" / "read") and outcome.
+   */
+  stellarContractOpsTotal: client.Counter<string>;
+
   constructor() {
     this.register = new client.Registry();
     client.collectDefaultMetrics({ register: this.register });
@@ -101,6 +121,30 @@ export class MetricsService implements OnModuleInit {
     this.carbonchainCreditsActiveTotal = new client.Gauge({
       name: 'carbonchain_credits_active_total',
       help: 'Current number of active carbon credits on-chain',
+      registers: [this.register],
+    });
+
+    // Issue #916 — tx_bad_seq retry counter for sequence coordination monitoring.
+    this.txBadSeqTotal = new client.Counter({
+      name: 'stellar_tx_bad_seq_total',
+      help: 'Total number of tx_bad_seq retries; sustained rate indicates sequence coordination problems',
+      labelNames: ['method'],
+      registers: [this.register],
+    });
+
+    // Issue #944 — per-method RPC latency + contract op counters.
+    this.stellarRpcDurationSeconds = new client.Histogram({
+      name: 'stellar_rpc_duration_seconds',
+      help: 'Stellar RPC/contract call latency in seconds by method and outcome',
+      labelNames: ['method', 'outcome'],
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+      registers: [this.register],
+    });
+
+    this.stellarContractOpsTotal = new client.Counter({
+      name: 'stellar_contract_ops_total',
+      help: 'Total Stellar contract operations by op type, method, and outcome',
+      labelNames: ['op_type', 'method', 'outcome'],
       registers: [this.register],
     });
   }

@@ -19,8 +19,7 @@ pub enum RetirementError {
     NoPendingAdmin = 206,
     InvalidTonnes = 207,
     InvalidInput = 208,
-    /// Downgrade guard: installing an older WASM version is not allowed.
-    DowngradeNotAllowed = 209,
-    /// A retirement record with the given ID does not exist in storage.
+    InvalidRegistry = 209,
+    /// No retirement record exists for the given retirement ID.
     RecordNotFound = 210,
 }

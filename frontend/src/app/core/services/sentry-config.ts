@@ -1,28 +1,48 @@
 import * as Sentry from '@sentry/browser';
 
 /**
- * Issue #543 — Production source map upload + release tracking.
+ * Issue #543 / #971 — Production source-map upload + release tracking.
  *
- * The release string is injected at build time by Angular CLI's `define`
- * option (see angular.json production configuration).  It is derived from
- * the git commit SHA so that every production deployment maps to a unique
- * Sentry release, enabling precise source-map resolution.
+ * The release string is injected at build time by Angular CLI's `define` option
+ * (see angular.json production configuration).  The Vite-based builder
+ * (`@angular/build:application`) evaluates the `define` expression at compile
+ * time, replacing every occurrence of the identifier `__SENTRY_RELEASE__` with
+ * the result of `JSON.stringify(process.env['SENTRY_RELEASE'] || '')`.
  *
- * Format: "<package-version>+<short-git-sha>"
- * e.g.   "1.0.0+a3f2b8c"
+ * The CI workflow (`ci.yml`) computes a single RELEASE id once:
  *
- * Falls back to "unknown" when the build-time injection is absent (local dev
- * or test environments where the variable is not defined).
+ *   RELEASE="${PKG_VERSION}+${SHORT_SHA}"   # e.g. "1.0.0+a3f2b8c"
+ *
+ * and passes it as the `SENTRY_RELEASE` environment variable to both the
+ * Angular build step and the `sentry-cli releases files $RELEASE ...` upload
+ * step, guaranteeing the runtime bundle and the uploaded source maps share the
+ * exact same release identifier.
+ *
+ * A post-build assertion in CI (`Assert runtime release matches computed
+ * RELEASE`) greps the compiled chunks for the release string and fails the
+ * build if they do not match, preventing a "leaked/partial release" regression.
+ *
+ * Falls back to `'unknown'` in local dev / test environments where the
+ * `SENTRY_RELEASE` env var is not set.
  */
-function resolveRelease(): string {
-  // __SENTRY_RELEASE__ is replaced by a string literal at build time via the
-  // Angular CLI `define` option in the production build configuration.
-  const buildTimeRelease =
-    typeof (globalThis as Record<string, unknown>)['__SENTRY_RELEASE__'] === 'string'
-      ? ((globalThis as Record<string, unknown>)['__SENTRY_RELEASE__'] as string)
-      : '';
 
-  return buildTimeRelease.trim() || 'unknown';
+// `__SENTRY_RELEASE__` is replaced by a string literal at build time by the
+// Angular CLI `define` option. In tests / dev the declaration below provides
+// a type-safe fallback so TypeScript does not complain.
+declare const __SENTRY_RELEASE__: string | undefined;
+
+function resolveRelease(): string {
+  try {
+    // This branch is taken in production builds — `__SENTRY_RELEASE__` is a
+    // string literal after Vite substitution.
+    if (typeof __SENTRY_RELEASE__ === 'string' && __SENTRY_RELEASE__.trim()) {
+      return __SENTRY_RELEASE__.trim();
+    }
+  } catch {
+    // ReferenceError in environments where the symbol was never defined (tests,
+    // dev server without the production define).
+  }
+  return 'unknown';
 }
 
 export function initSentry(dsn?: string | null): void {
@@ -31,12 +51,19 @@ export function initSentry(dsn?: string | null): void {
 
   Sentry.init({
     dsn: resolvedDsn,
-    // Issue #543: Tag every error event with the exact build that produced it.
-    // The Sentry CLI upload step in CI uploads source maps under this same
-    // release identifier so stack traces resolve to original TypeScript lines.
+    // Issue #543 / #971: Tag every error event with the exact build that
+    // produced it. The Sentry CLI upload step in CI uploads source maps under
+    // this same release identifier so stack traces resolve to original
+    // TypeScript lines.
     release: resolveRelease(),
     integrations: [],
     tracesSampleRate: 0,
     enabled: true,
   });
 }
+
+/**
+ * Exposed for testing — allows specs to verify the resolved release string
+ * without initialising Sentry.
+ */
+export { resolveRelease };

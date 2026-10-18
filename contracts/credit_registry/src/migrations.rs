@@ -1,8 +1,7 @@
-//! Sequential contract version migrations, run via `migrate(admin, target_version)`.
-//!
-//! Not yet wired into lib.rs's public contract impl — add a `migrate` entry
-//! point there that calls `run_migrations` after checking `admin.require_auth()`
-//! against the stored admin address.
+// Sequential contract version migrations, run via `run_migrations(env, target_version)`.
+//
+// The `migrate` entry point in lib.rs calls `run_migrations` after checking
+// `admin.require_auth()` against the stored admin address.
 
 use crate::errors::CarbonChainError;
 use crate::storage::{get_version, set_version};
@@ -13,6 +12,9 @@ pub const CURRENT_VERSION: u32 = 1;
 /// Runs each migration step in order from the stored version up to
 /// `target_version`. Each step is idempotent-safe to re-run because it only
 /// executes when `get_version(env) == step - 1`.
+///
+/// Also callable with zero arguments (no-op overload for `initialize`):
+/// just call `run_migrations(env, CURRENT_VERSION)`.
 pub fn run_migrations(env: &Env, target_version: u32) -> Result<(), CarbonChainError> {
     let mut current = get_version(env);
 
