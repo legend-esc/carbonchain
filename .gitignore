@@ -1,6 +1,7 @@
 # ── Node / JavaScript ─────────────────────────────────────────────────────────
 node_modules/
 dist/
+build/
 .angular/
 .nest/
 .npm/

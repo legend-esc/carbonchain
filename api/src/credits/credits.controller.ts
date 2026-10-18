@@ -149,13 +149,30 @@ export class CreditsController {
     return this.creditsService.getCredit(id);
   }
 
-  /** GET /credits/:id/provenance — retrieve full lifecycle of a credit (protected: requires JWT) */
-  @UseGuards(JwtAuthGuard)
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GET /credits/:id/provenance
+  // ─────────────────────────────────────────────────────────────────────────────
+
   @ApiOperation({
     summary: 'Get credit provenance',
     description:
       'Returns the full lifecycle of a credit including all events (submit, approval, transfers, retirement)',
   })
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', description: 'Hex-encoded credit ID', example: 'abc123def456' })
+  @ApiResponse({
+    status: 200,
+    description: 'Ordered array of lifecycle events.',
+    schema: {
+      example: [
+        { action: 'Submitted', actor: 'GABC...', timestamp: 1700000000, txHash: 'tx123' },
+        { action: 'Approved', actor: 'GVFY...', timestamp: 1700001000, txHash: 'tx456' },
+      ],
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required.' })
+  @ApiResponse({ status: 404, description: 'Credit not found or provenance unavailable.' })
+  @UseGuards(JwtAuthGuard)
   @Get(':id/provenance')
   async getCreditProvenance(@Param('id') creditId: string): Promise<
     Array<{
@@ -415,5 +432,98 @@ export class CreditsController {
       { reason: body.reason, nonce: body.nonce, tonnes: body.tonnes },
       req.user.account,
     );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /credits/:id/expire  (#1103)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @ApiOperation({
+    summary: 'Expire a credit (admin only)',
+    description:
+      'Transitions an Active or Pending credit to Expired status. ' +
+      'Only administrators may expire credits. Already Retired, Flagged, or Expired credits return 400.',
+  })
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', description: 'Hex-encoded credit ID', example: 'abc123def456' })
+  @ApiBody({ type: ExpireCreditDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Credit expired successfully. Returns updated credit metadata.',
+  })
+  @ApiResponse({ status: 400, description: 'Credit is already in a terminal state (Retired, Flagged, or Expired).' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required.' })
+  @ApiResponse({ status: 404, description: 'Credit not found.' })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/expire')
+  async expireCredit(
+    @Param('id') creditId: string,
+    @Body() dto: ExpireCreditDto,
+  ): Promise<CreditMetadata> {
+    return this.creditsService.expireCredit(creditId, dto);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /credits/:id/dispute  (#1103)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @ApiOperation({
+    summary: 'Raise a dispute on a credit',
+    description:
+      'Transitions an Active credit to Disputed status. ' +
+      'The caller must be the credit owner or a registered verifier. ' +
+      'Evidence IPFS hash is stored and retrievable via GET /credits/:id.',
+  })
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', description: 'Hex-encoded credit ID', example: 'abc123def456' })
+  @ApiBody({ type: DisputeCreditDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Credit disputed successfully. Returns updated credit metadata with evidenceIpfsHash stored.',
+  })
+  @ApiResponse({ status: 400, description: 'Credit is already Retired or Disputed.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — caller is not the owner or a registered verifier.' })
+  @ApiResponse({ status: 404, description: 'Credit not found.' })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/dispute')
+  async disputeCredit(
+    @Param('id') creditId: string,
+    @Body() dto: DisputeCreditDto,
+    @Request() req: any,
+  ): Promise<CreditMetadata> {
+    return this.creditsService.disputeCredit(creditId, dto, req.user.account);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /credits/:id/resolve-dispute  (#1103)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @ApiOperation({
+    summary: 'Resolve a dispute on a credit (admin only)',
+    description:
+      'Resolves a Disputed credit. Outcome codes: 0 = reinstate to Active, 1 = Flag, 2 = Retire. ' +
+      'Only administrators may resolve disputes. Non-Disputed credits return 400.',
+  })
+  @ApiBearerAuth()
+  @ApiParam({ name: 'id', description: 'Hex-encoded credit ID', example: 'abc123def456' })
+  @ApiBody({ type: ResolveDisputeDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Dispute resolved. Returns updated credit metadata with new status.',
+    schema: {
+      example: { id: 'abc123', status: 'Active', tonnes: '1000000', methodology: 'VCS' },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Credit is not in Disputed status, or invalid outcome code.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — valid JWT required.' })
+  @ApiResponse({ status: 404, description: 'Credit not found.' })
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/resolve-dispute')
+  async resolveDispute(
+    @Param('id') creditId: string,
+    @Body() dto: ResolveDisputeDto,
+  ): Promise<CreditMetadata> {
+    return this.creditsService.resolveDispute(creditId, dto);
   }
 }

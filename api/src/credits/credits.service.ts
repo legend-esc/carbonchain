@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
@@ -21,7 +22,10 @@ import { parseCreditId } from '../common/credit-id';
 // Cache key helpers
 const CREDIT_KEY = (id: string) => `credits:${id}`;
 const LIST_CREDITS_KEY = (filter: string) => `credits:list:${filter}`;
+const PENDING_COUNT_KEY = (address: string) =>
+  `credits:verifier:${address}:pending-count`;
 const CREDIT_TTL = 120; // seconds
+const PENDING_COUNT_TTL = 30; // seconds — short TTL for live dashboard data
 
 // Cache tags — issue #540: targeted invalidation instead of `credits:*` KEYS scans.
 // Every individual credit is tagged with its own id so a single mutation only
@@ -524,6 +528,231 @@ export class CreditsService {
         `Could not retrieve provenance for credit ${creditId}`,
       );
     }
+  }
+
+  /**
+   * Expire a credit (admin-only). Transitions Active → Expired.
+   * #1103
+   */
+  async expireCredit(
+    creditId: string,
+    dto: ExpireCreditDto,
+  ): Promise<CreditMetadata> {
+    this.logger.log(`Expiring credit ${creditId}`);
+    const entity = await this.creditRepo.findById(creditId);
+    if (!entity) {
+      throw new NotFoundException(`Credit ${creditId} not found`);
+    }
+
+    const nonExpirableStatuses: CreditStatus[] = [
+      CreditStatus.Retired,
+      CreditStatus.Flagged,
+      CreditStatus.Expired,
+    ];
+    if (nonExpirableStatuses.includes(entity.status)) {
+      throw new BadRequestException(
+        `Credit ${creditId} cannot be expired — current status: ${entity.status}`,
+      );
+    }
+
+    entity.status = CreditStatus.Expired;
+    await this.creditRepo.save(entity);
+    await this.invalidateCreditCache(creditId);
+
+    const metadata = this.entityToMetadata(entity);
+    this.logger.log(`Credit ${creditId} expired. Reason: ${dto.reason}`);
+    return metadata;
+  }
+
+  /**
+   * Raise a dispute on a credit. Transitions Active → Disputed.
+   * Only the issuer (owner) or a verifier role may call this.
+   * #1103
+   */
+  async disputeCredit(
+    creditId: string,
+    dto: DisputeCreditDto,
+    callerPublicKey: string,
+  ): Promise<CreditMetadata> {
+    this.logger.log(`Disputing credit ${creditId} by ${callerPublicKey}`);
+    const entity = await this.creditRepo.findById(creditId);
+    if (!entity) {
+      throw new NotFoundException(`Credit ${creditId} not found`);
+    }
+
+    const nonDisputeStatuses: CreditStatus[] = [
+      CreditStatus.Retired,
+      CreditStatus.Disputed,
+    ];
+    if (nonDisputeStatuses.includes(entity.status)) {
+      throw new BadRequestException(
+        `Credit ${creditId} cannot be disputed — current status: ${entity.status}`,
+      );
+    }
+
+    entity.status = CreditStatus.Disputed;
+    // Store evidence hash on entity's ipfsHash field as dispute evidence
+    entity.ipfsHash = dto.evidenceIpfsHash;
+    await this.creditRepo.save(entity);
+    await this.invalidateCreditCache(creditId);
+
+    const metadata = this.entityToMetadata(entity);
+    this.logger.log(
+      `Credit ${creditId} disputed. Evidence: ${dto.evidenceIpfsHash}`,
+    );
+    return metadata;
+  }
+
+  /**
+   * Resolve a dispute (admin-only). Transitions Disputed → Active | Flagged | Retired.
+   * Outcome: 0 = Active, 1 = Flagged, 2 = Retired
+   * #1103
+   */
+  async resolveDispute(
+    creditId: string,
+    dto: ResolveDisputeDto,
+  ): Promise<CreditMetadata> {
+    this.logger.log(
+      `Resolving dispute for credit ${creditId} with outcome ${dto.outcome}`,
+    );
+    const entity = await this.creditRepo.findById(creditId);
+    if (!entity) {
+      throw new NotFoundException(`Credit ${creditId} not found`);
+    }
+
+    if (entity.status !== CreditStatus.Disputed) {
+      throw new BadRequestException(
+        `Credit ${creditId} is not in Disputed status — current status: ${entity.status}`,
+      );
+    }
+
+    const outcomeMap: Record<number, CreditStatus> = {
+      0: CreditStatus.Active,
+      1: CreditStatus.Flagged,
+      2: CreditStatus.Retired,
+    };
+
+    const newStatus = outcomeMap[dto.outcome];
+    if (newStatus === undefined) {
+      throw new BadRequestException(
+        `Invalid outcome ${dto.outcome}. Must be 0 (Active), 1 (Flagged), or 2 (Retired)`,
+      );
+    }
+
+    entity.status = newStatus;
+    await this.creditRepo.save(entity);
+    await this.invalidateCreditCache(creditId);
+
+    const metadata = this.entityToMetadata(entity);
+    this.logger.log(
+      `Dispute resolved for credit ${creditId}: new status ${newStatus}`,
+    );
+    return metadata;
+  }
+
+  /**
+   * Get the number of pending (unreviewed) credits for a given verifier address.
+   * Cached with a short TTL (30 s) for live dashboard use.
+   * #1105
+   */
+  async getVerifierPendingCount(
+    verifierAddress: string,
+  ): Promise<{ address: string; pendingCount: number }> {
+    this.logger.log(
+      `Getting pending credit count for verifier ${verifierAddress}`,
+    );
+
+    const cacheKey = PENDING_COUNT_KEY(verifierAddress);
+    const cached = await this.cache.get<{
+      address: string;
+      pendingCount: number;
+    }>(cacheKey);
+    if (cached) {
+      this.logger.debug(
+        `Cache HIT for pending count of verifier ${verifierAddress}`,
+      );
+      return cached;
+    }
+
+    // Count all credits with Pending status from the off-chain index
+    let pendingCount = 0;
+    try {
+      const result = await this.creditRepo.findByStatus(
+        CreditStatus.Pending,
+        1,
+        1000000,
+      );
+      pendingCount = result.total;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to count pending credits: ${(err as Error).message}`,
+      );
+      pendingCount = 0;
+    }
+
+    const response = { address: verifierAddress, pendingCount };
+    await this.cache.set(cacheKey, response, PENDING_COUNT_TTL);
+    return response;
+  }
+
+  /**
+   * Batch transition multiple credits to Expired or Disputed in one call.
+   * Processes sequentially with partial-success mode (collect succeeded + failed).
+   * Admin-only for expire; caller public key used for dispute.
+   * #1106
+   */
+  async batchTransitionCredits(
+    dto: BatchStatusTransitionDto,
+    callerPublicKey: string,
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ creditId: string; error: string }>;
+  }> {
+    this.logger.log(
+      `Batch transition: action=${dto.action} on ${dto.creditIds.length} credits`,
+    );
+
+    if (dto.action === 'dispute' && !dto.evidenceIpfsHash) {
+      throw new BadRequestException(
+        'evidenceIpfsHash is required for dispute action',
+      );
+    }
+
+    const succeeded: string[] = [];
+    const failed: Array<{ creditId: string; error: string }> = [];
+
+    for (const creditId of dto.creditIds) {
+      try {
+        if (dto.action === 'expire') {
+          await this.expireCredit(creditId, {
+            reason: dto.reason ?? 'Batch expiry',
+          });
+        } else {
+          await this.disputeCredit(
+            creditId,
+            {
+              evidenceIpfsHash: dto.evidenceIpfsHash!,
+              reason: dto.reason ?? 'Batch dispute',
+            },
+            callerPublicKey,
+          );
+        }
+        succeeded.push(creditId);
+      } catch (error: unknown) {
+        failed.push({
+          creditId,
+          error: (error as Error).message,
+        });
+        this.logger.warn(
+          `Batch transition failed for credit ${creditId}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Batch transition complete: ${succeeded.length} succeeded, ${failed.length} failed`,
+    );
+    return { succeeded, failed };
   }
 
   /**

@@ -7,6 +7,7 @@ function makeCredit(
   id: string,
   projectId = 'PROJ-001',
   status = CreditStatus.Active,
+  overrides: Partial<CreditEntity> = {},
 ): CreditEntity {
   const e = new CreditEntity();
   e.id = id;
@@ -19,6 +20,7 @@ function makeCredit(
   e.ipfsHash = 'baf';
   e.status = status;
   e.issuedAt = 1700000000;
+  Object.assign(e, overrides);
   return e;
 }
 
@@ -149,6 +151,173 @@ describe('InMemoryCreditRepository', () => {
     expect(page2.data).toHaveLength(2);
     expect(page2.total).toBe(5);
     expect(page2.page).toBe(2);
+  });
+
+  // ── findByFilter — one test per filter dimension ─────────────────────────
+
+  it('findByFilter filters by status', async () => {
+    await repo.save(makeCredit('a1', 'P', CreditStatus.Active));
+    await repo.save(makeCredit('r1', 'P', CreditStatus.Retired));
+    await repo.save(makeCredit('f1', 'P', CreditStatus.Flagged));
+
+    const result = await repo.findByFilter({ status: CreditStatus.Active }, 1, 10);
+    expect(result.total).toBe(1);
+    expect(result.data[0].id).toBe('a1');
+  });
+
+  it('findByFilter filters by methodology', async () => {
+    await repo.save(makeCredit('v1', 'P', CreditStatus.Active, { methodology: 'VCS' }));
+    await repo.save(makeCredit('g1', 'P', CreditStatus.Active, { methodology: 'Gold Standard' }));
+    await repo.save(makeCredit('v2', 'P', CreditStatus.Active, { methodology: 'VCS' }));
+
+    const result = await repo.findByFilter({ methodology: 'VCS' }, 1, 10);
+    expect(result.total).toBe(2);
+    expect(result.data.every((c) => c.methodology === 'VCS')).toBe(true);
+  });
+
+  it('findByFilter filters by geography', async () => {
+    await repo.save(makeCredit('ng1', 'P', CreditStatus.Active, { geography: 'NG' }));
+    await repo.save(makeCredit('br1', 'P', CreditStatus.Active, { geography: 'BR' }));
+    await repo.save(makeCredit('ng2', 'P', CreditStatus.Active, { geography: 'NG' }));
+
+    const result = await repo.findByFilter({ geography: 'NG' }, 1, 10);
+    expect(result.total).toBe(2);
+    expect(result.data.every((c) => c.geography === 'NG')).toBe(true);
+  });
+
+  it('findByFilter filters by vintageYear', async () => {
+    await repo.save(makeCredit('y24a', 'P', CreditStatus.Active, { vintageYear: 2024 }));
+    await repo.save(makeCredit('y23a', 'P', CreditStatus.Active, { vintageYear: 2023 }));
+    await repo.save(makeCredit('y24b', 'P', CreditStatus.Active, { vintageYear: 2024 }));
+
+    const result = await repo.findByFilter({ vintageYear: 2024 }, 1, 10);
+    expect(result.total).toBe(2);
+    expect(result.data.every((c) => c.vintageYear === 2024)).toBe(true);
+  });
+
+  it('findByFilter filters by minTonnes', async () => {
+    await repo.save(makeCredit('big', 'P', CreditStatus.Active, { tonnes: '2000000' }));
+    await repo.save(makeCredit('small', 'P', CreditStatus.Active, { tonnes: '500000' }));
+    await repo.save(makeCredit('exact', 'P', CreditStatus.Active, { tonnes: '1000000' }));
+
+    const result = await repo.findByFilter({ minTonnes: '1000000' }, 1, 10);
+    expect(result.total).toBe(2);
+    expect(result.data.map((c) => c.id).sort()).toEqual(['big', 'exact']);
+  });
+
+  it('findByFilter filters by maxTonnes', async () => {
+    await repo.save(makeCredit('big', 'P', CreditStatus.Active, { tonnes: '2000000' }));
+    await repo.save(makeCredit('small', 'P', CreditStatus.Active, { tonnes: '500000' }));
+    await repo.save(makeCredit('exact', 'P', CreditStatus.Active, { tonnes: '1000000' }));
+
+    const result = await repo.findByFilter({ maxTonnes: '1000000' }, 1, 10);
+    expect(result.total).toBe(2);
+    expect(result.data.map((c) => c.id).sort()).toEqual(['exact', 'small']);
+  });
+
+  // ── findByFilterCursor — cursor-based pagination ──────────────────────────
+
+  it('findByFilterCursor returns first page when cursor is null', async () => {
+    for (let i = 0; i < 6; i++) {
+      await repo.save(makeCredit(`c${i}`, 'P', CreditStatus.Active));
+    }
+
+    const result = await repo.findByFilterCursor(
+      { status: CreditStatus.Active },
+      null,
+      3,
+    );
+    expect(result.data).toHaveLength(3);
+    expect(result.nextCursor).not.toBeNull();
+  });
+
+  it('findByFilterCursor returns middle page using cursor from previous page', async () => {
+    for (let i = 0; i < 6; i++) {
+      await repo.save(makeCredit(`d${i}`, 'P', CreditStatus.Active));
+    }
+
+    const page1 = await repo.findByFilterCursor(
+      { status: CreditStatus.Active },
+      null,
+      2,
+    );
+    expect(page1.data).toHaveLength(2);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2 = await repo.findByFilterCursor(
+      { status: CreditStatus.Active },
+      page1.nextCursor,
+      2,
+    );
+    expect(page2.data).toHaveLength(2);
+    // Items on page2 must not overlap with page1
+    const page1Ids = page1.data.map((c) => c.id);
+    page2.data.forEach((c) => expect(page1Ids).not.toContain(c.id));
+  });
+
+  it('findByFilterCursor returns null nextCursor on last page', async () => {
+    for (let i = 0; i < 4; i++) {
+      await repo.save(makeCredit(`e${i}`, 'P', CreditStatus.Active));
+    }
+
+    const page1 = await repo.findByFilterCursor(
+      { status: CreditStatus.Active },
+      null,
+      3,
+    );
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2 = await repo.findByFilterCursor(
+      { status: CreditStatus.Active },
+      page1.nextCursor,
+      3,
+    );
+    // Only 1 item remains
+    expect(page2.data).toHaveLength(1);
+    expect(page2.nextCursor).toBeNull();
+  });
+
+  it('findByFilterCursor with cursor past end returns empty data and null nextCursor', async () => {
+    await repo.save(makeCredit('only1', 'P', CreditStatus.Active));
+
+    const result = await repo.findByFilterCursor(
+      { status: CreditStatus.Active },
+      'only1', // cursor pointing to the last item
+      3,
+    );
+    expect(result.data).toHaveLength(0);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  // ── findByProject with pagination ─────────────────────────────────────────
+
+  it('findByProject paginates correctly across multiple pages', async () => {
+    for (let i = 0; i < 7; i++) {
+      await repo.save(makeCredit(`p${i}`, 'PROJ-PAGINATE'));
+    }
+    // noise record in different project
+    await repo.save(makeCredit('other', 'PROJ-OTHER'));
+
+    const page1 = await repo.findByProject('PROJ-PAGINATE', 1, 3);
+    expect(page1.data).toHaveLength(3);
+    expect(page1.total).toBe(7);
+
+    const page3 = await repo.findByProject('PROJ-PAGINATE', 3, 3);
+    expect(page3.data).toHaveLength(1);
+    expect(page3.total).toBe(7);
+  });
+
+  // ── save overwrites (simulates cache invalidation) ───────────────────────
+
+  it('save overwrites an existing credit with the same id (status update)', async () => {
+    const credit = makeCredit('mutate1', 'P', CreditStatus.Active);
+    await repo.save(credit);
+
+    const updated = makeCredit('mutate1', 'P', CreditStatus.Retired);
+    await repo.save(updated);
+
+    const found = await repo.findById('mutate1');
+    expect(found?.status).toBe(CreditStatus.Retired);
   });
 });
 
