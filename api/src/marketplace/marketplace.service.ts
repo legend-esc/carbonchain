@@ -496,8 +496,16 @@ export class MarketplaceService {
 
   /**
    * Issue #940 — POST /marketplace/offers/:id/quote
+   *
+   * #1179 — Simulation now uses the requesting user's public key as the
+   * source account (via `simulateContractCall`) so fee/resource estimates
+   * reflect the actual client-side signing flow rather than the admin key.
    */
-  async quoteOffer(offerId: string, accountId: string): Promise<QuoteResult> {
+  async quoteOffer(
+    offerId: string,
+    accountId: string,
+    requesterPublicKey?: string,
+  ): Promise<QuoteResult> {
     const cacheKey = `${offerId}:${accountId}`;
     const now = Date.now();
 
@@ -513,15 +521,13 @@ export class MarketplaceService {
     const offer = await this.getOffer(offerIdNum);
     const grossAmount = offer.price_xlm;
 
+    // The source account for simulation is the requesting user's public key.
+    // Fall back to the accountId (which is the buyer address) when the caller
+    // did not thread a separate requester key through.
+    const sourceAccount = requesterPublicKey ?? accountId;
+
     let estimatedFee = '0';
     try {
-      const network = this.configService.get<string>(
-        'STELLAR_NETWORK',
-        'TESTNET',
-      );
-      const passphrase =
-        network.toUpperCase() === 'PUBLIC' ? Networks.PUBLIC : Networks.TESTNET;
-
       const nativeTokenId = this.configService.get<string>(
         'NATIVE_TOKEN_CONTRACT_ID',
         '',
@@ -533,35 +539,62 @@ export class MarketplaceService {
         nativeToScVal(nativeTokenId, { type: 'address' }),
       ];
 
-      const dummyAccount = new Account(
-        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-        '0',
-      );
+      // #1179 — Prefer the custom-source simulation helper when available.
+      if (
+        typeof (this.stellarService as any).simulateContractCall === 'function'
+      ) {
+        const simulation = await (
+          this.stellarService as any
+        ).simulateContractCall(
+          this.contractId,
+          'quote_offer',
+          simArgs,
+          sourceAccount,
+        );
+        if (simulation && rpc.Api.isSimulationSuccess(simulation)) {
+          estimatedFee = String(simulation.minResourceFee ?? '0');
+        }
+      } else {
+        // Backward-compatible fallback: build a dummy-source tx and simulate.
+        const network = this.configService.get<string>(
+          'STELLAR_NETWORK',
+          'TESTNET',
+        );
+        const passphrase =
+          network.toUpperCase() === 'PUBLIC'
+            ? Networks.PUBLIC
+            : Networks.TESTNET;
 
-      const tx = new TransactionBuilder(dummyAccount, {
-        fee: '100',
-        networkPassphrase: passphrase,
-      })
-        .addOperation(
-          Operation.invokeHostFunction({
-            func: xdr.HostFunction.hostFunctionTypeInvokeContract(
-              new xdr.InvokeContractArgs({
-                contractAddress: Address.fromString(
-                  this.contractId,
-                ).toScAddress(),
-                functionName: 'buy_offer',
-                args: simArgs,
-              }),
-            ),
-            auth: [],
-          }),
-        )
-        .setTimeout(30)
-        .build();
+        const dummyAccount = new Account(
+          'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          '0',
+        );
 
-      const simulation = await this.stellarService.simulateTransaction(tx);
-      if (rpc.Api.isSimulationSuccess(simulation)) {
-        estimatedFee = String(simulation.minResourceFee ?? '0');
+        const tx = new TransactionBuilder(dummyAccount, {
+          fee: '100',
+          networkPassphrase: passphrase,
+        })
+          .addOperation(
+            Operation.invokeHostFunction({
+              func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+                new xdr.InvokeContractArgs({
+                  contractAddress: Address.fromString(
+                    this.contractId,
+                  ).toScAddress(),
+                  functionName: 'buy_offer',
+                  args: simArgs,
+                }),
+              ),
+              auth: [],
+            }),
+          )
+          .setTimeout(30)
+          .build();
+
+        const simulation = await this.stellarService.simulateTransaction(tx);
+        if (rpc.Api.isSimulationSuccess(simulation)) {
+          estimatedFee = String(simulation.minResourceFee ?? '0');
+        }
       }
     } catch (err) {
       this.logger.warn(

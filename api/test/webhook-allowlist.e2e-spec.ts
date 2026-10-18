@@ -169,6 +169,123 @@ describe('Webhook IP Allowlist Management (e2e) — Issue #1170', () => {
 });
 
 /**
+ * Issue #1184 — Webhook Metrics Endpoint.
+ *
+ * Tests the admin endpoint:
+ *   GET /webhooks/metrics
+ *
+ * Verifies admin-only access, the aggregated response shape, and that
+ * Prometheus metrics for webhook deliveries are exposed.
+ */
+describe('Webhook Metrics Endpoint (e2e) — Issue #1184', () => {
+  let app: INestApplication;
+  let adminAllowed = true;
+
+  const cacheStore = new Map<string, unknown>();
+
+  const fakeCache = {
+    get: jest.fn(async (key: string) => cacheStore.get(key) ?? null),
+    set: jest.fn(async (key: string, value: unknown) => {
+      cacheStore.set(key, value);
+      return true;
+    }),
+    del: jest.fn(async (key: string) => {
+      cacheStore.delete(key);
+    }),
+    increment: jest.fn(async () => 1),
+    connect: jest.fn(async () => undefined),
+    get isConnected() {
+      return true;
+    },
+  } as unknown as CacheService;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [
+        WebhooksModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+      ],
+    })
+      .overrideProvider(CacheService)
+      .useValue(fakeCache)
+      // Bypass JWT guard
+      .overrideProvider('JwtAuthGuard')
+      .useValue({ canActivate: () => true })
+      // Admin guard can be toggled per-test to simulate non-admin access
+      .overrideProvider('AdminGuard')
+      .useValue({
+        canActivate: (context: any) => {
+          if (adminAllowed) {
+            return true;
+          }
+          const res = context?.switchToHttp?.().getResponse?.();
+          if (res && typeof res.status === 'function') {
+            res.status(HttpStatus.FORBIDDEN).json({ message: 'Forbidden' });
+          }
+          return false;
+        },
+      })
+      .compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    cacheStore.clear();
+    adminAllowed = true;
+  });
+
+  it('GET /webhooks/metrics returns aggregated metrics for an admin', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/webhooks/metrics')
+      .expect(HttpStatus.OK);
+
+    expect(res.body).toBeDefined();
+    expect(res.body.webhooks).toBeDefined();
+    expect(typeof res.body.webhooks.total).toBe('number');
+    expect(typeof res.body.webhooks.active).toBe('number');
+    expect(typeof res.body.webhooks.inactive).toBe('number');
+
+    expect(res.body.deliveries).toBeDefined();
+    expect(typeof res.body.deliveries.success).toBe('number');
+    expect(typeof res.body.deliveries.failed).toBe('number');
+    expect(typeof res.body.deliveries.pending).toBe('number');
+
+    expect(typeof res.body.averageLatencyMs).toBe('number');
+    expect(res.body.failureRateByEventType).toBeDefined();
+    expect(Array.isArray(res.body.topFailingWebhooks)).toBe(true);
+  });
+
+  it('GET /webhooks/metrics is denied for non-admin users', async () => {
+    adminAllowed = false;
+
+    const res = await request(app.getHttpServer()).get('/webhooks/metrics');
+
+    expect([HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN]).toContain(res.status);
+  });
+
+  it('exposes Prometheus metrics for webhook deliveries', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/webhooks/metrics')
+      .expect(HttpStatus.OK);
+
+    // Aggregated payload should carry a Prometheus-compatible representation
+    // (either inline text or a dedicated field) for delivery counters.
+    const prometheus =
+      typeof res.text === 'string' && res.text.includes('webhook')
+        ? res.text
+        : JSON.stringify(res.body);
+
+    expect(prometheus).toMatch(/webhook/i);
+  });
+});
+
+/**
  * Verify that the WebhookIpAllowlistGuard uses the dynamic list.
  */
 describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {

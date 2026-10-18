@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { StellarAuthStrategy } from './stellar-auth.strategy';
 import { StellarModule } from '../stellar/stellar.module';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { AdminGuard } from './admin.guard';
 
 @Module({
   imports: [
@@ -23,7 +24,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       }),
     }),
   ],
-  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard],
+  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard, AdminGuard],
   controllers: [AuthController],
   exports: [AuthService, JwtAuthGuard],
 })

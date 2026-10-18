@@ -32,6 +32,7 @@ describe('VerifiersService.approveCredit', () => {
     mockStellarService = {
       readContract: jest.fn(),
       invokeContract: jest.fn(),
+      buildContractTransaction: jest.fn(),
     };
 
     mockKeypairService = {
@@ -106,6 +107,9 @@ describe('VerifiersService.approveCredit', () => {
   const setupSuccess = () => {
     setReadMock();
     mockStellarService.invokeContract.mockResolvedValue({} as any);
+    mockStellarService.buildContractTransaction.mockResolvedValue(
+      'UNSIGNED_XDR',
+    );
     mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
   };
 
@@ -146,6 +150,64 @@ describe('VerifiersService.approveCredit', () => {
       );
       expect(nonceCall).toBeDefined();
       expect(nonceCall![0]).toBe(CONTRACT_ID);
+    });
+  });
+
+  describe('buildContractTransaction (client-side signing flow)', () => {
+    it('should call buildContractTransaction with contract id, approve_and_mint, args and verifier source account', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(
+        mockStellarService.buildContractTransaction,
+      ).toHaveBeenCalledTimes(1);
+      const [contractId, method, args, sourceAccount] =
+        mockStellarService.buildContractTransaction.mock.calls[0];
+      expect(contractId).toBe(CONTRACT_ID);
+      expect(method).toBe('approve_and_mint');
+      expect(args).toHaveLength(3);
+      expect(args[2]).toBeDefined();
+      expect(sourceAccount).toBe(VERIFIER_ADDR);
+    });
+
+    it('should return the unsigned transaction XDR from buildContractTransaction', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+      mockStellarService.buildContractTransaction.mockResolvedValue(
+        'UNSIGNED_XDR_FOR_FREIGHTER',
+      );
+
+      const result = await service.approveCredit(
+        VERIFIER_ADDR,
+        CREDIT_ID,
+        VERIFIER_ADDR,
+      );
+
+      expect(result).toBe('UNSIGNED_XDR_FOR_FREIGHTER');
+    });
+
+    it('should not sign or submit the transaction itself', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.invokeContract).not.toHaveBeenCalled();
+      expect(mockKeypairService.getAdminKeypair).not.toHaveBeenCalled();
+    });
+
+    it('should propagate errors from buildContractTransaction', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setReadMock();
+      mockStellarService.buildContractTransaction.mockRejectedValue(
+        new Error('Simulation failed'),
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow('Simulation failed');
     });
   });
 
@@ -220,11 +282,16 @@ describe('VerifiersService.approveCredit', () => {
       spyListVerifiers([VERIFIER_ADDR]);
       setReadMock();
       mockStellarService.invokeContract.mockResolvedValue({} as any);
+      mockStellarService.buildContractTransaction.mockResolvedValue(
+        'UNSIGNED_XDR',
+      );
       mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
 
       await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
 
-      expect(mockStellarService.invokeContract).toHaveBeenCalledTimes(1);
+      expect(
+        mockStellarService.buildContractTransaction,
+      ).toHaveBeenCalledTimes(1);
     });
 
     it('should throw BadRequestException when threshold is unconfigured (0)', async () => {
@@ -254,6 +321,9 @@ describe('VerifiersService.approveCredit', () => {
         service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
       ).rejects.toThrow(ConflictException);
       expect(mockStellarService.invokeContract).not.toHaveBeenCalled();
+      expect(
+        mockStellarService.buildContractTransaction,
+      ).not.toHaveBeenCalled();
     });
   });
 });

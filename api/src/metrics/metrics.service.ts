@@ -53,6 +53,19 @@ export class MetricsService implements OnModuleInit {
    */
   stellarContractOpsTotal: client.Counter<string>;
 
+  // ── Issue #1184: Webhook delivery metrics ─────────────────────────────────
+
+  /**
+   * Issue #1184 — Counter: total webhook deliveries by delivery status
+   * ("success" / "failed" / "pending") and event type.
+   */
+  webhookDeliveriesTotal: client.Counter<string>;
+
+  /**
+   * Issue #1184 — Histogram: webhook delivery latency in seconds by event type.
+   */
+  webhookDeliveryDurationSeconds: client.Histogram<string>;
+
   constructor() {
     this.register = new client.Registry();
     client.collectDefaultMetrics({ register: this.register });
@@ -145,6 +158,22 @@ export class MetricsService implements OnModuleInit {
       name: 'stellar_contract_ops_total',
       help: 'Total Stellar contract operations by op type, method, and outcome',
       labelNames: ['op_type', 'method', 'outcome'],
+      registers: [this.register],
+    });
+
+    // Issue #1184 — webhook delivery counter and latency histogram.
+    this.webhookDeliveriesTotal = new client.Counter({
+      name: 'webhook_deliveries_total',
+      help: 'Total number of webhook deliveries by status and event type',
+      labelNames: ['status', 'event_type'],
+      registers: [this.register],
+    });
+
+    this.webhookDeliveryDurationSeconds = new client.Histogram({
+      name: 'webhook_delivery_duration_seconds',
+      help: 'Webhook delivery latency in seconds by event type',
+      labelNames: ['event_type'],
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
       registers: [this.register],
     });
   }

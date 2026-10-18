@@ -145,14 +145,102 @@ function buildMockDataSource() {
       );
     }
 
+    // COUNT deliveries (filtered/paginated list)
+    if (
+      s.includes('COUNT(*)') &&
+      s.includes('FROM webhook_deliveries') &&
+      !s.includes('FOR UPDATE SKIP LOCKED')
+    ) {
+      const filtered = filterDeliveries(s, params);
+      return [{ count: String(filtered.length) }];
+    }
+
     // SELECT deliveries list
     if (
       s.includes('FROM webhook_deliveries') &&
       !s.includes('FOR UPDATE SKIP LOCKED')
     ) {
-      const webhookId = params?.[0] as string | undefined;
+      const filtered = filterDeliveries(s, params);
+      // Apply LIMIT/OFFSET when present
+      const limitMatch = s.match(/LIMIT \$(\d+)/);
+      const offsetMatch = s.match(/OFFSET \$(\d+)/);
+      let result = filtered;
+      if (limitMatch) {
+        const limit = (params as unknown[])[Number(limitMatch[1]) - 1] as number;
+        const offset = offsetMatch
+          ? ((params as unknown[])[Number(offsetMatch[1]) - 1] as number)
+          : 0;
+        result = filtered.slice(offset, offset + limit);
+      }
+      return result;
+    }
+
+    // SELECT aggregated delivery metrics (getWebhookMetrics)
+    if (
+      s.includes('FROM webhook_deliveries') &&
+      (s.includes('COUNT(') || s.includes('AVG(') || s.includes('GROUP BY'))
+    ) {
       const all = Object.values(deliveries);
-      return webhookId ? all.filter((d) => d.webhook_id === webhookId) : all;
+      const byStatus = (status: string) =>
+        all.filter((d) => d.status === status).length;
+      const succeeded = all.filter((d) => d.status === 'success');
+      const latencies = succeeded
+        .map((d) =>
+          d.last_attempt_at
+            ? d.last_attempt_at.getTime() - d.created_at.getTime()
+            : null,
+        )
+        .filter((v): v is number => v !== null);
+      const avgLatency = latencies.length
+        ? latencies.reduce((a, b) => a + b, 0) / latencies.length
+        : 0;
+
+      if (s.includes('GROUP BY') && s.includes('event_type')) {
+        const groups: Record<string, { total: number; failed: number }> = {};
+        for (const d of all) {
+          groups[d.event_type] = groups[d.event_type] ?? {
+            total: 0,
+            failed: 0,
+          };
+          groups[d.event_type].total += 1;
+          if (d.status === 'failed') groups[d.event_type].failed += 1;
+        }
+        return Object.entries(groups).map(([event_type, g]) => ({
+          event_type,
+          total: g.total,
+          failed: g.failed,
+        }));
+      }
+
+      if (s.includes('GROUP BY') && s.includes('webhook_id')) {
+        const groups: Record<string, { total: number; failed: number }> = {};
+        for (const d of all) {
+          groups[d.webhook_id] = groups[d.webhook_id] ?? {
+            total: 0,
+            failed: 0,
+          };
+          groups[d.webhook_id].total += 1;
+          if (d.status === 'failed') groups[d.webhook_id].failed += 1;
+        }
+        return Object.entries(groups)
+          .map(([webhook_id, g]) => ({
+            webhook_id,
+            url: webhooks[webhook_id]?.url ?? null,
+            total: g.total,
+            failed: g.failed,
+          }))
+          .sort((a, b) => b.failed - a.failed);
+      }
+
+      return [
+        {
+          total: all.length,
+          success: byStatus('success'),
+          failed: byStatus('failed'),
+          pending: byStatus('pending'),
+          avg_latency_ms: avgLatency,
+        },
+      ];
     }
 
     // UPDATE delivery status
@@ -196,6 +284,39 @@ function buildMockDataSource() {
 
     return [];
   });
+
+  /**
+   * Applies the WHERE clauses produced by getDeliveries to the in-memory
+   * delivery store. Supports webhook_id, status, event_type and created_at
+   * range filters.
+   */
+  function filterDeliveries(sql: string, params?: unknown[]) {
+    let all = Object.values(deliveries);
+    const p = (params ?? []) as unknown[];
+    let idx = 0;
+
+    if (sql.includes('webhook_id = $')) {
+      const webhookId = p[idx++] as string;
+      all = all.filter((d) => d.webhook_id === webhookId);
+    }
+    if (sql.includes('status = $')) {
+      const status = p[idx++] as string;
+      all = all.filter((d) => d.status === status);
+    }
+    if (sql.includes('event_type = $')) {
+      const eventType = p[idx++] as string;
+      all = all.filter((d) => d.event_type === eventType);
+    }
+    if (sql.includes('created_at >= $')) {
+      const from = p[idx++] as Date;
+      all = all.filter((d) => d.created_at >= from);
+    }
+    if (sql.includes('created_at <= $')) {
+      const to = p[idx++] as Date;
+      all = all.filter((d) => d.created_at <= to);
+    }
+    return all;
+  }
 
   return { query, _store: { webhooks, deliveries } };
 }
@@ -474,6 +595,159 @@ describe('WebhooksService', () => {
       const wrongSecret = `sha256=${createHmac('sha256', 'wrong-secret').update(signingInput).digest('hex')}`;
 
       expect(sigHeader).not.toBe(wrongSecret);
+    });
+  });
+
+  // ── #1182 — Delivery history filtering & pagination ─────────────────────────
+
+  describe('#1182 getDeliveries filtering and pagination', () => {
+    async function seedDeliveries() {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      const wh = await service.registerWebhook('https://example.com/hook', [
+        'credit_submitted',
+        'credit_retired',
+      ]);
+
+      const store = mockDs._store.deliveries;
+      const base = new Date('2024-01-01T00:00:00.000Z');
+      const rows = [
+        {
+          id: 'del-1',
+          status: 'success',
+          event_type: 'credit_submitted',
+          created_at: new Date(base.getTime() + 1 * 86400000),
+        },
+        {
+          id: 'del-2',
+          status: 'failed',
+          event_type: 'credit_submitted',
+          created_at: new Date(base.getTime() + 2 * 86400000),
+        },
+        {
+          id: 'del-3',
+          status: 'success',
+          event_type: 'credit_retired',
+          created_at: new Date(base.getTime() + 3 * 86400000),
+        },
+        {
+          id: 'del-4',
+          status: 'pending',
+          event_type: 'credit_retired',
+          created_at: new Date(base.getTime() + 4 * 86400000),
+        },
+        {
+          id: 'del-5',
+          status: 'success',
+          event_type: 'credit_submitted',
+          created_at: new Date(base.getTime() + 5 * 86400000),
+        },
+      ];
+      for (const r of rows) {
+        store[r.id] = {
+          id: r.id,
+          webhook_id: wh.id,
+          event_id: `evt-${r.id}`,
+          event_type: r.event_type,
+          payload_json: '{}',
+          status: r.status,
+          attempts: 1,
+          last_attempt_at: r.created_at,
+          next_retry_at: r.created_at,
+          created_at: r.created_at,
+        };
+      }
+      return { wh, base };
+    }
+
+    it('returns all deliveries with default pagination', async () => {
+      await seedDeliveries();
+
+      const result = await service.getDeliveries();
+
+      expect(result.total).toBe(5);
+      expect(result.page).toBe(1);
+      expect(result.pageSize).toBe(20);
+      expect(result.items.length).toBe(5);
+    });
+
+    it('filters by status', async () => {
+      await seedDeliveries();
+
+      const result = await service.getDeliveries({ status: 'success' });
+
+      expect(result.total).toBe(3);
+      expect(result.items.every((d) => d.status === 'success')).toBe(true);
+    });
+
+    it('filters by eventType', async () => {
+      await seedDeliveries();
+
+      const result = await service.getDeliveries({
+        eventType: 'credit_retired',
+      });
+
+      expect(result.total).toBe(2);
+      expect(result.items.every((d) => d.event_type === 'credit_retired')).toBe(
+        true,
+      );
+    });
+
+    it('filters by from/to date range', async () => {
+      const { base } = await seedDeliveries();
+
+      const result = await service.getDeliveries({
+        from: new Date(base.getTime() + 2 * 86400000),
+        to: new Date(base.getTime() + 4 * 86400000),
+      });
+
+      expect(result.total).toBe(3);
+      expect(result.items.map((d) => d.id).sort()).toEqual([
+        'del-2',
+        'del-3',
+        'del-4',
+      ]);
+    });
+
+    it('combines status, eventType and date filters', async () => {
+      const { base } = await seedDeliveries();
+
+      const result = await service.getDeliveries({
+        status: 'success',
+        eventType: 'credit_submitted',
+        from: new Date(base.getTime() + 2 * 86400000),
+      });
+
+      expect(result.total).toBe(1);
+      expect(result.items[0].id).toBe('del-5');
+    });
+
+    it('paginates results and reports total', async () => {
+      await seedDeliveries();
+
+      const page1 = await service.getDeliveries({ page: 1, pageSize: 2 });
+      expect(page1.total).toBe(5);
+      expect(page1.items.length).toBe(2);
+
+      const page3 = await service.getDeliveries({ page: 3, pageSize: 2 });
+      expect(page3.total).toBe(5);
+      expect(page3.items.length).toBe(1);
+    });
+
+    it('throws BadRequestException for invalid status', async () => {
+      await seedDeliveries();
+
+      await expect(
+        service.getDeliveries({ status: 'bogus' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for invalid date', async () => {
+      await seedDeliveries();
+
+      await expect(
+        service.getDeliveries({ from: 'not-a-date' as unknown as Date }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 

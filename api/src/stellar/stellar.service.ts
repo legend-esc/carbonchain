@@ -254,6 +254,47 @@ export class StellarService implements OnModuleInit {
     return ext.type === 'sorobanData' ? ext.sorobanData : undefined;
   }
 
+  /**
+   * Invoke a Soroban contract method, signing with the supplied keypair and
+   * submitting the transaction to the Soroban RPC node.
+   *
+   * The method builds the transaction, simulates it to derive the resource
+   * fee (with `FEE_BUFFER_MULTIPLIER` headroom), signs, submits, and polls
+   * until the transaction reaches a terminal state.
+   *
+   * **Retry / throttling behavior**
+   * - `tx_insufficient_fee` rejections are retried up to 3 times, doubling the
+   *   fee on each attempt (issue #546).
+   * - `tx_bad_seq` rejections are retried up to `retries` times with jittered
+   *   exponential backoff (`BAD_SEQ_INITIAL_RETRY_DELAY_MS * 2^attempt`) and
+   *   sequence-cache invalidation (issue #916).
+   * - Submission itself is wrapped in `submitTransactionWithRetry`, which
+   *   retries transient errors (429/5xx/timeouts) up to 3 times.
+   *
+   * **Error mapping** — on-chain contract errors surfaced by the simulation or
+   * the final result are mapped to HTTP exceptions by `contract-error-mapper.ts`
+   * (e.g. `ContractError::Unauthorized` → `ForbiddenException`). This method
+   * throws raw `Error` instances; callers should route them through the mapper.
+   *
+   * @param contractId - Contract address (StrKey `C...`) to invoke.
+   * @param method - Contract function name to call.
+   * @param args - Soroban `ScVal` arguments for the function. Defaults to `[]`.
+   * @param signerKeypair - Keypair used to sign and pay for the transaction.
+   * @param retries - Maximum `tx_bad_seq` retries. Defaults to 3.
+   * @returns The final `getTransaction` response, enriched with
+   *   `estimatedFeeStroops` (the actual fee paid in stroops).
+   * @throws {Error} When simulation fails, the transaction fails on-chain, or
+   *   retries are exhausted.
+   * @example
+   * ```ts
+   * const result = await stellarService.invokeContract(
+   *   contractId,
+   *   'transfer',
+   *   [from.toScVal(), to.toScVal(), amountToScVal],
+   *   adminKeypair,
+   * );
+   * ```
+   */
   async invokeContract(
     contractId: string,
     method: string,
@@ -511,6 +552,32 @@ export class StellarService implements OnModuleInit {
     return typeof serialized === 'string' && serialized.includes('tx_bad_seq');
   }
 
+  /**
+   * Build, sign, and submit a classic Horizon transaction containing the
+   * supplied operations.
+   *
+   * The base fee is fetched from Horizon (cached for 60s) and multiplied by
+   * `FEE_BUFFER_MULTIPLIER`. The transaction uses a 30-second timeout.
+   *
+   * **Retry behavior** — `tx_bad_seq` rejections are retried up to `retries`
+   * times with exponential backoff and sequence-cache invalidation (issue
+   * #916). Submission is wrapped in `submitTransactionWithRetry` for transient
+   * 429/5xx/timeout errors.
+   *
+   * @param operations - Horizon operations to include in the transaction.
+   * @param signerKeypair - Keypair used to sign and pay for the transaction.
+   * @param retries - Maximum `tx_bad_seq` retries. Defaults to 3.
+   * @param badSeqAttempt - Internal retry counter (do not set manually).
+   * @returns The Horizon submit-transaction response.
+   * @throws {Error} When submission fails after retries are exhausted.
+   * @example
+   * ```ts
+   * await stellarService.buildAndSubmit(
+   *   [Operation.payment({ destination, asset, amount })],
+   *   keypair,
+   * );
+   * ```
+   */
   async buildAndSubmit(
     operations: Operation[],
     signerKeypair: Keypair,
@@ -590,9 +657,47 @@ export class StellarService implements OnModuleInit {
   }
 
   /**
-   * Issue #952 — Build an unsigned contract transaction XDR for client-side signing.
-   * Placeholder implementation: returns a stub base64 XDR until the full
-   * Soroban transaction builder path is wired up end-to-end.
+   * Issue #952 / #1177 — Build an **unsigned** Soroban contract-invocation
+   * transaction XDR for client-side signing (e.g. Freighter).
+   *
+   * The returned XDR is a base64-encoded `TransactionEnvelope` that has been
+   * simulated and assembled (resource fee + footprint applied) but **not
+   * signed**. The client signs it and submits the signed XDR back via
+   * {@link submitTransaction}.
+   *
+   * **Fee** — the base fee is taken from Horizon (cached, 60s TTL) and the
+   * resource fee is derived from the simulation, both multiplied by
+   * `FEE_BUFFER_MULTIPLIER`.
+   *
+   * **Time bounds** — the transaction is valid for 30 seconds (matching the
+   * server-side invoke path). Callers that need a longer window should sign
+   * promptly.
+   *
+   * **Sequence number** — obtained from the distributed sequence manager
+   * (`RedisSequenceNumberManager`) so concurrent builds across replicas do not
+   * collide.
+   *
+   * **Error mapping** — simulation failures throw a raw `Error`; callers should
+   * map contract error codes to HTTP exceptions via `contract-error-mapper.ts`.
+   *
+   * @param contractId - Contract address (StrKey `C...`) to invoke.
+   * @param method - Contract function name to call.
+   * @param args - Soroban `ScVal` arguments for the function.
+   * @param sourceAccount - Public key (`G...`) of the account that will sign
+   *   and pay for the transaction.
+   * @returns Base64-encoded unsigned transaction XDR.
+   * @throws {Error} When the source account cannot be loaded or simulation fails.
+   * @example
+   * ```ts
+   * const xdr = await stellarService.buildContractTransaction(
+   *   contractId,
+   *   'approve_credit',
+   *   [creditIdToScVal, verifierToScVal],
+   *   verifierPublicKey,
+   * );
+   * // hand `xdr` to Freighter for signing, then:
+   * await stellarService.submitTransaction(signedXdr);
+   * ```
    */
   async buildContractTransaction(
     contractId: string,
@@ -603,17 +708,154 @@ export class StellarService implements OnModuleInit {
     this.logger.log(
       `Building tx for ${method} on ${contractId} from ${sourceAccount}`,
     );
-    // Returns unsigned XDR envelope — placeholder until full Soroban tx builder is wired
-    return 'AAAAAA==';
+
+    // Load the source account (cached) and obtain the next sequence number
+    // from the distributed manager so concurrent builds don't collide.
+    await this.getAccountInfo(sourceAccount);
+    const seq = await this.getNextSequenceNumber(sourceAccount);
+    const account = new Account(sourceAccount, seq.toString());
+
+    // Base fee from Horizon (cached) with buffer applied.
+    const baseFee = await this.getHorizonBaseFee();
+    const feeWithBuffer = String(Math.ceil(baseFee * this.feeBufferMultiplier));
+
+    const tx = new TransactionBuilder(account, {
+      fee: feeWithBuffer,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        Operation.invokeHostFunction({
+          func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+            new xdr.InvokeContractArgs({
+              contractAddress: Address.fromString(contractId).toScAddress(),
+              functionName: method,
+              args,
+            }),
+          ),
+          auth: [],
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    // Simulate to obtain the resource fee and footprint, then assemble.
+    const simulation = await this.simulateTransaction(tx);
+    if (!rpc.Api.isSimulationSuccess(simulation)) {
+      throw new Error(`Simulation failed: ${JSON.stringify(simulation)}`);
+    }
+
+    const assembledTx = rpc.assembleTransaction(tx, simulation).build();
+    const fee = this.computeSorobanFee(simulation);
+
+    // Rebuild with the buffered fee while preserving the assembled sorobanData
+    // (resource fee + footprint). The result is unsigned.
+    const preparedTx = TransactionBuilder.cloneFrom(assembledTx, {
+      fee,
+      sorobanData: this.extractSorobanData(assembledTx),
+    }).build();
+
+    return preparedTx.toXDR();
   }
 
   /**
-   * Issue #952 — Submit a pre-signed transaction XDR from the user's wallet.
+   * Issue #1178 — Submit a pre-signed transaction XDR from the user's wallet.
+   *
+   * The XDR is parsed with the configured network passphrase, the source
+   * account is extracted, and the raw signed envelope is submitted to Soroban
+   * RPC. On `tx_bad_seq` the sequence manager is reset and the submission is
+   * retried with exponential backoff up to `BAD_SEQ_MAX_RETRIES` times.
+   *
+   * After submission the transaction is polled to finality so the returned
+   * object carries the transaction hash and the final status.
    */
-  async submitTransaction(signedXdr: string): Promise<unknown> {
-    this.logger.log('Submitting pre-signed transaction');
-    return this.sorobanRpcServer.sendTransaction(
-      TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase),
+  async submitTransaction(
+    signedXdr: string,
+  ): Promise<Horizon.HorizonApi.SubmitTransactionResponse> {
+    const tx = TransactionBuilder.fromXDR(
+      signedXdr,
+      this.networkPassphrase,
+    ) as Transaction;
+
+    const pk = tx.source;
+    const hash = Buffer.from(tx.hash()).toString('hex');
+
+    this.logger.log(
+      `[requestId=${RequestContextStore.getRequestId() ?? 'unknown'}] ` +
+        `Submitting pre-signed transaction hash=${hash.slice(0, 16)}... source=${pk}`,
+    );
+
+    for (let attempt = 0; attempt <= BAD_SEQ_MAX_RETRIES; attempt++) {
+      try {
+        const response = await this.withTimeout(
+          this.sorobanRpcServer.sendTransaction(tx),
+          'sendTransaction',
+        );
+
+        // Invalidate the cached account info — the sequence has advanced.
+        this.invalidateAccountInfoCache(pk);
+
+        const status = String(response.status);
+
+        if (status === 'ERROR') {
+          // RPC reports an error envelope — surface it as a thrown error so
+          // callers do not mistake it for a successful submission.
+          throw new Error(
+            `Transaction submission failed with status ERROR (hash: ${response.hash ?? hash})`,
+          );
+        }
+
+        // Poll to finality so the caller receives the confirmed status.
+        let finalStatus: string = status;
+        try {
+          const result = await this.pollTransactionStatus(
+            response.hash ?? hash,
+          );
+          finalStatus = String(result.status);
+        } catch (pollError) {
+          this.logger.warn(
+            `[#1178] Failed to poll final status for hash=${hash.slice(0, 16)}...: ${(pollError as Error).message}`,
+          );
+        }
+
+        return {
+          hash: response.hash ?? hash,
+          status: finalStatus,
+        } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
+      } catch (error: unknown) {
+        const isBadSeq = this.isBadSequenceError(error);
+
+        if (isBadSeq && attempt < BAD_SEQ_MAX_RETRIES) {
+          const delay = BAD_SEQ_INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
+
+          this.logger.warn(
+            `[#1178] tx_bad_seq for ${pk} (submitTransaction), attempt ${attempt + 1}/${BAD_SEQ_MAX_RETRIES}, ` +
+              `resetting sequence and retrying in ${delay}ms`,
+          );
+
+          this.metricsEmitter?.emit(TX_BAD_SEQ, {
+            publicKey: pk,
+            method: 'submitTransaction',
+            attempt: attempt + 1,
+          } satisfies TxBadSeqEvent);
+
+          // Reset both the Redis-backed and in-memory sequence caches so the
+          // next attempt re-fetches the current sequence from Horizon.
+          await this.seqNoManager.reset(pk);
+          if (this.inMemorySeqManager) {
+            await this.inMemorySeqManager.reset(pk);
+          }
+
+          await new Promise<void>((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    // Should be unreachable — the loop either returns or throws.
+    throw new Error(
+      `Max tx_bad_seq retries (${BAD_SEQ_MAX_RETRIES}) exceeded for submitTransaction (source: ${pk})`,
     );
   }
 
@@ -648,6 +890,24 @@ export class StellarService implements OnModuleInit {
     return null;
   }
 
+  /**
+   * Simulate a transaction against the Soroban RPC node without submitting it.
+   *
+   * The call is bounded by `STELLAR_RPC_TIMEOUT_MS` (default 10s). Simulation
+   * does **not** consume fees or sequence numbers.
+   *
+   * @param tx - The transaction to simulate.
+   * @returns The raw simulation response; inspect with
+   *   `rpc.Api.isSimulationSuccess`.
+   * @throws {Error} When the RPC call times out.
+   * @example
+   * ```ts
+   * const sim = await stellarService.simulateTransaction(tx);
+   * if (rpc.Api.isSimulationSuccess(sim)) {
+   *   console.log(sim.result?.retval);
+   * }
+   * ```
+   */
   async simulateTransaction(
     tx: Transaction,
   ): Promise<rpc.Api.SimulateTransactionResponse> {
@@ -739,6 +999,28 @@ export class StellarService implements OnModuleInit {
     throw lastError || new Error('Transaction submission failed');
   }
 
+  /**
+   * Read a value from a Soroban contract via a simulation-only call.
+   *
+   * Uses a dummy all-zeroes source account (valid for simulation) and wraps
+   * the call in the RPC circuit breaker plus jittered exponential retry
+   * (`rpc-resilience.ts`, issue #939). When the circuit is open, the call
+   * fails fast with a `CircuitOpenError` and the `stellar.rpc.degraded` metric
+   * is emitted.
+   *
+   * @param contractId - Contract address (StrKey `C...`) to read from.
+   * @param method - Read-only contract function name.
+   * @param args - Soroban `ScVal` arguments. Defaults to `[]`.
+   * @returns The function's return `ScVal`, or `undefined` when the simulation
+   *   does not produce a result.
+   * @throws {Error} When the circuit is open or retries are exhausted.
+   * @example
+   * ```ts
+   * const val = await stellarService.readContract(contractId, 'get_credit', [
+   *   creditIdToScVal,
+   * ]);
+   * ```
+   */
   async readContract(
     contractId: string,
     method: string,
@@ -784,6 +1066,14 @@ export class StellarService implements OnModuleInit {
   /**
    * Expose the RPC circuit-breaker status for health/metrics endpoints.
    * Issue #939.
+   *
+   * @returns The current circuit state (`CLOSED` | `OPEN` | `HALF_OPEN`) and
+   *   the metric name emitted when the breaker trips.
+   * @example
+   * ```ts
+   * const { status } = stellarService.getRpcStatus();
+   * if (status === 'OPEN') { // degrade gracefully }
+   * ```
    */
   getRpcStatus(): { status: CircuitState; metric: string } {
     return { status: rpcBreaker.state, metric: 'stellar.rpc.degraded' };
@@ -791,9 +1081,24 @@ export class StellarService implements OnModuleInit {
 
   /**
    * Returns Horizon account info for `publicKey`.
-   * Results are cached for 30 seconds to avoid redundant Horizon calls on
-   * every request. The cache entry for an address is invalidated after every
-   * successful transaction submission for that address.
+   *
+   * Results are cached for 30 seconds (`ACCOUNT_INFO_TTL_MS`) to avoid
+   * redundant Horizon calls on every request. The cache entry for an address
+   * is invalidated after every successful transaction submission for that
+   * address, and can be invalidated explicitly via
+   * {@link invalidateAccountCache} (which also propagates across replicas via
+   * Redis, issue #1180).
+   *
+   * The Horizon call is bounded by `STELLAR_RPC_TIMEOUT_MS`.
+   *
+   * @param publicKey - Stellar account public key (`G...`).
+   * @returns The Horizon account record.
+   * @throws {Error} When the account cannot be loaded or the call times out.
+   * @example
+   * ```ts
+   * const account = await stellarService.getAccountInfo(publicKey);
+   * console.log(account.sequenceNumber);
+   * ```
    */
   async getAccountInfo(
     publicKey: string,
@@ -819,6 +1124,37 @@ export class StellarService implements OnModuleInit {
     this.accountInfoCache.delete(publicKey);
   }
 
+  /**
+   * Issue #1180 — Invalidate the cached account info for `address`.
+   *
+   * Drops the local `accountInfoCache` entry and publishes an invalidation
+   * event through the Redis-backed sequence manager so every replica drops its
+   * own entry. Call this after any operation that mutates account state
+   * (credit transfer, offer create/cancel/buy, retirement, etc.).
+   *
+   * The Redis publish is best-effort: failures are logged and do not throw, so
+   * callers are never blocked by cache-invalidation problems.
+   *
+   * @param address - Stellar account public key (`G...`) whose cache entry
+   *   should be dropped.
+   * @returns A promise that resolves once the local entry is dropped and the
+   *   invalidation event has been published (or publishing has failed).
+   * @example
+   * ```ts
+   * await stellarService.invalidateAccountCache(sellerPublicKey);
+   * ```
+   */
+  async invalidateAccountCache(address: string): Promise<void> {
+    this.accountInfoCache.delete(address);
+    try {
+      await this.seqNoManager.publishAccountInvalidation(address);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to publish account cache invalidation for ${address}: ${(err as Error).message}`,
+      );
+    }
+  }
+
   getHorizonServer(): Horizon.Server {
     return this.horizonServer;
   }
@@ -837,11 +1173,23 @@ export class StellarService implements OnModuleInit {
    * Polls `getTransaction` until the transaction reaches a terminal state
    * (SUCCESS or FAILED) or until `maxPolls` × `pollIntervalMs` elapses.
    *
-   * - On SUCCESS  → returns { status: 'SUCCESS', hash, latencyMs }
-   * - On FAILED   → returns { status: 'FAILED',  hash, latencyMs, errorMessage }
-   * - On timeout  → returns { status: 'TIMEOUT', hash, latencyMs }
+   * - On SUCCESS  → returns `{ status: 'SUCCESS', hash, latencyMs }`
+   * - On FAILED   → returns `{ status: 'FAILED', hash, latencyMs, errorMessage }`
+   * - On timeout  → returns `{ status: 'TIMEOUT', hash, latencyMs }`
    *
-   * Callers are responsible for rolling back optimistic DB state on FAILED/TIMEOUT.
+   * Callers are responsible for rolling back optimistic DB state on
+   * FAILED/TIMEOUT. This method does not throw on FAILED/TIMEOUT — inspect the
+   * returned `status`.
+   *
+   * @param hash - Transaction hash to poll.
+   * @param maxPolls - Maximum number of `getTransaction` polls. Defaults to 20.
+   * @param pollIntervalMs - Delay between polls in ms. Defaults to 2000.
+   * @returns A {@link TransactionConfirmation} describing the final state.
+   * @example
+   * ```ts
+   * const { status } = await stellarService.confirmTransaction(hash);
+   * if (status !== 'SUCCESS') { // roll back optimistic state }
+   * ```
    */
   async confirmTransaction(
     hash: string,
@@ -921,17 +1269,28 @@ export class StellarService implements OnModuleInit {
     contractId: string,
     method: string,
     args: xdr.ScVal[] = [],
+    sourceAccount?: string,
   ): Promise<rpc.Api.SimulateTransactionResponse> {
-    const tx = new TransactionBuilder(
-      new Account(
+    // Issue #1179 — When a custom source account is supplied, load it from
+    // Horizon so the simulation uses the real sequence number and the
+    // resulting fee/resource estimates are accurate for client-side signing.
+    let account: Account;
+    if (sourceAccount) {
+      const accountInfo = await this.getAccountInfo(sourceAccount);
+      account = new Account(sourceAccount, accountInfo.sequenceNumber);
+    } else {
+      // Dummy source account (all-zeroes) is valid for simulation-only calls
+      // because the RPC node does not enforce account existence.
+      account = new Account(
         'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         '0',
-      ),
-      {
-        fee: '100',
-        networkPassphrase: this.networkPassphrase,
-      },
-    )
+      );
+    }
+
+    const tx = new TransactionBuilder(account, {
+      fee: '100',
+      networkPassphrase: this.networkPassphrase,
+    })
       .addOperation(
         Operation.invokeHostFunction({
           func: xdr.HostFunction.hostFunctionTypeInvokeContract(
@@ -947,9 +1306,28 @@ export class StellarService implements OnModuleInit {
       .setTimeout(30)
       .build();
 
-    return this.sorobanRpcServer.simulateTransaction(tx);
+    // Simulate without signing — the RPC node only needs the envelope.
+    return this.withTimeout(
+      this.sorobanRpcServer.simulateTransaction(tx),
+      'simulateContractCall',
+    );
   }
 
+  /**
+   * Fetch recent contract events from the Soroban RPC node.
+   *
+   * Returns an empty array (and logs an error) on failure rather than throwing,
+   * so callers can treat event retrieval as best-effort. The RPC call is
+   * bounded by `STELLAR_RPC_TIMEOUT_MS`.
+   *
+   * @param contractId - Contract address (StrKey `C...`) to filter events for.
+   * @param startLedger - First ledger to scan. Defaults to 0.
+   * @returns Up to 100 matching events, or `[]` on failure.
+   * @example
+   * ```ts
+   * const events = await stellarService.getContractEvents(contractId, ledger);
+   * ```
+   */
   async getContractEvents(
     contractId: string,
     startLedger = 0,
@@ -977,6 +1355,18 @@ export class StellarService implements OnModuleInit {
     }
   }
 
+  /**
+   * Fetch the latest ledger sequence from the Soroban RPC node.
+   *
+   * Returns `0` (and logs an error) on failure rather than throwing. The RPC
+   * call is bounded by `STELLAR_RPC_TIMEOUT_MS`.
+   *
+   * @returns The latest ledger sequence, or `0` on failure.
+   * @example
+   * ```ts
+   * const ledger = await stellarService.getLatestLedger();
+   * ```
+   */
   async getLatestLedger(): Promise<number> {
     try {
       const response = await this.withTimeout(

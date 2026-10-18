@@ -5,7 +5,6 @@ import {
   ConflictException,
   ForbiddenException,
   BadRequestException,
-  InternalServerErrorException,
   Inject,
   OnApplicationBootstrap,
 } from '@nestjs/common';
@@ -339,21 +338,28 @@ export class VerifiersService implements OnApplicationBootstrap {
    * by the verifier's own Stellar keypair — the admin keypair alone is
    * insufficient for a properly configured network.
    *
-   * **Current behaviour (temporary / test-mode):**
-   * The API signs the transaction with the admin keypair and submits it
-   * directly. This works in local / testnet environments where the contract
-   * is deployed with `mock_all_auths()` or equivalent auth bypass, but it
-   * will **fail** on a production network that enforces real authorisation.
+   * **Signing modes (`VERIFIER_SIGNING_MODE`):**
    *
-   * **Planned production flow (TODO):**
-   * 1. The API builds the transaction envelope, simulates it, and returns
-   *    the unsigned XDR to the verifier's frontend (e.g. Freighter / Albedo).
-   * 2. The verifier signs the XDR client-side using their wallet.
-   * 3. The signed XDR is posted back to the API for submission.
+   * - `test` (default): The API signs the transaction with the admin keypair
+   *   and submits it directly. This works in local / testnet environments
+   *   where the contract is deployed with `mock_all_auths()` or equivalent
+   *   auth bypass, but it will **fail** on a production network that
+   *   enforces real authorisation.
+   *
+   * - `production`: The two-phase Freighter signing flow is used:
+   *   1. The API builds the transaction envelope, simulates it, and returns
+   *      the unsigned XDR to the verifier's frontend (e.g. Freighter / Albedo)
+   *      via {@link StellarService.buildContractTransaction}.
+   *   2. The verifier signs the XDR client-side using their wallet.
+   *   3. The signed XDR is posted back to the API for submission.
    *
    * This two-phase submit flow ensures that the verifier's secret key never
    * leaves their wallet while still allowing the API to manage nonce
    * fetching, contract address resolution, and response handling.
+   *
+   * @returns In `test` mode, resolves to `void` after submission. In
+   *          `production` mode, resolves to the unsigned transaction XDR
+   *          string for the verifier to sign client-side.
    *
    * @see {@link https://github.com/stellar/freighter | Freighter} for
    *      browser-based Stellar signing.
@@ -362,28 +368,19 @@ export class VerifiersService implements OnApplicationBootstrap {
     address: string,
     creditId: string,
     caller: string,
-  ): Promise<void> {
+  ): Promise<void | string> {
     if (caller !== address) {
       throw new ForbiddenException(
         'Caller does not match the verifier address',
       );
     }
 
-    // Guard against accidental admin-key signing in production.
-    // Set VERIFIER_SIGNING_MODE=production to enforce this check.
-    // In production the verifier must sign via their own wallet (Freighter).
-    // See the JSDoc above for the planned two-phase signing flow.
+    // Determine the signing mode. In production the verifier must sign via
+    // their own wallet (Freighter) using the two-phase flow below.
     const signingMode = this.configService.get<string>(
       'VERIFIER_SIGNING_MODE',
       'test',
     );
-    if (signingMode === 'production') {
-      throw new InternalServerErrorException(
-        'approveCredit cannot use the admin keypair in production. ' +
-          'Implement the two-phase Freighter signing flow before enabling ' +
-          'VERIFIER_SIGNING_MODE=production.',
-      );
-    }
 
     await this.getVerifier(address);
 
@@ -432,9 +429,25 @@ export class VerifiersService implements OnApplicationBootstrap {
       nativeToScVal(nonce, { type: 'u64' }),
     ];
 
+    // ── Production: two-phase Freighter signing flow ────────────────────────
+    // Build the unsigned transaction XDR and return it so the verifier can
+    // sign it client-side with their wallet. The signed XDR is then posted
+    // back to the API for submission.
+    if (signingMode === 'production') {
+      this.logger.log(
+        `Building unsigned approve_and_mint XDR for verifier ${address} (credit=${creditId})`,
+      );
+      return this.stellarService.buildContractTransaction(
+        this.contractId,
+        'approve_and_mint',
+        args,
+        address,
+      );
+    }
+
+    // ── Test mode: sign with the admin keypair and submit directly ──────────
     // NOTE: Signing with the admin keypair is a test-mode convenience.
     // In production the verifier MUST sign this transaction themselves.
-    // See the class-level JSDoc for the planned Freighter signing flow.
     const signer = this.keypairService.getAdminKeypair();
     try {
       await this.stellarService.invokeContract(

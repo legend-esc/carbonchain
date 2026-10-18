@@ -51,4 +51,22 @@ describe('RequestIdMiddleware', () => {
 
     expect(observed).toBe('ctx-id');
   });
+
+  it('propagates the request id across an async boundary', async () => {
+    const middleware = new RequestIdMiddleware();
+    const { req, res } = buildReqRes({ 'x-request-id': 'async-id' });
+    let observed: string | undefined;
+
+    await new Promise<void>((resolve) => {
+      middleware.use(req as any, res as any, () => {
+        void (async () => {
+          await Promise.resolve();
+          observed = RequestContextStore.getRequestId();
+          resolve();
+        })();
+      });
+    });
+
+    expect(observed).toBe('async-id');
+  });
 });

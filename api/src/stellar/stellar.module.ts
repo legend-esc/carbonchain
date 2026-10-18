@@ -4,6 +4,7 @@ import { StellarService } from './stellar.service';
 import { StellarKeypairService } from './stellar-keypair.service';
 import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RedisSequenceNumberManager } from './redis-sequence-number-manager.service';
+import { AccountCacheInvalidationService } from './account-cache-invalidation.service';
 
 /**
  * Issue #914 — StellarModule now provides both the in-memory SequenceNumberManager
@@ -27,6 +28,8 @@ import { RedisSequenceNumberManager } from './redis-sequence-number-manager.serv
     SequenceNumberManager,
     // Redis-backed manager — issue #914 — primary implementation for multi-replica.
     RedisSequenceNumberManager,
+    // Issue #1180 — Redis-backed account cache invalidation for multi-instance deployments.
+    AccountCacheInvalidationService,
     StellarService,
   ],
   exports: [
@@ -34,6 +37,7 @@ import { RedisSequenceNumberManager } from './redis-sequence-number-manager.serv
     StellarKeypairService,
     SequenceNumberManager,
     RedisSequenceNumberManager,
+    AccountCacheInvalidationService,
   ],
 })
 export class StellarModule {}

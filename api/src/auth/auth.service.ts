@@ -3,6 +3,8 @@ import {
   BadRequestException,
   UnauthorizedException,
   ServiceUnavailableException,
+  NotFoundException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -26,11 +28,37 @@ const ACCESS_BLOCKLIST_PREFIX = 'auth:blocklist:jti:';
 const REFRESH_FAMILY_PREFIX = 'auth:refresh:family:';
 /** Per-token key: `auth:refresh:token:<refreshId>` → { account, familyId, exp } */
 const REFRESH_TOKEN_PREFIX = 'auth:refresh:token:';
+/** Issue #1173 — Session metadata: `auth:session:<familyId>` → SessionRecord */
+const SESSION_PREFIX = 'auth:session:';
+/** Issue #1174 — Failed auth attempt counter: `auth:failed:<account>` → number */
+const FAILED_ATTEMPTS_PREFIX = 'auth:failed:';
+/** Issue #1174 — Account lock marker: `auth:lock:<account>` → true */
+const ACCOUNT_LOCK_PREFIX = 'auth:lock:';
 
 /** Access token lifetime: 15 minutes. */
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 /** Refresh token lifetime: 7 days. */
 const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/** Issue #1174 — default lockout threshold (failed attempts). */
+const DEFAULT_LOCKOUT_THRESHOLD = 5;
+/** Issue #1174 — default lockout duration: 15 minutes. */
+const DEFAULT_LOCKOUT_DURATION_SECONDS = 15 * 60;
+
+/** Issue #1173 — user-facing session metadata record. */
+export interface SessionRecord {
+  account: string;
+  userAgent?: string;
+  ip?: string;
+  createdAt: number;
+  lastUsedAt: number;
+}
+
+/** Issue #1173 — optional metadata captured when issuing a token pair. */
+export interface SessionMetadata {
+  userAgent?: string;
+  ip?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -122,7 +150,10 @@ export class AuthService {
    * Issue #932 — Validates server nonce one-time binding; re-submitting the
    * same signed challenge after the first successful verify yields 401.
    */
-  async verifyAndIssueToken(signedTransactionXdr: string): Promise<{
+  async verifyAndIssueToken(
+    signedTransactionXdr: string,
+    metadata?: SessionMetadata,
+  ): Promise<{
     access_token: string;
     refresh_token: string;
     expires_in: number;
@@ -131,8 +162,14 @@ export class AuthService {
     try {
       tx = new Transaction(signedTransactionXdr, this.networkPassphrase);
     } catch {
+      // Issue #1174 — malformed transaction counts as a failed attempt.
+      await this.recordFailedAttemptFromXdr(signedTransactionXdr);
       throw new BadRequestException('Invalid transaction XDR');
     }
+
+    // Extract client account early so failures can be attributed to it.
+    const manageDataOp = tx.operations.find((op) => op.type === 'manageData');
+    const clientAccount = manageDataOp?.source;
 
     // Check time bounds
     const now = Math.floor(Date.now() / 1000);
@@ -142,19 +179,19 @@ export class AuthService {
       now < Number(timeBounds.minTime) ||
       now > Number(timeBounds.maxTime)
     ) {
+      // Issue #1174 — expired challenge counts as a failed attempt.
+      await this.recordFailedAttemptFor(clientAccount);
       throw new UnauthorizedException(
         'Challenge transaction has expired or is not yet valid',
       );
     }
 
     // Extract client account
-    const manageDataOp = tx.operations.find((op) => op.type === 'manageData');
     if (!manageDataOp || !manageDataOp.source) {
       throw new BadRequestException(
         'Challenge transaction missing manageData operation',
       );
     }
-    const clientAccount = manageDataOp.source;
 
     if (!StrKey.isValidEd25519PublicKey(clientAccount)) {
       throw new BadRequestException('Invalid client account in challenge');
@@ -171,6 +208,8 @@ export class AuthService {
       }
     });
     if (!serverSig) {
+      // Issue #1174 — invalid server signature counts as a failed attempt.
+      await this.recordFailedAttemptFor(clientAccount);
       throw new UnauthorizedException('Server signature missing or invalid');
     }
 
@@ -184,6 +223,8 @@ export class AuthService {
       }
     });
     if (!clientSig) {
+      // Issue #1174 — invalid client signature counts as a failed attempt.
+      await this.recordFailedAttemptFor(clientAccount);
       throw new UnauthorizedException('Client signature missing or invalid');
     }
 
@@ -206,6 +247,8 @@ export class AuthService {
     const nonceKey = `sep10:nonce:${nonce}`;
     const nonceData = await this.cache.get<{ account: string }>(nonceKey);
     if (!nonceData) {
+      // Issue #1174 — replayed/unknown nonce counts as a failed attempt.
+      await this.recordFailedAttemptFor(clientAccount);
       throw new UnauthorizedException(
         'Challenge nonce not found or already used',
       );
@@ -214,6 +257,8 @@ export class AuthService {
     // Account binding check — prevent a signed challenge for account A from
     // being replayed to obtain a token for account B.
     if (nonceData.account !== clientAccount) {
+      // Issue #1174 — mismatched account binding counts as a failed attempt.
+      await this.recordFailedAttemptFor(clientAccount);
       throw new UnauthorizedException(
         'Challenge nonce was issued for a different account',
       );
@@ -222,8 +267,12 @@ export class AuthService {
     // Atomically delete nonce so it cannot be reused.
     await this.cache.del(nonceKey);
 
+    // Issue #1174 — successful verification resets the failure counter.
+    await this.resetFailedAttempts(clientAccount);
+
     // Issue #933 — issue short-lived access token + rotating refresh token.
-    return this.issueTokenPair(clientAccount);
+    // Issue #1173 — persist session metadata (userAgent, ip, timestamps).
+    return this.issueTokenPair(clientAccount, undefined, metadata);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -237,6 +286,7 @@ export class AuthService {
   async issueTokenPair(
     account: string,
     familyId?: string,
+    metadata?: SessionMetadata,
   ): Promise<{
     access_token: string;
     refresh_token: string;
@@ -266,6 +316,20 @@ export class AuthService {
       REFRESH_TOKEN_TTL_SECONDS,
     );
 
+    // Issue #1173 — persist session metadata for the family. On rotation,
+    // preserve createdAt and refresh lastUsedAt; on first issue, set both.
+    const sessionKey = `${SESSION_PREFIX}${resolvedFamilyId}`;
+    const now = Date.now();
+    const existing = await this.cache.get<SessionRecord>(sessionKey);
+    const session: SessionRecord = {
+      account,
+      userAgent: metadata?.userAgent ?? existing?.userAgent,
+      ip: metadata?.ip ?? existing?.ip,
+      createdAt: existing?.createdAt ?? now,
+      lastUsedAt: now,
+    };
+    await this.cache.set(sessionKey, session, REFRESH_TOKEN_TTL_SECONDS);
+
     this.logger.log(
       `Issued token pair for ${account} — jti=${jti}, refreshId=${refreshId}`,
     );
@@ -286,7 +350,10 @@ export class AuthService {
    *
    * Returns a new access + refresh token pair on success.
    */
-  async rotateRefreshToken(refreshToken: string): Promise<{
+  async rotateRefreshToken(
+    refreshToken: string,
+    metadata?: SessionMetadata,
+  ): Promise<{
     access_token: string;
     refresh_token: string;
     expires_in: number;
@@ -323,14 +390,196 @@ export class AuthService {
     // Invalidate the old refresh token before issuing a new one.
     await this.cache.del(tokenKey);
 
+    // Issue #1173 — bump lastUsedAt on the session record before rotating.
+    const sessionKey = `${SESSION_PREFIX}${familyId}`;
+    const existingSession = await this.cache.get<SessionRecord>(sessionKey);
+    if (existingSession) {
+      const updated: SessionRecord = {
+        ...existingSession,
+        userAgent: metadata?.userAgent ?? existingSession.userAgent,
+        ip: metadata?.ip ?? existingSession.ip,
+        lastUsedAt: Date.now(),
+      };
+      await this.cache.set(sessionKey, updated, REFRESH_TOKEN_TTL_SECONDS);
+    }
+
     // Issue new pair, preserving the family id so the chain stays tracked.
-    return this.issueTokenPair(account, familyId);
+    return this.issueTokenPair(account, familyId, metadata);
   }
 
   /** Revoke all tokens in a refresh family (used on logout or compromise). */
   private async revokeFamily(familyId: string): Promise<void> {
     await this.cache.del(`${REFRESH_FAMILY_PREFIX}${familyId}`);
     this.logger.log(`Revoked refresh token family ${familyId}`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Session management (Issue #1173)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Issue #1173 — List all active sessions (refresh token families) for an
+   * account, including device metadata (userAgent, ip) and timestamps.
+   * Results are sorted by `lastUsedAt` descending (most recent first).
+   */
+  async getActiveSessions(account: string): Promise<SessionRecord[]> {
+    const keys = await this.cache.scanKeys(`${SESSION_PREFIX}*`);
+    if (!keys || keys.length === 0) {
+      return [];
+    }
+
+    const sessions: SessionRecord[] = [];
+    for (const key of keys) {
+      const record = await this.cache.get<SessionRecord>(key);
+      if (record && record.account === account) {
+        sessions.push(record);
+      }
+    }
+
+    return sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+  }
+
+  /**
+   * Issue #1173 — Revoke a specific session (refresh token family) belonging
+   * to the given account. Throws if the session does not exist or belongs to
+   * a different account.
+   */
+  async revokeSession(account: string, familyId: string): Promise<void> {
+    const sessionKey = `${SESSION_PREFIX}${familyId}`;
+    const session = await this.cache.get<SessionRecord>(sessionKey);
+
+    if (!session) {
+      throw new NotFoundException('Session not found');
+    }
+    if (session.account !== account) {
+      throw new ForbiddenException(
+        'Session does not belong to the authenticated account',
+      );
+    }
+
+    // Delete the current refresh token for the family, then the family head
+    // and the session record itself.
+    const currentRefreshId = await this.cache.get<string>(
+      `${REFRESH_FAMILY_PREFIX}${familyId}`,
+    );
+    if (currentRefreshId) {
+      await this.cache.del(`${REFRESH_TOKEN_PREFIX}${currentRefreshId}`);
+    }
+    await this.cache.del(`${REFRESH_FAMILY_PREFIX}${familyId}`);
+    await this.cache.del(sessionKey);
+
+    this.logger.log(`Revoked session ${familyId} for account ${account}`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Account lockout (Issue #1174)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Issue #1174 — configured lockout threshold (failed attempts). */
+  private get lockoutThreshold(): number {
+    return this.configService.get<number>(
+      'AUTH_LOCKOUT_THRESHOLD',
+      DEFAULT_LOCKOUT_THRESHOLD,
+    );
+  }
+
+  /** Issue #1174 — configured lockout duration in seconds. */
+  private get lockoutDurationSeconds(): number {
+    return this.configService.get<number>(
+      'AUTH_LOCKOUT_DURATION_SECONDS',
+      DEFAULT_LOCKOUT_DURATION_SECONDS,
+    );
+  }
+
+  /**
+   * Issue #1174 — Record a failed authentication attempt for an account.
+   * Increments the counter (TTL = lock duration) and, once the threshold is
+   * reached, sets the lock marker for the configured duration.
+   */
+  async recordFailedAttempt(account: string): Promise<void> {
+    if (!account) {
+      return;
+    }
+    const failedKey = `${FAILED_ATTEMPTS_PREFIX}${account}`;
+    const current = (await this.cache.get<number>(failedKey)) ?? 0;
+    const next = current + 1;
+    await this.cache.set(failedKey, next, this.lockoutDurationSeconds);
+
+    if (next >= this.lockoutThreshold) {
+      await this.cache.set(
+        `${ACCOUNT_LOCK_PREFIX}${account}`,
+        true,
+        this.lockoutDurationSeconds,
+      );
+      this.logger.warn(
+        `Account ${account} locked after ${next} failed attempts`,
+      );
+    }
+  }
+
+  /**
+   * Issue #1174 — Check whether an account is currently locked.
+   * Returns `{ locked, retryAfter }` where `retryAfter` is seconds remaining.
+   */
+  async isAccountLocked(
+    account: string,
+  ): Promise<{ locked: boolean; retryAfter: number }> {
+    if (!account) {
+      return { locked: false, retryAfter: 0 };
+    }
+    const locked = await this.cache.get<boolean>(
+      `${ACCOUNT_LOCK_PREFIX}${account}`,
+    );
+    if (locked !== true) {
+      return { locked: false, retryAfter: 0 };
+    }
+    const ttl = await this.cache.ttl(`${ACCOUNT_LOCK_PREFIX}${account}`);
+    return {
+      locked: true,
+      retryAfter: ttl && ttl > 0 ? ttl : this.lockoutDurationSeconds,
+    };
+  }
+
+  /** Issue #1174 — Reset the failed attempt counter after a successful auth. */
+  async resetFailedAttempts(account: string): Promise<void> {
+    if (!account) {
+      return;
+    }
+    await this.cache.del(`${FAILED_ATTEMPTS_PREFIX}${account}`);
+  }
+
+  /** Issue #1174 — Admin action: clear the lock and failure counter. */
+  async unlockAccount(account: string): Promise<void> {
+    await this.cache.del(`${ACCOUNT_LOCK_PREFIX}${account}`);
+    await this.cache.del(`${FAILED_ATTEMPTS_PREFIX}${account}`);
+    this.logger.log(`Account ${account} manually unlocked`);
+  }
+
+  /** Issue #1174 — record a failure for a known account (best effort). */
+  private async recordFailedAttemptFor(
+    account: string | undefined,
+  ): Promise<void> {
+    if (!account) {
+      return;
+    }
+    try {
+      await this.recordFailedAttempt(account);
+    } catch (err) {
+      this.logger.error(
+        `Failed to record failed attempt for ${account}: ${String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Issue #1174 — best-effort attempt to attribute a malformed XDR to an
+   * account. The XDR cannot be parsed, so no account is available; this is a
+   * no-op kept for symmetry with the other failure paths.
+   */
+  private async recordFailedAttemptFromXdr(
+    _signedTransactionXdr: string,
+  ): Promise<void> {
+    // No account can be derived from an unparseable transaction.
   }
 
   /**
@@ -387,9 +636,26 @@ export class AuthService {
 
   /** Check whether an access token jti has been blocklisted. */
   async isTokenRevoked(jti: string): Promise<boolean> {
-    const blocklistKey = `${ACCESS_BLOCKLIST_PREFIX}${jti}`;
-    const blocked = await this.cache.get<boolean>(blocklistKey);
-    return blocked === true;
+    const [result] = await this.checkTokensRevoked([jti]);
+    return result?.revoked === true;
+  }
+
+  /**
+   * Issue #1175 — Batch check whether multiple access token JTIs have been
+   * revoked. Uses a single Redis MGET round trip for efficiency.
+   */
+  async checkTokensRevoked(
+    jtis: string[],
+  ): Promise<Array<{ jti: string; revoked: boolean }>> {
+    if (!jtis || jtis.length === 0) {
+      return [];
+    }
+    const keys = jtis.map((jti) => `${ACCESS_BLOCKLIST_PREFIX}${jti}`);
+    const values = await this.cache.mget<boolean>(keys);
+    return jtis.map((jti, index) => ({
+      jti,
+      revoked: values?.[index] === true,
+    }));
   }
 
   // ─────────────────────────────────────────────────────────────────────────

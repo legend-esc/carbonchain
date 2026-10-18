@@ -14,8 +14,32 @@ import { lookup as dnsLookup } from 'dns';
 import { promisify } from 'util';
 import axios, { AxiosError } from 'axios';
 import ipRangeCheck from 'ip-range-check';
+import { Counter, Histogram, register } from 'prom-client';
 
 const dnsLookupAsync = promisify(dnsLookup);
+
+// ── Prometheus metrics (#1184) ────────────────────────────────────────────────
+
+const webhookDeliveriesTotal = new Counter({
+  name: 'webhook_deliveries_total',
+  help: 'Total number of webhook delivery attempts',
+  labelNames: ['status', 'event_type'] as const,
+});
+
+const webhookDeliveryDuration = new Histogram({
+  name: 'webhook_delivery_duration_seconds',
+  help: 'Duration of webhook delivery attempts in seconds',
+  labelNames: ['status', 'event_type'] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+});
+
+// Register once; guard against duplicate registration in test environments.
+try {
+  register.registerMetric(webhookDeliveriesTotal);
+  register.registerMetric(webhookDeliveryDuration);
+} catch {
+  // Already registered (e.g. module re-imported in tests) — ignore.
+}
 
 // ── Private IP ranges to block (SSRF protection #912) ────────────────────────
 // Covers loopback, link-local, RFC-1918 private, CGNAT, and cloud metadata.
@@ -80,6 +104,35 @@ export interface WebhookDelivery {
   lastAttemptAt?: Date;
   nextRetryAt?: Date;
 }
+
+/** #1182 — filters accepted by getDeliveries. */
+export interface WebhookDeliveryFilters {
+  webhookId?: string;
+  status?: 'pending' | 'success' | 'failed';
+  eventType?: string;
+  /** ISO date string or Date — inclusive lower bound on created_at. */
+  from?: string | Date;
+  /** ISO date string or Date — inclusive upper bound on created_at. */
+  to?: string | Date;
+  page?: number | string;
+  pageSize?: number | string;
+}
+
+/** #1182 — paginated delivery query result. */
+export interface PaginatedWebhookDeliveries {
+  data: WebhookDelivery[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+const VALID_DELIVERY_STATUSES: readonly ('pending' | 'success' | 'failed')[] = [
+  'pending',
+  'success',
+  'failed',
+];
+const DEFAULT_DELIVERY_PAGE_SIZE = 50;
+const MAX_DELIVERY_PAGE_SIZE = 200;
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -541,6 +594,16 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
       .update(signingInput)
       .digest('hex');
 
+    const deliveryStart = process.hrtime.bigint();
+    const recordDuration = (status: string): void => {
+      const seconds =
+        Number(process.hrtime.bigint() - deliveryStart) / 1_000_000_000;
+      webhookDeliveryDuration.observe(
+        { status, event_type: row.event_type },
+        seconds,
+      );
+    };
+
     try {
       await axios.post(webhook.url, JSON.parse(rawBody) as unknown, {
         headers: {
@@ -553,6 +616,13 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         },
         timeout: 10_000,
       });
+
+      // #1184 — Prometheus metrics
+      webhookDeliveriesTotal.inc({
+        status: 'success',
+        event_type: row.event_type,
+      });
+      recordDuration('success');
 
       // Success
       await this.dataSource.query(
@@ -576,6 +646,13 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const axiosError = error as AxiosError;
       const newFailureCount = webhook.failure_count + 1;
+
+      // #1184 — Prometheus metrics (failed attempt; may still be retried)
+      webhookDeliveriesTotal.inc({
+        status: 'failed',
+        event_type: row.event_type,
+      });
+      recordDuration('failed');
 
       if (attemptNumber < this.MAX_RETRIES) {
         const backoffMs =
@@ -620,7 +697,70 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
 
   // ── Delivery queries ────────────────────────────────────────────────────────
 
-  async getDeliveries(webhookId?: string): Promise<WebhookDelivery[]> {
+  /**
+   * #1182 — Query delivery history with optional filters and pagination.
+   *
+   * Accepts either a bare `webhookId` string (legacy call signature) or a
+   * filter object.  All filters are applied in SQL; results are paginated.
+   */
+  async getDeliveries(
+    filters?: string | WebhookDeliveryFilters,
+  ): Promise<PaginatedWebhookDeliveries> {
+    const f: WebhookDeliveryFilters =
+      typeof filters === 'string' ? { webhookId: filters } : (filters ?? {});
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (f.webhookId) {
+      params.push(f.webhookId);
+      where.push(`webhook_id = $${params.length}`);
+    }
+
+    if (f.status) {
+      if (!VALID_DELIVERY_STATUSES.includes(f.status)) {
+        throw new BadRequestException(
+          `Invalid status "${f.status}" — must be one of: ${VALID_DELIVERY_STATUSES.join(', ')}`,
+        );
+      }
+      params.push(f.status);
+      where.push(`status = $${params.length}`);
+    }
+
+    if (f.eventType) {
+      params.push(f.eventType);
+      where.push(`event_type = $${params.length}`);
+    }
+
+    if (f.from !== undefined && f.from !== null && f.from !== '') {
+      const from = this.parseFilterDate(f.from, 'from');
+      params.push(from);
+      where.push(`created_at >= $${params.length}`);
+    }
+
+    if (f.to !== undefined && f.to !== null && f.to !== '') {
+      const to = this.parseFilterDate(f.to, 'to');
+      params.push(to);
+      where.push(`created_at <= $${params.length}`);
+    }
+
+    const page = this.parsePositiveInt(f.page, 1, 'page');
+    const pageSize = Math.min(
+      this.parsePositiveInt(f.pageSize, DEFAULT_DELIVERY_PAGE_SIZE, 'pageSize'),
+      MAX_DELIVERY_PAGE_SIZE,
+    );
+    const offset = (page - 1) * pageSize;
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countRows = await this.dataSource.query<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM webhook_deliveries
+         ${whereClause}`,
+      params,
+    );
+    const total = Number(countRows[0]?.count ?? 0);
+
     const rows = await this.dataSource.query<
       {
         id: string;
@@ -634,30 +774,168 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         created_at: Date;
       }[]
     >(
-      webhookId
-        ? `SELECT id, webhook_id, event_id, event_type, status, attempts,
-                  last_attempt_at, next_retry_at, created_at
-             FROM webhook_deliveries
-            WHERE webhook_id = $1
-            ORDER BY created_at DESC`
-        : `SELECT id, webhook_id, event_id, event_type, status, attempts,
-                  last_attempt_at, next_retry_at, created_at
-             FROM webhook_deliveries
-            ORDER BY created_at DESC`,
-      webhookId ? [webhookId] : [],
+      `SELECT id, webhook_id, event_id, event_type, status, attempts,
+              last_attempt_at, next_retry_at, created_at
+         FROM webhook_deliveries
+         ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${params.length + 1}
+        OFFSET $${params.length + 2}`,
+      [...params, pageSize, offset],
     );
 
-    return rows.map((r) => ({
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        webhookId: r.webhook_id,
+        eventId: r.event_id,
+        eventType: r.event_type,
+        status: r.status as 'pending' | 'success' | 'failed',
+        attempts: r.attempts,
+        createdAt: r.created_at,
+        lastAttemptAt: r.last_attempt_at ?? undefined,
+        nextRetryAt: r.next_retry_at ?? undefined,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  /** #1182 — parse and validate a date filter value. */
+  private parseFilterDate(value: string | Date, field: string): Date {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        `Invalid "${field}" date filter: "${String(value)}"`,
+      );
+    }
+    return date;
+  }
+
+  /** #1182 — parse a positive integer query param, falling back to a default. */
+  private parsePositiveInt(
+    value: number | string | undefined,
+    fallback: number,
+    field: string,
+  ): number {
+    if (value === undefined || value === null || value === '') {
+      return fallback;
+    }
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException(
+        `Invalid "${field}" value: "${String(value)}" — must be a positive integer`,
+      );
+    }
+    return parsed;
+  }
+
+  /**
+   * #1184 — Aggregate webhook metrics for the admin dashboard.
+   *
+   * Returns webhook counts, delivery status breakdown, average delivery
+   * latency, failure rate by event type, and the top failing webhooks.
+   */
+  async getWebhookMetrics(): Promise<WebhookMetrics> {
+    // Webhook counts.
+    const webhookCountRows = await this.dataSource.query<
+      { total: string; active: string }[]
+    >(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE active = TRUE)::text AS active
+         FROM webhooks`,
+    );
+    const totalWebhooks = Number(webhookCountRows[0]?.total ?? 0);
+    const activeWebhooks = Number(webhookCountRows[0]?.active ?? 0);
+
+    // Delivery status breakdown.
+    const deliveryCountRows = await this.dataSource.query<
+      { status: string; count: string }[]
+    >(
+      `SELECT status, COUNT(*)::text AS count
+         FROM webhook_deliveries
+        GROUP BY status`,
+    );
+    let successfulDeliveries = 0;
+    let failedDeliveries = 0;
+    let pendingDeliveries = 0;
+    for (const r of deliveryCountRows) {
+      const count = Number(r.count);
+      if (r.status === 'success') successfulDeliveries = count;
+      else if (r.status === 'failed') failedDeliveries = count;
+      else if (r.status === 'pending') pendingDeliveries = count;
+    }
+    const totalDeliveries =
+      successfulDeliveries + failedDeliveries + pendingDeliveries;
+
+    // Average delivery latency (ms) for completed deliveries.
+    const latencyRows = await this.dataSource.query<
+      { avg_ms: string | null }[]
+    >(
+      `SELECT AVG(EXTRACT(EPOCH FROM (last_attempt_at - created_at)) * 1000)::text AS avg_ms
+         FROM webhook_deliveries
+        WHERE last_attempt_at IS NOT NULL
+          AND status IN ('success', 'failed')`,
+    );
+    const averageDeliveryLatencyMs = Number(latencyRows[0]?.avg_ms ?? 0);
+
+    // Failure rate by event type.
+    const eventTypeRows = await this.dataSource.query<
+      { event_type: string; total: string; failed: string }[]
+    >(
+      `SELECT event_type,
+              COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE status = 'failed')::text AS failed
+         FROM webhook_deliveries
+        GROUP BY event_type
+        ORDER BY COUNT(*) DESC`,
+    );
+    const failureRateByEventType = eventTypeRows.map((r) => {
+      const total = Number(r.total);
+      const failed = Number(r.failed);
+      return {
+        eventType: r.event_type,
+        total,
+        failed,
+        failureRate: total > 0 ? failed / total : 0,
+      };
+    });
+
+    // Top failing webhooks.
+    const topFailingRows = await this.dataSource.query<
+      {
+        id: string;
+        url: string;
+        failure_count: number;
+        active: boolean;
+      }[]
+    >(
+      `SELECT id, url, failure_count, active
+         FROM webhooks
+        WHERE failure_count > 0
+        ORDER BY failure_count DESC
+        LIMIT 10`,
+    );
+    const topFailingWebhooks = topFailingRows.map((r) => ({
       id: r.id,
-      webhookId: r.webhook_id,
-      eventId: r.event_id,
-      eventType: r.event_type,
-      status: r.status as 'pending' | 'success' | 'failed',
-      attempts: r.attempts,
-      createdAt: r.created_at,
-      lastAttemptAt: r.last_attempt_at ?? undefined,
-      nextRetryAt: r.next_retry_at ?? undefined,
+      url: r.url,
+      failureCount: r.failure_count,
+      active: r.active,
     }));
+
+    return {
+      totalWebhooks,
+      activeWebhooks,
+      inactiveWebhooks: totalWebhooks - activeWebhooks,
+      totalDeliveries,
+      successfulDeliveries,
+      failedDeliveries,
+      pendingDeliveries,
+      averageDeliveryLatencyMs,
+      failureRateByEventType,
+      topFailingWebhooks,
+    };
   }
 
   /**

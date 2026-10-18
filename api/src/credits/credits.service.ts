@@ -769,6 +769,29 @@ export class CreditsService {
     this.logger.debug(`Cache invalidated for credit ${creditId}`);
   }
 
+  /**
+   * #1180 — Drop the cached Stellar account info for the given addresses.
+   *
+   * Called after any operation that mutates an account's on-chain state
+   * (credit transfers, offers, retirements). Failures are logged and
+   * swallowed: a stale cache entry is preferable to failing an operation
+   * that has already succeeded on-chain.
+   */
+  private async invalidateAccountCaches(addresses: string[]): Promise<void> {
+    const unique = [...new Set(addresses.filter((a) => !!a))];
+    await Promise.all(
+      unique.map(async (address) => {
+        try {
+          await this.stellarService.invalidateAccountCache(address);
+        } catch (err) {
+          this.logger.warn(
+            `Failed to invalidate account cache for ${address}: ${(err as Error).message}`,
+          );
+        }
+      }),
+    );
+  }
+
   async listCreditsByProject(projectId: string): Promise<string[]> {
     try {
       this.logger.log(`Listing credits for project: ${projectId}`);
@@ -911,6 +934,10 @@ export class CreditsService {
     }
 
     await this.invalidateCreditCache(creditId);
+
+    // #1180 — the transfer changes both accounts' on-chain state (balances,
+    // trustlines, sequence), so drop their cached account info.
+    await this.invalidateAccountCaches([caller, to]);
 
     return this.getCredit(creditId);
   }
