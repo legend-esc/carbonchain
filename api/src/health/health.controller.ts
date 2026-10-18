@@ -1,6 +1,7 @@
 import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Response } from 'express';
+import { CacheService } from '../common/cache.service';
 import { HealthService } from './health.service';
 
 // Issue #590: security.txt content served at /.well-known/security.txt per RFC 9116.
@@ -17,7 +18,10 @@ Policy: https://github.com/legend-esc/carbonchain/blob/main/SECURITY.md
 @ApiTags('health')
 @Controller()
 export class HealthController {
-  constructor(private readonly healthService: HealthService) {}
+  constructor(
+    private readonly healthService: HealthService,
+    private readonly cacheService: CacheService,
+  ) {}
 
   @ApiOperation({ summary: 'Health check endpoint' })
   @ApiResponse({ status: 200, description: 'Service is healthy' })
@@ -28,6 +32,50 @@ export class HealthController {
     res
       .status(
         result.status === 'ok' ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
+      )
+      .json(result);
+  }
+
+  // Issue #1186: Redis connectivity probe for Kubernetes liveness/readiness.
+  // Returns 200 for 'ok' and 'degraded' (high latency) so that a slow Redis
+  // does not cause the pod to be restarted; returns 503 only when Redis is down.
+  @ApiOperation({
+    summary: 'Redis health check endpoint',
+    description:
+      'Reports Redis connectivity and ping latency. Intended for Kubernetes ' +
+      'liveness/readiness probes. Returns 200 when status is "ok" or ' +
+      '"degraded" (latency above threshold) and 503 when status is "down".',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Redis is reachable (status "ok" or "degraded")',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['ok', 'degraded'] },
+        latencyMs: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'Redis is unreachable (status "down")',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['down'] },
+        latencyMs: { type: 'number' },
+      },
+    },
+  })
+  @Get('health/redis')
+  async redisHealth(@Res() res: Response): Promise<void> {
+    const result = await this.cacheService.healthCheck();
+    res
+      .status(
+        result.status === 'down'
+          ? HttpStatus.SERVICE_UNAVAILABLE
+          : HttpStatus.OK,
       )
       .json(result);
   }

@@ -34,4 +34,13 @@ export class WebhookEntity {
 
   @Column({ default: 0 })
   failureCount: number;
+
+  /**
+   * HMAC secret used to sign webhook deliveries. Excluded from default
+   * selects so it is only returned once (at registration or rotation).
+   * Raw SQL queries bypass TypeORM's select rules, so delivery signing
+   * can still read it explicitly.
+   */
+  @Column({ type: 'text', select: false })
+  secret: string;
 }

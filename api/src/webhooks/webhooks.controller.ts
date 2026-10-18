@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,8 @@ import type {
 } from './webhooks.service';
 import { WebhooksService } from './webhooks.service';
 import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
+import { AdminGuard } from '../admin/admin.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   WebhookJanitorService,
   JanitorStats,
@@ -97,6 +100,69 @@ export class WebhooksController {
   async deleteWebhook(@Param('id') id: string): Promise<{ success: boolean }> {
     const success = await this.webhooksService.deleteWebhook(id);
     return { success };
+  }
+
+  /**
+   * #1183 — Rotate the signing secret for a webhook.
+   *
+   * A fresh 32-byte secret is generated and persisted; the previous secret is
+   * invalidated immediately.  The new secret is returned exactly once in this
+   * response and is not retrievable via any subsequent GET endpoint.
+   */
+  @ApiOperation({ summary: 'Rotate a webhook signing secret (admin)' })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Secret rotated. The new `secret` is returned only in this response; the old secret is invalidated immediately.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @ApiResponse({ status: 403, description: 'Admin privileges required' })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post(':id/rotate-secret')
+  async rotateWebhookSecret(
+    @Param('id') id: string,
+  ): Promise<WebhookRegistrationResult> {
+    const result = await this.webhooksService.rotateWebhookSecret(id);
+    if (!result) {
+      throw new NotFoundException(`Webhook ${id} not found`);
+    }
+    return result;
+  }
+
+  /**
+   * #1185 — Replay failed (dead-lettered) webhook deliveries.
+   *
+   * Resets failed deliveries back to `pending` with `next_retry_at = NOW()`
+   * and reactivates the owning webhook if it was deactivated.  Can be scoped
+   * to a single webhook via `webhookId` (body or query) or run globally.
+   */
+  @ApiOperation({
+    summary: 'Retry failed webhook deliveries from the DLQ (admin)',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Failed deliveries requeued for retry; deactivated webhooks reactivated.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @ApiResponse({ status: 403, description: 'Admin privileges required' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('retry-failed')
+  async retryFailedDeliveries(
+    @Body() body: { webhookId?: string } = {},
+    @Query('webhookId') queryWebhookId?: string,
+  ): Promise<{ retried: number; webhooksReactivated: number }> {
+    const webhookId = body?.webhookId ?? queryWebhookId;
+    return this.webhooksService.retryFailedDeliveries(webhookId);
   }
 
   @ApiOperation({ summary: 'List deliveries, optionally filtered by webhook' })

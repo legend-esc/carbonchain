@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
@@ -53,6 +54,18 @@ export interface WebhookWithSecret extends Webhook {
 /** Returned once at registration so the caller can store the signing secret. */
 export interface WebhookRegistrationResult extends Webhook {
   secret: string;
+}
+
+/** Returned once when a webhook secret is rotated (#1183). */
+export interface WebhookSecretRotationResult {
+  id: string;
+  secret: string;
+}
+
+/** Result of a DLQ retry operation (#1185). */
+export interface RetryFailedDeliveriesResult {
+  retried: number;
+  reactivated: number;
 }
 
 export interface WebhookDelivery {
@@ -256,6 +269,113 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
     // TypeORM raw query returns [rows, rowCount] for pg driver.
     const affected = Array.isArray(result) ? (result[1] as number) : 0;
     return affected > 0;
+  }
+
+  /**
+   * #1183 — Rotate the HMAC signing secret for a webhook.
+   *
+   * Generates a fresh 32-byte secret, persists it, and returns it exactly once.
+   * The old secret is invalidated immediately because attemptDelivery reads the
+   * secret fresh from the DB on every attempt.
+   *
+   * @throws NotFoundException when no webhook with the given id exists.
+   */
+  async rotateWebhookSecret(
+    id: string,
+  ): Promise<WebhookSecretRotationResult> {
+    const secret = randomBytes(32).toString('hex');
+
+    const result = await this.dataSource.query(
+      `UPDATE webhooks
+          SET secret = $2
+        WHERE id = $1`,
+      [id, secret],
+    );
+
+    // node-postgres returns [rowCount, rows] for UPDATE without RETURNING.
+    const rowCount = Array.isArray(result) ? result[0] : undefined;
+    const affected = typeof rowCount === 'number' ? rowCount : 0;
+
+    if (affected === 0) {
+      throw new NotFoundException(`Webhook ${id} not found`);
+    }
+
+    this.logger.log(`Rotated secret for webhook ${id}`);
+
+    return { id, secret };
+  }
+
+  // ── DLQ retry (#1185) ──────────────────────────────────────────────────────
+
+  /**
+   * #1185 — Replay failed deliveries from the dead-letter queue.
+   *
+   * Resets failed deliveries to `pending` with `attempts = 0` and
+   * `next_retry_at = NOW()` so the queue processor picks them up on the next
+   * poll.  Any webhook that was deactivated due to repeated failures is
+   * reactivated and its failure counter reset.
+   *
+   * @param webhookId optional — scope the retry to a single webhook.
+   */
+  async retryFailedDeliveries(
+    webhookId?: string,
+  ): Promise<RetryFailedDeliveriesResult> {
+    const failedRows = await this.dataSource.query<
+      { id: string; webhook_id: string }[]
+    >(
+      webhookId
+        ? `SELECT id, webhook_id
+             FROM webhook_deliveries
+            WHERE status = 'failed'
+              AND webhook_id = $1`
+        : `SELECT id, webhook_id
+             FROM webhook_deliveries
+            WHERE status = 'failed'`,
+      webhookId ? [webhookId] : [],
+    );
+
+    if (failedRows.length === 0) {
+      return { retried: 0, reactivated: 0 };
+    }
+
+    const deliveryIds = failedRows.map((r) => r.id);
+
+    await this.dataSource.query(
+      `UPDATE webhook_deliveries
+          SET status = 'pending',
+              attempts = 0,
+              next_retry_at = NOW()
+        WHERE id = ANY($1::text[])`,
+      [deliveryIds],
+    );
+
+    const affectedWebhookIds = Array.from(
+      new Set(failedRows.map((r) => r.webhook_id)),
+    );
+
+    // Reactivate any webhooks that were deactivated by repeated failures.
+    const reactivateResult = await this.dataSource.query(
+      `UPDATE webhooks
+          SET active = TRUE,
+              failure_count = 0
+        WHERE id = ANY($1::text[])
+          AND (active = FALSE OR failure_count > 0)`,
+      [affectedWebhookIds],
+    );
+
+    const reactivateRowCount = Array.isArray(reactivateResult)
+      ? reactivateResult[0]
+      : undefined;
+    const reactivated =
+      typeof reactivateRowCount === 'number' ? reactivateRowCount : 0;
+
+    this.logger.log(
+      `Retried ${deliveryIds.length} failed deliveries` +
+        (webhookId ? ` for webhook ${webhookId}` : '') +
+        `; reactivated ${reactivated} webhook(s)`,
+    );
+
+    return { retried: deliveryIds.length, reactivated };
   }
 
   // ── Delivery enqueue ────────────────────────────────────────────────────────

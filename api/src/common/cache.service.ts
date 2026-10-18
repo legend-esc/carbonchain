@@ -370,6 +370,46 @@ export class CacheService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Probe Redis connectivity and measure ping latency.
+   *
+   * Returns `down` when there is no client, the connection is not established,
+   * or the ping fails; `degraded` when the round-trip exceeds
+   * `REDIS_HEALTH_DEGRADED_MS` (default 100ms); otherwise `ok`.
+   *
+   * Intentionally does not touch the circuit breaker — health probes must not
+   * affect request-path degradation behaviour.
+   */
+  async healthCheck(): Promise<{
+    status: 'ok' | 'degraded' | 'down';
+    latencyMs: number;
+  }> {
+    if (!this.client || !this.connected) {
+      return { status: 'down', latencyMs: 0 };
+    }
+
+    const start = process.hrtime.bigint();
+    try {
+      await this.client.ping();
+    } catch (err) {
+      this.logger.warn(
+        `Redis health check ping failed: ${(err as Error).message}`,
+      );
+      return { status: 'down', latencyMs: 0 };
+    }
+    const latencyMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+
+    const degradedThresholdMs = this.config.get<number>(
+      'REDIS_HEALTH_DEGRADED_MS',
+      100,
+    );
+
+    return {
+      status: latencyMs > degradedThresholdMs ? 'degraded' : 'ok',
+      latencyMs: Math.round(latencyMs * 100) / 100,
+    };
+  }
+
   /** Returns true when a live Redis connection is available and circuit breaker is closed. */
   get isConnected(): boolean {
     return this.isCacheAvailable();

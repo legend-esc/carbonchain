@@ -80,4 +80,8 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap().catch(console.error);
+bootstrap().catch((error) => {
+  // Route startup failures through Pino so they are emitted as structured
+  // JSON (with redaction) rather than plain console.error output.
+  new PinoNestLogger().fatal(error, 'Bootstrap failed');
+});

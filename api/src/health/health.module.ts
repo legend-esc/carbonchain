@@ -4,9 +4,10 @@ import { Pool } from 'pg';
 import { HealthController } from './health.controller';
 import { HealthService, PG_POOL } from './health.service';
 import { StellarModule } from '../stellar/stellar.module';
+import { CacheModule } from '../common/common.module';
 
 @Module({
-  imports: [ConfigModule, StellarModule],
+  imports: [ConfigModule, StellarModule, CacheModule],
   controllers: [HealthController],
   providers: [
     HealthService,

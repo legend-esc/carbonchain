@@ -7,7 +7,10 @@ import { sanitize } from './logging.middleware';
  * NestJS `LoggerService` implementation backed by Pino.
  *
  * Every log line is structured JSON and automatically includes:
- *  - `requestId` — from `RequestContextStore` (populated by `RequestIdMiddleware`)
+ *  - `requestId` — injected by the Pino `mixin` (see `logger.ts`), which reads
+ *    from `RequestContextStore` (populated by `RequestIdMiddleware`). The
+ *    `requestCtx()` fallback below only fills it in when the mixin did not
+ *    already provide a value.
  *  - `context`   — NestJS module / class name passed to `Logger(name)`
  *  - `level`     — Pino log level string
  *
@@ -63,7 +66,16 @@ export class PinoNestLogger implements LoggerService {
     return String(message);
   }
 
+  /**
+   * Fallback `requestId` binding.
+   *
+   * The Pino `mixin` already attaches `requestId` to every log record, so this
+   * only matters when the mixin is unavailable (e.g. a bare logger instance).
+   * Returning an empty object avoids emitting `requestId: undefined` and keeps
+   * the mixin-provided value authoritative.
+   */
   private requestCtx(): { requestId?: string } {
-    return { requestId: RequestContextStore.getRequestId() };
+    const requestId = RequestContextStore.getRequestId();
+    return requestId ? { requestId } : {};
   }
 }

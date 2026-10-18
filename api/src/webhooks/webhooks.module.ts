@@ -24,6 +24,11 @@ import { AdminGuard } from '../admin/admin.guard';
  * WebhookIpAllowlistController for dynamic IP allowlist management.
  * Imports AuthModule for JwtAuthGuard and StellarModule for AdminGuard's
  * on-chain admin verification.
+ *
+ * Issues #1183 / #1185 — The admin rotate-secret and retry-failed routes on
+ * WebhooksController rely on JwtAuthGuard (from AuthModule) and AdminGuard
+ * (provided here, backed by StellarService from StellarModule). No additional
+ * providers are required for these endpoints.
  */
 @Module({
   imports: [
@@ -42,6 +47,7 @@ import { AdminGuard } from '../admin/admin.guard';
     WebhookIpAllowlistGuard,
     WebhookIpAllowlistService,
     // Issue #1170 — AdminGuard needed by WebhookIpAllowlistController
+    // Issues #1183 / #1185 — also guards rotate-secret and retry-failed routes
     AdminGuard,
   ],
   controllers: [WebhooksController, WebhookIpAllowlistController],
