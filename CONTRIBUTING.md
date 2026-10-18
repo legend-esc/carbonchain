@@ -17,7 +17,7 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Branch Naming Conventions](#branch-naming-conventions)
 - [Pull Request Process](#pull-request-process)
 - [Issue and PR Templates](#issue-and-pr-templates)
-- [Contract Upgrade Execution](#contract-upgrade-execution)
+- [Contract Upgrade Checklist](#contract-upgrade-checklist)
 - [Stellar Wave Contributions](#stellar-wave-contributions)
 - [Documentation](#documentation)
 
@@ -589,26 +589,26 @@ When adding a new error code, pick the **next available number** within the cont
 
 ---
 
-## Contract Upgrade Execution
+## Contract Upgrade Checklist
 
-When performing contract upgrades on Soroban, execution must follow strict security and operational protocols.
+Before deploying updates or modifications to any Soroban smart contracts on CarbonChain, contributors and maintainers must strictly follow this upgrade checklist.
 
-### 1. WASM Hash Verification
-- Before submitting the upgrade transaction, independently compute the SHA-256 hash of the compiled release WASM binary using `sha256sum <contract>.wasm` or `soroban contract inspect`.
-- Cross-verify the computed hash against the multisig upgrade proposal payload and build provenance records.
-- Confirm that the bytecode deployed via `soroban contract install` precisely matches the approved build artifact.
+### Pre-Upgrade Verification
 
-### 2. Admin Nonce Freshness
-- Query the current sequence number and authorization nonce for all administrative signing keys prior to building the upgrade transaction.
-- Ensure the transaction bounds (time-to-live and ledger bounds) reflect current network height to prevent signature expiration or stale submission.
-- Ensure replay protection by validating that signatures are single-use and nonces increment as expected.
+1. **Migration Test on Testnet**:
+   - Deploy the new contract WASM to the Stellar Testnet.
+   - Run the full migration script against existing testnet contract state containing realistic data (e.g., active credits, retirements, and offer states).
+   - Validate that all post-migration queries match expected state and that no historical entries are corrupted or inaccessible.
 
-### 3. Migration Execution Order
-Execute upgrade transactions in strict atomic sequence:
-1. **Bytecode Installation**: Install the verified WASM binary on-chain (`soroban contract install --wasm ...`).
-2. **Contract Code Update**: Call the contract's upgrade authorization entrypoint (`update_current_contract_wasm`) signed by authorized maintainers.
-3. **State Migration**: Immediately invoke the migration function (`migrate(...)`) in the same batch or next transaction to transition any data structures before client traffic resumes.
-4. **Post-Upgrade Smoke Verification**: Run read-only query checks to confirm contract state, version numbers, and operational readiness.
+2. **Storage Layout Verification**:
+   - Ensure complete backward compatibility of Soroban storage data keys (`DataKey` enum).
+   - Verify that existing storage enum discriminants and field order remain unchanged; new keys must be appended or namespaced.
+   - Run storage layout diff tests ensuring existing persistent and temporary ledger entries deserialize cleanly into new schema structs.
+
+3. **Event Schema Compatibility**:
+   - Validate that contract events (`env.events().publish(...)`) maintain consistent topic structures.
+   - Ensure external indexers (such as the CarbonChain NestJS API event listeners) can consume both pre-upgrade and post-upgrade event payloads without deserialization failures.
+   - Document any new event topics or schema versions in `docs/features/`.
 
 ---
 
