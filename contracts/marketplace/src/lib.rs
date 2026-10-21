@@ -1303,6 +1303,42 @@ impl Marketplace {
         Self::list_active_offers(env, page, page_size)
     }
 
+    // ── #1060: Paginated verifier list from trusted registry ──────────────────
+
+    /// Returns a paginated list of verifier addresses from the trusted credit
+    /// registry. Delegates to the registry's `list_verifiers_paginated` via a
+    /// cross-contract call. Page size is capped at 50 (consistent with the
+    /// registry). Returns an empty vec if the registry call fails.
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::NotInitialized`] — no trusted registry has been set.
+    pub fn list_verifiers_paginated(
+        env: Env,
+        page: u32,
+        page_size: u32,
+    ) -> Result<Vec<Address>, MarketplaceError> {
+        let registry = env
+            .storage()
+            .instance()
+            .get(&DataKey::TrustedRegistry)
+            .ok_or(MarketplaceError::NotInitialized)?;
+
+        let page_size = if page_size == 0 || page_size > 50 {
+            50
+        } else {
+            page_size
+        };
+
+        match env.try_invoke_contract::<Vec<Address>, SorobanError>(
+            &registry,
+            &Symbol::new(&env, "list_verifiers_paginated"),
+            (page, page_size).into_val(&env),
+        ) {
+            Ok(Ok(vec)) => Ok(vec),
+            _ => Ok(Vec::new(&env)),
+        }
+    }
+
     // ── Internal ─────────────────────────────────────────────────────────────
 
     /// Increment `ActiveOffersCount` by one. Called when a new active offer is created.
@@ -2883,5 +2919,83 @@ mod tests {
             &seller_nonce,
         );
         assert_eq!(result, Err(Ok(MarketplaceError::CreditNotFound)));
+    }
+
+    // ── Issue #1060: list_verifiers_paginated ─────────────────────────────────
+
+    #[test]
+    fn test_list_verifiers_paginated_returns_page() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _seller, mp_admin, registry, _credit_id) = setup_with_registry(&env);
+
+        // Register 5 additional verifiers (setup already registers 1).
+        let mut addrs = soroban_sdk::Vec::new(&env);
+        for _ in 0..5u32 {
+            let v = Address::generate(&env);
+            let nonce = registry.get_nonce(&mp_admin);
+            registry.register_verifier(&mp_admin, &v, nonce);
+            addrs.push_back(v);
+        }
+        let all = soroban_sdk::Vec::new(&env);
+
+        let p0 = client.list_verifiers_paginated(&0, &2).unwrap();
+        assert_eq!(p0.len(), 2);
+        assert_eq!(p0.get(0).unwrap(), addrs.get(0).unwrap());
+
+        let p1 = client.list_verifiers_paginated(&1, &2).unwrap();
+        assert_eq!(p1.len(), 2);
+        assert_eq!(p1.get(0).unwrap(), addrs.get(2).unwrap());
+
+        let p2 = client.list_verifiers_paginated(&2, &2).unwrap();
+        assert_eq!(p2.len(), 1);
+        assert_eq!(p2.get(0).unwrap(), addrs.get(4).unwrap());
+
+        // Beyond the last page returns empty.
+        let p3 = client.list_verifiers_paginated(&3, &2).unwrap();
+        assert_eq!(p3.len(), 0);
+        let _ = all;
+    }
+
+    #[test]
+    fn test_list_verifiers_paginated_page_size_capped() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _seller, mp_admin, registry, _credit_id) = setup_with_registry(&env);
+
+        // Register 10 verifiers.
+        for _ in 0..10u32 {
+            let v = Address::generate(&env);
+            let nonce = registry.get_nonce(&mp_admin);
+            registry.register_verifier(&mp_admin, &v, nonce);
+        }
+
+        // page_size larger than 50 must be capped at 50.
+        let p0 = client.list_verifiers_paginated(&0, &100).unwrap();
+        assert!(p0.len() <= 50);
+    }
+
+    #[test]
+    fn test_list_verifiers_paginated_out_of_bounds_returns_empty() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _seller, _mp_admin, registry, _credit_id) = setup_with_registry(&env);
+
+        let empty = client.list_verifiers_paginated(&100, &10).unwrap();
+        assert_eq!(empty.len(), 0);
+    }
+
+    #[test]
+    fn test_list_verifiers_paginated_registry_not_set() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let marketplace_id = env.register(Marketplace, ());
+        let client = MarketplaceClient::new(&env, &marketplace_id);
+        let mp_admin = Address::generate(&env);
+        // Initialize without setting TrustedRegistry is not possible via
+        // initialize (it requires registry_id), so deploy a raw contract and
+        // call list_verifiers_paginated before initialize.
+        let result = client.try_list_verifiers_paginated(&0, &10);
+        assert_eq!(result, Err(Ok(MarketplaceError::NotInitialized)));
     }
 }

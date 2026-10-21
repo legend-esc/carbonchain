@@ -4752,4 +4752,264 @@ mod tests {
         let result = client.try_upgrade(&rando, &fake_hash, &nonce);
         assert!(result.is_err(), "non-admin upgrade must be rejected");
     }
+
+    // ── Issue #1062: merge_credits tests ──────────────────────────────────────
+
+    /// Registers `issuer` and the VCS methodology with the admin.
+    fn register_issuer_and_methodology(
+        env: &Env,
+        client: &CreditRegistryClient,
+        admin: &Address,
+        issuer: &Address,
+    ) {
+        let nonce = client.get_nonce(admin);
+        client.register_issuer(admin, issuer, &nonce);
+        let nonce2 = client.get_nonce(admin);
+        client.register_methodology(
+            admin,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "Verified Carbon Standard"),
+            &nonce2,
+        );
+    }
+
+    /// Registers `project_id` owned by `admin`.
+    fn register_project_custom(
+        env: &Env,
+        client: &CreditRegistryClient,
+        admin: &Address,
+        project_id: &String,
+    ) {
+        client.register_project(
+            admin,
+            project_id,
+            &String::from_str(env, "Test Project"),
+            &String::from_str(env, "Desc"),
+            &String::from_str(env, "NG"),
+        );
+    }
+
+    /// Submits a credit for `issuer` on `project_id`/`vintage` and mints it to
+    /// Active via `verifier`. Returns the new credit ID.
+    fn submit_and_mint_active_credit(
+        env: &Env,
+        client: &CreditRegistryClient,
+        issuer: &Address,
+        verifier: &Address,
+        project_id: &String,
+        vintage: u32,
+        tonnes: i128,
+    ) -> BytesN<32> {
+        let nonce = client.get_nonce(issuer);
+        let credit_id = client.submit_credit(
+            issuer,
+            project_id,
+            &vintage,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "NG"),
+            &tonnes,
+            &String::from_str(env, "bafybei123"),
+            &nonce,
+        );
+        let vnonce = client.get_nonce(verifier);
+        client.approve_and_mint(verifier, &credit_id, &vnonce);
+        credit_id
+    }
+
+    #[test]
+    fn test_merge_credits_happy_path_same_project_owner_vintage() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        let project = String::from_str(&env, "PROJ-MERGE");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let merged = client.merge_credits(&issuer, &ids).unwrap();
+
+        let merged_credit = client.get_credit(&merged);
+        assert_eq!(merged_credit.status, CreditStatus::Active);
+        assert_eq!(
+            merged_credit.tonnes,
+            2_000_000,
+            "merged tonnes must equal sum of sources"
+        );
+        assert_eq!(merged_credit.owner, issuer);
+        assert_eq!(merged_credit.project_id, project);
+
+        assert_eq!(client.get_credit(&id1).status, CreditStatus::Retired);
+        assert_eq!(client.get_credit(&id2).status, CreditStatus::Retired);
+    }
+
+    #[test]
+    fn test_merge_credits_different_projects_fails() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        register_project_custom(&env, &client, &admin, &String::from_str(&env, "PROJ-A"));
+        register_project_custom(&env, &client, &admin, &String::from_str(&env, "PROJ-B"));
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier,
+            &String::from_str(&env, "PROJ-A"), 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier,
+            &String::from_str(&env, "PROJ-B"), 2024, 1_000_000,
+        );
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let result = client.try_merge_credits(&issuer, &ids);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
+    }
+
+    #[test]
+    fn test_merge_credits_different_owners_fails() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let other = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        register_issuer_and_methodology(&env, &client, &admin, &other);
+        let project = String::from_str(&env, "PROJ-OWN");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &other, &verifier, &project, 2024, 1_000_000,
+        );
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let result = client.try_merge_credits(&issuer, &ids);
+        assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_merge_credits_different_vintages_fails() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        let project = String::from_str(&env, "PROJ-VINT");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2025, 1_000_000,
+        );
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let result = client.try_merge_credits(&issuer, &ids);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
+    }
+
+    #[test]
+    fn test_merge_credits_one_flagged_fails() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        let project = String::from_str(&env, "PROJ-FLAG");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let vnonce = client.get_nonce(&verifier);
+        client.flag_credit(
+            &verifier,
+            &id2,
+            &String::from_str(&env, "suspicious"),
+            &vnonce,
+        );
+        assert_eq!(client.get_credit(&id2).status, CreditStatus::Flagged);
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let result = client.try_merge_credits(&issuer, &ids);
+        assert_eq!(
+            result,
+            Err(Ok(CarbonChainError::InvalidStatusTransition))
+        );
+    }
+
+    #[test]
+    fn test_merge_credits_caller_not_owner_fails() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let rando = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        let project = String::from_str(&env, "PROJ-NOOWN");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let result = client.try_merge_credits(&rando, &ids);
+        assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_merge_credits_single_credit_fails() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        let project = String::from_str(&env, "PROJ-SINGLE");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let ids = soroban_sdk::vec![&env, id1];
+        let result = client.try_merge_credits(&issuer, &ids);
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
+    }
+
+    #[test]
+    fn test_merge_credits_owner_index_updated() {
+        let (env, client, admin, verifier) = setup();
+        let issuer = Address::generate(&env);
+        let nonce = client.get_nonce(&admin);
+        client.register_verifier(&admin, &verifier, &nonce);
+        register_issuer_and_methodology(&env, &client, &admin, &issuer);
+        let project = String::from_str(&env, "PROJ-IDX");
+        register_project_custom(&env, &client, &admin, &project);
+        let id1 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+        let id2 = submit_and_mint_active_credit(
+            &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
+        );
+
+        let before = client.list_credits_by_owner(&issuer);
+        assert_eq!(before.len(), 2);
+        assert!(before.contains(&id1));
+        assert!(before.contains(&id2));
+
+        let ids = soroban_sdk::vec![&env, id1, id2];
+        let merged = client.merge_credits(&issuer, &ids).unwrap();
+
+        let after = client.list_credits_by_owner(&issuer);
+        assert_eq!(after.len(), 1);
+        assert!(after.contains(&merged));
+        assert!(!after.contains(&id1), "source credit must be removed from owner index");
+        assert!(!after.contains(&id2), "source credit must be removed from owner index");
+    }
 } // end mod tests
