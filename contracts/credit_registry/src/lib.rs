@@ -65,7 +65,8 @@ use crate::storage::{
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, DisputeResolution, Methodology,
-    ProjectMetadata, ServiceType, Session, UnbondingRequest, VerifierReputation,
+    ProjectMetadata, ServiceType, Session, UnbondingRequest, VALID_ISO_COUNTRY_CODES,
+    VerifierReputation,
 };
 
 #[cfg_attr(not(feature = "library"), contract)]
@@ -653,7 +654,7 @@ impl CreditRegistry {
     /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
     /// - [`CarbonChainError::ContractPaused`] — contract is paused.
     /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current issuer nonce.
-    /// - [`CarbonChainError::InvalidMetadata`] — `methodology` is not registered, `vintage_year` is outside valid range, or `geography` is too short.
+        /// - [`CarbonChainError::InvalidMetadata`] — `methodology` is not registered, `vintage_year` is outside valid range, or `geography` is not a valid ISO 3166-1 alpha-2 code.
     /// - [`CarbonChainError::InvalidTonnes`] — `tonnes` is zero, negative, or exceeds the upper bound.
     pub fn submit_credit(
         env: Env,
@@ -706,8 +707,8 @@ impl CreditRegistry {
         if vintage_year < 1990 || vintage_year > current_year + 1 {
             return Err(CarbonChainError::InvalidMetadata);
         }
-        // Validate geography: minimum 2 characters (ISO 3166-1 alpha-2)
-        if geography.len() < 2 {
+        // Validate geography: must be a valid ISO 3166-1 alpha-2 country code
+        if !VALID_ISO_COUNTRY_CODES.iter().any(|&code| code == geography.as_str()) {
             return Err(CarbonChainError::InvalidMetadata);
         }
 
@@ -3975,6 +3976,128 @@ mod tests {
             &nonce,
         );
         assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
+    }
+
+    /// Submits a credit with the given `geography`, registering a fresh issuer,
+    /// methodology and project (with a valid "NG" geography) so that only the
+    /// submit-time geography check is exercised.
+    fn submit_credit_with_geography(
+        env: &Env,
+        client: &CreditRegistryClient,
+        admin: &Address,
+        issuer: &Address,
+        project_id: &str,
+        geography: &str,
+    ) {
+        let admin_nonce = client.get_nonce(admin);
+        client.register_issuer(admin, issuer, &admin_nonce);
+        let admin_nonce2 = client.get_nonce(admin);
+        client.register_methodology(
+            admin,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, "Verified Carbon Standard"),
+            &admin_nonce2,
+        );
+        client.register_project(
+            admin,
+            &String::from_str(env, project_id),
+            &String::from_str(env, "Test Project"),
+            &String::from_str(env, "A test project"),
+            &String::from_str(env, "NG"),
+        );
+        let nonce = client.get_nonce(issuer);
+        client.try_submit_credit(
+            issuer,
+            &String::from_str(env, project_id),
+            &2024,
+            &String::from_str(env, "VCS"),
+            &String::from_str(env, geography),
+            &1_000_000,
+            &String::from_str(env, "bafybei123"),
+            &nonce,
+        );
+    }
+
+    #[test]
+    fn test_submit_credit_valid_geography_accepted() {
+        let valid_codes = ["US", "NG", "BR", "CN", "DE"];
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let admin_nonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &admin_nonce);
+        let admin_nonce2 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &admin_nonce2,
+        );
+        for (idx, code) in valid_codes.iter().enumerate() {
+            let project_id = format!("PROJ-VALID-{idx}");
+            let admin_nonce3 = client.get_nonce(&admin);
+            client.register_project(
+                &admin,
+                &String::from_str(&env, project_id),
+                &String::from_str(&env, "Test Project"),
+                &String::from_str(&env, "A test project"),
+                &String::from_str(&env, "NG"),
+            );
+            let nonce = client.get_nonce(&issuer);
+            let result = client.try_submit_credit(
+                &issuer,
+                &String::from_str(&env, project_id),
+                &2024,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, code),
+                &1_000_000,
+                &String::from_str(env, "bafybei123"),
+                &nonce,
+            );
+            assert!(result.is_ok(), "geography {code} should be accepted");
+        }
+    }
+
+    #[test]
+    fn test_submit_credit_invalid_geography_rejected() {
+        let invalid_codes = ["XX", "USA", "123", "NIG", "ZZ"];
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let admin_nonce = client.get_nonce(&admin);
+        client.register_issuer(&admin, &issuer, &admin_nonce);
+        let admin_nonce2 = client.get_nonce(&admin);
+        client.register_methodology(
+            &admin,
+            &String::from_str(&env, "VCS"),
+            &String::from_str(&env, "Verified Carbon Standard"),
+            &admin_nonce2,
+        );
+        for (idx, code) in invalid_codes.iter().enumerate() {
+            let project_id = format!("PROJ-INVALID-{idx}");
+            let admin_nonce3 = client.get_nonce(&admin);
+            client.register_project(
+                &admin,
+                &String::from_str(&env, project_id),
+                &String::from_str(&env, "Test Project"),
+                &String::from_str(&env, "A test project"),
+                &String::from_str(&env, "NG"),
+            );
+            let nonce = client.get_nonce(&issuer);
+            let result = client.try_submit_credit(
+                &issuer,
+                &String::from_str(&env, project_id),
+                &2024,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, code),
+                &1_000_000,
+                &String::from_str(env, "bafybei123"),
+                &nonce,
+            );
+            assert_eq!(
+                result,
+                Err(Ok(CarbonChainError::InvalidMetadata)),
+                "geography {code} should be rejected",
+            );
+        }
     }
 
     #[test]

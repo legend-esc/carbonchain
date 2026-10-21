@@ -133,16 +133,58 @@ export class RetirementController {
   async downloadCertificate(
     @Param('id') certificateId: string,
   ): Promise<StreamableFile> {
+    return this.buildCertificateStream(certificateId);
+  }
+
+  @ApiOperation({ summary: 'Download retirement certificate as PDF' })
+  @ApiResponse({ status: 200, description: 'PDF certificate' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
+  @UseGuards(JwtAuthGuard)
+  @Get('certificate/:retirementId')
+  @Header('Content-Type', 'application/pdf')
+  async downloadCertificateByRetirementId(
+    @Param('retirementId') retirementId: string,
+  ): Promise<StreamableFile> {
+    return this.buildCertificateStream(retirementId);
+  }
+
+  /**
+   * GET /retirement/certificate/:retirementId/ipfs
+   *
+   * Returns the certificate IPFS hash committed on-chain via
+   * `get_certificate_hash`, or 404 when no hash has been set.
+   */
+  @ApiOperation({ summary: 'Get on-chain certificate IPFS hash' })
+  @ApiResponse({ status: 200, description: 'IPFS hash of the certificate' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Certificate hash not found on-chain' })
+  @UseGuards(JwtAuthGuard)
+  @Get('certificate/:retirementId/ipfs')
+  async getCertificateIpfsHash(
+    @Param('retirementId') retirementId: string,
+  ): Promise<{ ipfsHash: string }> {
+    return this.retirementService.getCertificateHash(retirementId);
+  }
+
+  /**
+   * Builds a downloadable certificate PDF stream for the given retirement.
+   * Shared by the `/:id/certificate`, `/certificates/:id/download` and
+   * `/certificate/:retirementId` routes.
+   */
+  private async buildCertificateStream(
+    retirementId: string,
+  ): Promise<StreamableFile> {
     const retirement =
-      await this.retirementService.getRetirement(certificateId);
+      await this.retirementService.getRetirement(retirementId);
     if (!retirement) {
       throw new NotFoundException(
-        `Retirement record ${certificateId} not found`,
+        `Retirement record ${retirementId} not found`,
       );
     }
 
     const pdfBuffer = await this.certificateService.generatePdf({
-      retirementId: certificateId,
+      retirementId,
       creditId: retirement.credit_id,
       buyer: retirement.buyer,
       tonnes: retirement.tonnes_retired,
@@ -155,7 +197,7 @@ export class RetirementController {
 
     return new StreamableFile(pdfBuffer, {
       type: 'application/pdf',
-      disposition: `attachment; filename="retirement-certificate-${certificateId}.pdf"`,
+      disposition: `attachment; filename="retirement-certificate-${retirementId}.pdf"`,
     });
   }
 
