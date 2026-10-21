@@ -610,6 +610,45 @@ Before deploying updates or modifications to any Soroban smart contracts on Carb
    - Ensure external indexers (such as the CarbonChain NestJS API event listeners) can consume both pre-upgrade and post-upgrade event payloads without deserialization failures.
    - Document any new event topics or schema versions in `docs/features/`.
 
+### Upgrade Verification
+
+1. **WASM Hash Verification**:
+   - Compute the SHA-256 hash of the new contract WASM and compare it against the hash recorded in the migration script / release manifest.
+   - Confirm the deployed WASM hash matches the hash reviewed and approved in the PR.
+   - Only deploy a WASM built from a clean, approved tree; the build must be reproducible.
+
+2. **Admin Nonce Freshness**:
+   - Verify the current admin nonce is fresh and matches the expected value before executing the upgrade or admin transfer.
+   - Ensure no pending admin transfer (`propose_admin`) is outstanding unless the upgrade explicitly includes the admin acceptance step.
+   - Confirm replay protection (`InvalidNonce`) is intact and enforced by the new contract.
+
+3. **Migration Execution Order**:
+   - Run migration scripts in the correct dependency order (`credit_registry` → `retirement` → `marketplace` → `mrv_oracle`).
+   - Record each migration transaction hash and block number in the upgrade log.
+   - Do not proceed to the next contract until the previous migration's post-state checks pass.
+
+### Post-Upgrade Verification
+
+1. **Event Emission Verification**:
+   - Confirm all upgrade-related events are emitted (e.g., `ContractUpgraded`, `AdminTransferred`) with the correct topics and payloads.
+   - Verify event listeners in the NestJS API consume the post-upgrade event schema without errors.
+
+2. **State Consistency Checks**:
+   - Run storage state consistency checks confirming credit balances, retirements, offers, and MRV readings match pre-upgrade values.
+   - Validate all storage entries deserialize cleanly into the new schema structs with no data loss.
+   - Confirm no storage entries are orphaned or inaccessible after migration.
+
+3. **Rollback Plan**:
+   - Document and test a rollback procedure before executing the upgrade on mainnet.
+   - Retain the previous WASM hash and pre-upgrade storage snapshot for fast restoration.
+   - Define the rollback trigger conditions and the maintainer(s) authorized to initiate rollback.
+
+### Required Approvals
+
+- **2+ maintainer approvals** are required before any contract upgrade PR can be merged.
+- A **security review** is mandatory for any upgrade that changes contract logic (not just storage or event additions).
+- All CI checks (tests, lint, contract build) must pass before merge.
+
 ---
 
 ### Existing Documentation
