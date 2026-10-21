@@ -21,6 +21,9 @@ export default tseslint.config(
       '@angular-eslint/no-empty-lifecycle-method': 'warn',
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      // Production builds must not contain debug logging. console.error and
+      // console.warn are still allowed for error reporting.
+      'no-console': ['error', { allow: ['error', 'warn'] }],
     },
   },
   {

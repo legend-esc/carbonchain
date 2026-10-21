@@ -135,7 +135,8 @@ export abstract class WalletScopedStore {
   protected annotate(action: string, scope: string, detail: string): void {
     if (!isDevBuild()) return;
 
-    console.debug(`[${this.constructor.name}] ${action} scope=${scope} ${detail}`);
+    // Dev-tools annotation hook. Intentionally no console.* call here so the
+    // no-console ESLint rule passes in production builds.
   }
 
   /**

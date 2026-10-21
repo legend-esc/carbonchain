@@ -52,7 +52,10 @@ export class WebhooksController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid or SSRF-blocked URL',
+    description:
+      'Invalid or SSRF-blocked URL. Failures include: unparseable URL, non-https ' +
+      'scheme in production, disallowed scheme, or a hostname resolving to a ' +
+      'private/loopback/link-local or cloud-metadata address.',
   })
   @ApiResponse({
     status: 401,
@@ -117,7 +120,11 @@ export class WebhooksController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Paginated list of deliveries',
+    description:
+      'Paginated list of deliveries. Each outbound delivery request is signed ' +
+      'with HMAC-SHA256 and carries the `x-carbonchain-signature: sha256=<hex>` ' +
+      'and `x-carbonchain-timestamp` headers; `x-carbonchain-retry` indicates the ' +
+      'attempt number (1 on first attempt, 2+ on retries).',
   })
   @ApiResponse({ status: 400, description: 'Invalid query parameters' })
   @ApiResponse({
@@ -285,7 +292,9 @@ export class WebhooksController {
   @ApiResponse({
     status: 201,
     description:
-      'Failed deliveries requeued for retry; deactivated webhooks reactivated.',
+      'Failed deliveries requeued for retry; deactivated webhooks reactivated. ' +
+      'Retried deliveries are re-signed with HMAC-SHA256 (`x-carbonchain-signature: ` +
+      'sha256=<hex>`) and carry `x-carbonchain-timestamp` and `x-carbonchain-retry` headers.',
   })
   @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
   @ApiResponse({
@@ -293,6 +302,7 @@ export class WebhooksController {
     description: 'Unauthorized or client IP not in allowlist',
   })
   @ApiResponse({ status: 403, description: 'Admin privileges required' })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('retry-failed')
   async retryFailedDeliveries(

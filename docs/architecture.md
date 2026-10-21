@@ -202,10 +202,10 @@ All contracts use stable numeric error codes for API compatibility across upgrad
 
 | Range | Contract |
 |---|---|
-| 100–109 | `credit_registry` |
-| 110–114 | `retirement` |
-| 115–316 | `marketplace` |
-| 119–120 | `mrv_oracle` |
+| 100–132 | `credit_registry` |
+| 200–210 | `retirement` |
+| 300–316 | `marketplace` |
+| 400–412 | `mrv_oracle` |
 
 See `docs/features/ERROR_CODES_REFERENCE.md` for the full reference.
 

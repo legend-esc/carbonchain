@@ -334,6 +334,7 @@ npx tsc --noEmit
 - Use Angular Signals for local state — avoid direct `BehaviorSubject` patterns where signals suffice
 - All HTTP calls go through `ApiService` — never use `HttpClient` directly in components
 - All wallet interactions go through `StellarWalletService`
+- No `console.log`, `console.debug`, or `console.info` in production code — the `no-console` ESLint rule disallows them. `console.error` and `console.warn` are still permitted for error reporting. Debug logging must be removed before opening a PR.
 
 ### General Guidelines
 
@@ -572,12 +573,12 @@ Codes are allocated by range per contract:
 
 | Range | Contract |
 |-------|----------|
-| 100–125 | Credit Registry |
-| 110–118 | Retirement |
-| 115–125 | Marketplace |
-| 119–129 | MRV Oracle |
+| 100–132 | Credit Registry |
+| 200–210 | Retirement |
+| 300–316 | Marketplace |
+| 400–412 | MRV Oracle |
 
-When adding a new error code, pick the **next available number** within the contract's range. The overall range is 100–138; once a range is exhausted, expand upward into the shared buffer (130–138).
+When adding a new error code, pick the **next available number** within the contract's range. Code ranges are non-overlapping (100–132, 200–210, 300–316, 400–412); once a range is exhausted, expand upward while preserving the gap between contracts.
 
 ### Steps
 
@@ -609,6 +610,45 @@ Before deploying updates or modifications to any Soroban smart contracts on Carb
    - Validate that contract events (`env.events().publish(...)`) maintain consistent topic structures.
    - Ensure external indexers (such as the CarbonChain NestJS API event listeners) can consume both pre-upgrade and post-upgrade event payloads without deserialization failures.
    - Document any new event topics or schema versions in `docs/features/`.
+
+### Upgrade Verification
+
+1. **WASM Hash Verification**:
+   - Compute the SHA-256 hash of the new contract WASM and compare it against the hash recorded in the migration script / release manifest.
+   - Confirm the deployed WASM hash matches the hash reviewed and approved in the PR.
+   - Only deploy a WASM built from a clean, approved tree; the build must be reproducible.
+
+2. **Admin Nonce Freshness**:
+   - Verify the current admin nonce is fresh and matches the expected value before executing the upgrade or admin transfer.
+   - Ensure no pending admin transfer (`propose_admin`) is outstanding unless the upgrade explicitly includes the admin acceptance step.
+   - Confirm replay protection (`InvalidNonce`) is intact and enforced by the new contract.
+
+3. **Migration Execution Order**:
+   - Run migration scripts in the correct dependency order (`credit_registry` → `retirement` → `marketplace` → `mrv_oracle`).
+   - Record each migration transaction hash and block number in the upgrade log.
+   - Do not proceed to the next contract until the previous migration's post-state checks pass.
+
+### Post-Upgrade Verification
+
+1. **Event Emission Verification**:
+   - Confirm all upgrade-related events are emitted (e.g., `ContractUpgraded`, `AdminTransferred`) with the correct topics and payloads.
+   - Verify event listeners in the NestJS API consume the post-upgrade event schema without errors.
+
+2. **State Consistency Checks**:
+   - Run storage state consistency checks confirming credit balances, retirements, offers, and MRV readings match pre-upgrade values.
+   - Validate all storage entries deserialize cleanly into the new schema structs with no data loss.
+   - Confirm no storage entries are orphaned or inaccessible after migration.
+
+3. **Rollback Plan**:
+   - Document and test a rollback procedure before executing the upgrade on mainnet.
+   - Retain the previous WASM hash and pre-upgrade storage snapshot for fast restoration.
+   - Define the rollback trigger conditions and the maintainer(s) authorized to initiate rollback.
+
+### Required Approvals
+
+- **2+ maintainer approvals** are required before any contract upgrade PR can be merged.
+- A **security review** is mandatory for any upgrade that changes contract logic (not just storage or event additions).
+- All CI checks (tests, lint, contract build) must pass before merge.
 
 ---
 

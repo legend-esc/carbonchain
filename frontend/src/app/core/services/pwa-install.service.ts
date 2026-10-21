@@ -34,13 +34,10 @@ export class PwaInstallService {
 
       // Show custom install prompt
       this.showInstallPrompt$.next(true);
-
-      console.log('[PWA] Install prompt available');
     });
 
     // Listen for app installed event
     window.addEventListener('appinstalled', () => {
-      console.log('[PWA] App installed successfully');
       this.isInstalled$.next(true);
       this.showInstallPrompt$.next(false);
       this.deferredPrompt = null;
@@ -62,8 +59,6 @@ export class PwaInstallService {
 
     // Wait for the user's response
     const { outcome } = await this.deferredPrompt.userChoice;
-
-    console.log(`[PWA] User choice: ${outcome}`);
 
     if (outcome === 'accepted') {
       this.showInstallPrompt$.next(false);

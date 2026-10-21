@@ -468,8 +468,42 @@ export class RetirementService {
     return {
       retirementId,
       certificateIpfsHash: certificateIpfsHash ?? '',
+      certificateUrl: `/retirement/certificate/${retirementId}`,
       ...(estimatedFeeStroops !== undefined ? { estimatedFeeStroops } : {}),
     };
+  }
+
+  /**
+   * Read the on-chain certificate IPFS hash for a retirement via the
+   * retirement contract's `get_certificate_hash` function.
+   *
+   * Throws NotFoundException when no hash has been committed on-chain.
+   */
+  async getCertificateHash(
+    retirementId: string,
+  ): Promise<{ ipfsHash: string }> {
+    retirementId = parseCreditId(retirementId);
+
+    const retval = await this.stellarService.readContract(
+      this.retirementContractId,
+      'get_certificate_hash',
+      [nativeToScVal(Buffer.from(retirementId, 'hex'), { type: 'bytes' })],
+    );
+
+    if (!retval) {
+      throw new NotFoundException(
+        `No certificate hash committed on-chain for retirement ${retirementId}`,
+      );
+    }
+
+    const native = scValToNative(retval);
+    if (typeof native === 'string' && native.length > 0) {
+      return { ipfsHash: native };
+    }
+
+    throw new NotFoundException(
+      `No certificate hash committed on-chain for retirement ${retirementId}`,
+    );
   }
 
   /**
