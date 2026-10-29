@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HttpStatus, INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { WebhooksModule } from '../src/webhooks/webhooks.module';
+import { WebhookIpAllowlistService } from '../src/webhooks/webhook-ip-allowlist.service';
 import { CacheService } from '../src/common/cache.service';
 import { ConfigModule } from '@nestjs/config';
 
@@ -308,8 +309,6 @@ describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 
-    const { WebhookIpAllowlistService } =
-      await import('../src/webhooks/webhook-ip-allowlist.service');
     const service = new WebhookIpAllowlistService(fakeCache);
 
     const allowlist = await service.getAllowlist();
@@ -332,8 +331,6 @@ describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 
-    const { WebhookIpAllowlistService } =
-      await import('../src/webhooks/webhook-ip-allowlist.service');
     const service = new WebhookIpAllowlistService(fakeCache);
 
     expect(await service.isAllowed('10.5.5.5')).toBe(true);
@@ -350,8 +347,6 @@ describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 
-    const { WebhookIpAllowlistService } =
-      await import('../src/webhooks/webhook-ip-allowlist.service');
     const service = new WebhookIpAllowlistService(fakeCache);
 
     expect(await service.isAllowed('8.8.8.8')).toBe(true);

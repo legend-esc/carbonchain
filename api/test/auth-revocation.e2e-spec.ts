@@ -22,6 +22,9 @@ describe('Auth revocation (e2e)', () => {
         return true;
       }),
       del: jest.fn(async () => undefined),
+      mget: jest.fn(async (keys: string[]) =>
+        keys.map((key) => revoked.get(key) ?? null),
+      ),
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 

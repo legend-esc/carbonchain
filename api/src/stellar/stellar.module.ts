@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { CacheModule } from '../common/cache.module';
 import { StellarService } from './stellar.service';
 import { StellarKeypairService } from './stellar-keypair.service';
 import { SequenceNumberManager } from './sequence-number-manager.service';
@@ -20,7 +21,7 @@ import { AccountCacheInvalidationService } from './account-cache-invalidation.se
  * is already available for injection here without re-importing CacheModule.
  */
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, CacheModule],
   providers: [
     StellarKeypairService,
     // In-memory manager — used as fallback inside RedisSequenceNumberManager

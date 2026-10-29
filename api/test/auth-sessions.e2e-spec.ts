@@ -4,13 +4,14 @@ import {
   ExecutionContext,
   CanActivate,
 } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
 import { AuthService } from '../src/auth/auth.service';
 import { CacheModule } from '../src/common/cache.module';
 import { CacheService } from '../src/common/cache.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
-import { AdminGuard } from '../src/auth/admin.guard';
+import { AdminGuard } from '../src/admin/admin.guard';
+import { ConfigModule } from '@nestjs/config';
 
 /**
  * In-memory fake CacheService used by the e2e tests.
@@ -95,7 +96,11 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
     cache = new InMemoryCacheService();
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AuthModule, CacheModule],
+      imports: [
+        AuthModule,
+        CacheModule,
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+      ],
     })
       .overrideProvider(CacheService)
       .useValue(cache)

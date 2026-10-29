@@ -1,12 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { WebhooksController } from '../src/webhooks/webhooks.controller';
 import { WebhooksService } from '../src/webhooks/webhooks.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
-import { RolesGuard } from '../src/auth/roles.guard';
+import { RolesGuard } from '../src/common/guards/roles.guard';
+import { AdminGuard } from '../src/admin/admin.guard';
 import { createHmac } from 'crypto';
+import { DataSource } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 
 describe('Webhook rotation & DLQ (e2e)', () => {
   let app: INestApplication;
@@ -44,6 +47,10 @@ describe('Webhook rotation & DLQ (e2e)', () => {
       providers: [
         WebhooksService,
         { provide: DataSource, useValue: dataSource },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((key: string) => (key === 'WEBHOOK_ALLOWED_IPS' ? '' : undefined)) },
+        },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -55,6 +62,8 @@ describe('Webhook rotation & DLQ (e2e)', () => {
         },
       })
       .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AdminGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

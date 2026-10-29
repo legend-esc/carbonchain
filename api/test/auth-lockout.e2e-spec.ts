@@ -4,11 +4,12 @@ import * as request from 'supertest';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
 import { CacheService } from '../src/common/cache.service';
+import { StellarKeypairService } from '../src/stellar/stellar-keypair.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { RolesGuard } from '../src/common/guards/roles.guard';
-import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 
 /**
  * In-memory fake of CacheService used by the lockout e2e tests.
@@ -127,6 +128,13 @@ describe('Auth account lockout (e2e) #1174', () => {
               }
               return defaultValue;
             }),
+          },
+        },
+        {
+          provide: StellarKeypairService,
+          useValue: {
+            getAdminKeypair: jest.fn(() => ({ publicKey: () => 'GADMIN' })),
+            getAdminPublicKey: jest.fn(() => 'GADMIN'),
           },
         },
         Reflector,
@@ -307,6 +315,13 @@ describe('Swagger documentation smoke test (e2e) #1176', () => {
           provide: ConfigService,
           useValue: {
             get: jest.fn((key: string, defaultValue?: any) => defaultValue),
+          },
+        },
+        {
+          provide: StellarKeypairService,
+          useValue: {
+            getAdminKeypair: jest.fn(() => ({ publicKey: () => 'GADMIN' })),
+            getAdminPublicKey: jest.fn(() => 'GADMIN'),
           },
         },
         Reflector,

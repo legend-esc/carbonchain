@@ -33,6 +33,9 @@ describe('JWT Token Introspection (e2e) — Issue #1172', () => {
       del: jest.fn(async (key: string) => {
         cacheStore.delete(key);
       }),
+      mget: jest.fn(async (keys: string[]) =>
+        keys.map((key) => cacheStore.get(key) ?? null),
+      ),
       increment: jest.fn(async () => 1),
       connect: jest.fn(async () => undefined),
       get isConnected() {
@@ -103,7 +106,6 @@ describe('JWT Token Introspection (e2e) — Issue #1172', () => {
     const expiredPayload = {
       account: 'GEXPIRED',
       jti: 'expired-jti-uuid',
-      exp: Math.floor(Date.now() / 1000) - 3600,
       iat: Math.floor(Date.now() / 1000) - 7200,
     };
     const token = jwtService.sign(expiredPayload, { expiresIn: '0s' });

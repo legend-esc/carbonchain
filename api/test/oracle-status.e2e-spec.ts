@@ -140,8 +140,6 @@ describe('OracleService.getOracleStatus — Issue #1169', () => {
       getAdminKeypair: () => ({ publicKey: () => 'GADMIN' }),
     } as any;
 
-    // Import after mocking context — we use the real service with mocked deps
-    const { OracleService } = await import('../src/oracle/oracle.service');
     const service = new OracleService(
       mockStellar,
       mockKeypair,
@@ -201,7 +199,6 @@ describe('OracleService.getOracleStatus — Issue #1169', () => {
       getAdminKeypair: () => ({ publicKey: () => 'GADMIN' }),
     } as any;
 
-    const { OracleService } = await import('../src/oracle/oracle.service');
     const service = new OracleService(
       mockStellar,
       mockKeypair,
