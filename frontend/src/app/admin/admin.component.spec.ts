@@ -32,6 +32,8 @@ describe('AdminComponent', () => {
       unpauseContract: vi.fn().mockReturnValue(of({ paused: false })),
       // AdminVerifiersComponent uses these:
       listVerifiers: vi.fn().mockReturnValue(of([])),
+      listVerifierApplications: vi.fn().mockReturnValue(of([])),
+      getVerifierStake: vi.fn().mockReturnValue(of({ stake: '0' })),
       registerVerifier: vi.fn(),
       suspendVerifier: vi.fn(),
       configureVerifier: vi.fn(),

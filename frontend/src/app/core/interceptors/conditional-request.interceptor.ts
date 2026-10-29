@@ -1,13 +1,13 @@
 import {
+  HttpErrorResponse,
   HttpInterceptorFn,
   HttpRequest,
   HttpHandlerFn,
   HttpEvent,
   HttpResponse,
 } from '@angular/common/http';
-import { inject } from '@angular/core';
-import { Observable } from 'rxjs';
-import { filter, map, tap } from 'rxjs/operators';
+import { Observable, of, throwError } from 'rxjs';
+import { catchError, filter, map, tap } from 'rxjs/operators';
 
 /**
  * Issue #966 — Conditional GET / 304 interceptor.
@@ -61,6 +61,21 @@ export const conditionalRequestInterceptor: HttpInterceptorFn = (
     : req;
 
   return next(cloned).pipe(
+    catchError((err: unknown) => {
+      if (err instanceof HttpErrorResponse && err.status === 304 && cached) {
+        cache.set(req.url, { ...cached, expiresAt: Date.now() + CACHE_TTL_MS });
+        return of(
+          new HttpResponse({
+            body: cached.body,
+            headers: err.headers,
+            status: 200,
+            statusText: 'OK (cached)',
+            url: err.url ?? req.url,
+          }),
+        );
+      }
+      return throwError(() => err);
+    }),
     filter((event) => event instanceof HttpResponse),
     tap((event) => {
       const response = event as HttpResponse<unknown>;

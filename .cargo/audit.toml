@@ -14,8 +14,14 @@
 #          which is not used on the contract path (contracts only call
 #          individual verify).  Will be removed once an updated stellar-sdk
 #          pins a fixed version.
+# RUSTSEC-2026-0387
+# Package: crypto-bigint 0.5.5 (transitive via soroban-sdk / soroban-env-host -> elliptic-curve)
+# Reason:  Host-only simulation dependency (excluded from wasm32v1-none contract builds);
+#          elliptic-curve 0.13 pins crypto-bigint ^0.5 with no semver-compatible fix until
+#          soroban-sdk upgrades upstream.
 ignore = [
   "RUSTSEC-2026-0009",
   "RUSTSEC-2024-0436",
   "RUSTSEC-2026-0097",
+  "RUSTSEC-2026-0387",
 ]
