@@ -49,7 +49,11 @@ describe('Webhook rotation & DLQ (e2e)', () => {
         { provide: DataSource, useValue: dataSource },
         {
           provide: ConfigService,
-          useValue: { get: jest.fn((key: string) => (key === 'WEBHOOK_ALLOWED_IPS' ? '' : undefined)) },
+          useValue: {
+            get: jest.fn((key: string) =>
+              key === 'WEBHOOK_ALLOWED_IPS' ? '' : undefined,
+            ),
+          },
         },
       ],
     })
