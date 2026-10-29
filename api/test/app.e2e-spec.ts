@@ -19,7 +19,9 @@ describe('AppController (e2e)', () => {
     await app.init();
   });
 
-  afterEach(() => app.close());
+  afterEach(async () => {
+    await app.close();
+  });
 
   it('/ (GET)', () => {
     return request(app.getHttpServer())
@@ -76,7 +78,9 @@ describe('RetirementController batch_retire (e2e)', () => {
     await app.init();
   });
 
-  afterEach(() => app.close());
+  afterEach(async () => {
+    await app.close();
+  });
 
   it('POST /retirement/batch retires 3 credits and returns all retirement IDs', async () => {
     const body = creditIds.map((id) => ({

@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * DTO for POST /api/v1/credits/:id/expire
@@ -15,4 +15,12 @@ export class ExpireCreditDto {
   @IsString()
   @IsNotEmpty()
   adminPublicKey: string;
+
+  @ApiPropertyOptional({
+    example: 'Vintage year 2019 outside the permitted grace period',
+    description: 'Optional human-readable reason for the expiry',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

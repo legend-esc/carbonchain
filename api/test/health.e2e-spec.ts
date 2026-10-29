@@ -26,7 +26,9 @@ describe('Health (e2e)', () => {
       await app.init();
     });
 
-    afterAll(() => app.close());
+    afterAll(async () => {
+      await app.close();
+    });
 
     it('GET /health returns 200 with status/db/stellar ok', () => {
       return request(app.getHttpServer())
@@ -51,7 +53,9 @@ describe('Health (e2e)', () => {
       await app.init();
     });
 
-    afterAll(() => app.close());
+    afterAll(async () => {
+      await app.close();
+    });
 
     it('GET /health returns 503 with the failing dependency marked as error', () => {
       return request(app.getHttpServer())

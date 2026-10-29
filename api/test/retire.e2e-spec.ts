@@ -18,6 +18,7 @@ import { JwtAuthGuard } from './../src/auth/jwt-auth.guard';
 import { CreditStatus } from '../../shared';
 
 const BUYER = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
+const UNKNOWN_CREDIT_ID = 'ab'.repeat(32);
 
 class TestJwtAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -126,7 +127,7 @@ describe('Credit retirement lifecycle (e2e)', () => {
 
   it('returns 404 when credit is not in the off-chain index', async () => {
     await request(app.getHttpServer())
-      .post('/credits/unknown-credit-id/retire')
+      .post(`/credits/${UNKNOWN_CREDIT_ID}/retire`)
       .send({ reason: 'offset' })
       .expect(404);
   });
