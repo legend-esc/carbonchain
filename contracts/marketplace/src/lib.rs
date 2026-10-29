@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
-    Error as SorobanError, IntoVal, String, Symbol, Vec,
+    Error as SorobanError, IntoVal, Map, String, Symbol, Vec,
 };
 
 // ── TTL constants ─────────────────────────────────────────────────────────────
@@ -118,6 +118,16 @@ pub enum DataKey {
     AllowedToken,
     /// Reverse index: credit_id → offer_id for O(1) lookup by credit (#1089).
     CreditOffer(BytesN<32>),
+    /// Contract schema version (#1095).
+    Version,
+    /// Admin-approved SAC token addresses (#1096).
+    AllowedTokens,
+    /// Cumulative XLM volume across all bought offers (#1091).
+    TotalVolumeXLM,
+    /// Per-token cumulative volume (#1091).
+    TotalVolumeTokens,
+    /// Count of currently active offers (#1091).
+    ActiveOffersCount,
 }
 
 /// Stable error codes for the CarbonChain marketplace contract.
@@ -166,6 +176,8 @@ pub enum MarketplaceError {
     InvalidRegistry = 315,
     /// The token_id does not match the allowed payment token.
     InvalidToken = 316,
+    /// The offer's `expires_at` is not strictly in the future.
+    InvalidExpiry = 317,
 }
 
 #[contractevent]
@@ -210,6 +222,13 @@ pub struct OfferFilled {
     pub seller: Address,
     pub offer_id: u64,
     pub price_xlm: i128,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct ContractUpgraded {
+    pub admin: Address,
+    pub new_version: u32,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -553,7 +572,7 @@ impl Marketplace {
         let offer_id = Self::next_id(&env)?;
         let offer = Offer {
             seller: seller.clone(),
-            credit_id,
+            credit_id: credit_id.clone(),
             price_xlm,
             price_amount,
             price_asset,
@@ -579,6 +598,9 @@ impl Marketplace {
             TTL_THRESHOLD,
             MIN_TTL,
         );
+
+        // #1091: increment active offers counter
+        Self::increment_active_count(&env);
 
         // Store escrowed amount for refund on cancellation
         env.storage()
@@ -1365,7 +1387,7 @@ impl Marketplace {
     ///
     /// `page` is 0-indexed.  `page_size` is clamped to 50.
     /// Returns an empty vector when `page` is past the end or the seller has no active offers.
-    pub fn list_active_offers_by_seller_paginated(
+    pub fn list_active_offers_by_seller(
         env: Env,
         seller: Address,
         page: u32,
@@ -1375,7 +1397,9 @@ impl Marketplace {
         let all_active = Self::get_active_offers_by_seller(env.clone(), seller);
         let start = (page as usize) * page_size;
         let mut result = Vec::new(&env);
-        let end = start.saturating_add(page_size).min(all_active.len() as usize);
+        let end = start
+            .saturating_add(page_size)
+            .min(all_active.len() as usize);
         for i in start..end {
             result.push_back(all_active.get(i as u32).unwrap());
         }
@@ -3043,7 +3067,13 @@ mod tests {
         let buyer = Address::generate(&env);
         token.set_balance(&buyer, &price);
         let buyer_nonce = client.get_nonce(&buyer);
-        client.buy_offer(&buyer, &offer_id, &registry.id, &token.address, &buyer_nonce);
+        client.buy_offer(
+            &buyer,
+            &offer_id,
+            &registry.id,
+            &token.address,
+            &buyer_nonce,
+        );
         // After purchase, reverse index must be gone
         assert_eq!(client.get_offer_by_credit_id(&credit_id), None);
     }
@@ -3192,9 +3222,9 @@ mod tests {
         assert_eq!(result.len(), 0);
     }
 
-    /// list_active_offers_by_seller_paginated — first page of active offers.
+    /// list_active_offers_by_seller — first page of active offers.
     #[test]
-    fn test_list_active_offers_by_seller_paginated_first_page() {
+    fn test_list_active_offers_by_seller_first_page() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
@@ -3225,25 +3255,25 @@ mod tests {
         );
 
         // Only the active offer (id1) should appear
-        let page0 = client.list_active_offers_by_seller_paginated(&seller, &0, &10);
+        let page0 = client.list_active_offers_by_seller(&seller, &0, &10);
         assert_eq!(page0.len(), 1);
         assert_eq!(page0.get(0).unwrap(), id1);
     }
 
-    /// list_active_offers_by_seller_paginated — non-existent seller returns empty.
+    /// list_active_offers_by_seller — non-existent seller returns empty.
     #[test]
-    fn test_list_active_offers_by_seller_paginated_nonexistent_seller() {
+    fn test_list_active_offers_by_seller_nonexistent_seller() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, _seller, _admin, _registry, _credit_id) = setup_with_registry(&env);
         let nobody = Address::generate(&env);
-        let result = client.list_active_offers_by_seller_paginated(&nobody, &0, &10);
+        let result = client.list_active_offers_by_seller(&nobody, &0, &10);
         assert_eq!(result.len(), 0);
     }
 
-    /// list_active_offers_by_seller_paginated — past end returns empty.
+    /// list_active_offers_by_seller — past end returns empty.
     #[test]
-    fn test_list_active_offers_by_seller_paginated_past_end() {
+    fn test_list_active_offers_by_seller_past_end() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, seller, _admin, registry, credit_id) = setup_with_registry(&env);
@@ -3257,7 +3287,7 @@ mod tests {
             &None,
             &nonce,
         );
-        let result = client.list_active_offers_by_seller_paginated(&seller, &999, &10);
+        let result = client.list_active_offers_by_seller(&seller, &999, &10);
         assert_eq!(result.len(), 0);
     }
 

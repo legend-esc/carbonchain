@@ -25,10 +25,7 @@ use soroban_sdk::{
 };
 
 fn get_version(env: &Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&DataKey::Version)
-        .unwrap_or(0)
+    env.storage().instance().get(&DataKey::Version).unwrap_or(0)
 }
 
 fn set_version(env: &Env, version: u32) {
@@ -359,9 +356,7 @@ impl Retirement {
             .get(&DataKey::AllRetirements)
             .unwrap_or_else(|| Vec::new(&env));
         all.push_back(retirement_id.clone());
-        env.storage()
-            .instance()
-            .set(&DataKey::AllRetirements, &all);
+        env.storage().instance().set(&DataKey::AllRetirements, &all);
 
         // Emit retirement event
         Retire {
@@ -564,9 +559,7 @@ impl Retirement {
         for ret_id in succeeded.iter() {
             all.push_back(ret_id);
         }
-        env.storage()
-            .instance()
-            .set(&DataKey::AllRetirements, &all);
+        env.storage().instance().set(&DataKey::AllRetirements, &all);
 
         // Summary event for off-chain indexers (only emitted when at least one credit retired)
         BatchRetired {
@@ -605,7 +598,7 @@ impl Retirement {
 
     /// Returns the current contract schema version stored in instance storage.
     pub fn get_version(env: Env) -> u32 {
-        get_version(&env)
+        Self::get_version_inner(&env)
     }
 
     // ── Issue 3: Contract Upgrade Mechanism ──────────────────────────────────
@@ -631,9 +624,9 @@ impl Retirement {
             return Err(RetirementError::InvalidNonce);
         }
 
-        let previous_version = Self::get_version(&env);
+        let previous_version = Self::get_version_inner(&env);
         Self::run_migrations(&env, previous_version + 1)?;
-        let new_version = Self::get_version(&env);
+        let new_version = Self::get_version_inner(&env);
 
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
@@ -881,7 +874,7 @@ impl Retirement {
             .unwrap_or_else(|| panic!("Registry not set"))
     }
 
-    fn get_version(env: &Env) -> u32 {
+    fn get_version_inner(env: &Env) -> u32 {
         env.storage().instance().get(&DataKey::Version).unwrap_or(0)
     }
 
@@ -891,7 +884,7 @@ impl Retirement {
 
     /// Run sequential migrations from the current version up to `target_version`.
     fn run_migrations(env: &Env, target_version: u32) -> Result<(), RetirementError> {
-        let mut current = Self::get_version(env);
+        let mut current = Self::get_version_inner(env);
         if target_version < current {
             return Err(RetirementError::InvalidInput);
         }
@@ -2417,11 +2410,7 @@ mod tests {
         );
 
         let ipfs = "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354";
-        client.set_certificate_hash(
-            &retirement_admin,
-            &ret_id,
-            &String::from_str(&env, ipfs),
-        );
+        client.set_certificate_hash(&retirement_admin, &ret_id, &String::from_str(&env, ipfs));
 
         // After setting, get_retirement must return the populated hash
         let record_after = client.get_retirement(&ret_id).unwrap();
@@ -2517,11 +2506,7 @@ mod tests {
 
         let hashes = ["bafybei_v1", "bafybei_v2", "bafybei_v3"];
         for h in hashes {
-            client.set_certificate_hash(
-                &retirement_admin,
-                &ret_id,
-                &String::from_str(&env, h),
-            );
+            client.set_certificate_hash(&retirement_admin, &ret_id, &String::from_str(&env, h));
         }
 
         // get_certificate_hash should return the last value
@@ -2534,7 +2519,10 @@ mod tests {
 
         // get_retirement must also reflect the last value
         let record = client.get_retirement(&ret_id).unwrap();
-        assert_eq!(record.certificate_ipfs_hash, String::from_str(&env, "bafybei_v3"));
+        assert_eq!(
+            record.certificate_ipfs_hash,
+            String::from_str(&env, "bafybei_v3")
+        );
     }
 
     /// Non-admin caller is rejected with Unauthorized.
@@ -2590,8 +2578,7 @@ mod tests {
             &n,
         );
 
-        let page = client
-            .list_all_retirements(&retirement_admin, &0, &50);
+        let page = client.list_all_retirements(&retirement_admin, &0, &50);
         assert_eq!(page.len(), 1);
         assert_eq!(page.get(0).unwrap(), ret_id);
     }
@@ -2637,16 +2624,14 @@ mod tests {
         let all_ids = retire_n_credits(&env, &client, &registry, &issuer, 15);
 
         // page=0, page_size=10 → first 10
-        let page0 = client
-            .list_all_retirements(&retirement_admin, &0, &10);
+        let page0 = client.list_all_retirements(&retirement_admin, &0, &10);
         assert_eq!(page0.len(), 10);
         for i in 0..10u32 {
             assert_eq!(page0.get(i).unwrap(), all_ids.get(i).unwrap());
         }
 
         // page=1, page_size=10 → last 5
-        let page1 = client
-            .list_all_retirements(&retirement_admin, &1, &10);
+        let page1 = client.list_all_retirements(&retirement_admin, &1, &10);
         assert_eq!(page1.len(), 5);
         for i in 0..5u32 {
             assert_eq!(page1.get(i).unwrap(), all_ids.get(10 + i).unwrap());
@@ -2664,8 +2649,7 @@ mod tests {
 
         retire_n_credits(&env, &client, &registry, &issuer, 60);
 
-        let page = client
-            .list_all_retirements(&retirement_admin, &0, &200);
+        let page = client.list_all_retirements(&retirement_admin, &0, &200);
         assert_eq!(page.len(), 50, "page_size must be capped at 50");
     }
 
@@ -2718,8 +2702,7 @@ mod tests {
         );
 
         // Global index must contain both
-        let all = client
-            .list_all_retirements(&retirement_admin, &0, &50);
+        let all = client.list_all_retirements(&retirement_admin, &0, &50);
         assert_eq!(all.len(), 2);
         assert_eq!(all.get(0).unwrap(), ret1);
         assert_eq!(all.get(1).unwrap(), ret2);

@@ -48,25 +48,24 @@ use crate::storage::{
     get_credits_by_owner, get_credits_by_project, get_issuers, get_methodologies, get_min_stake,
     get_next_verifier_id, get_nonce, get_pending_credits_by_verifier, get_required_approvals,
     get_retirement_contract, get_session, get_session_op_count, get_total_credits,
-    get_unbonding_request, get_verifier_id, get_verifier_pending_count,
-    get_verifier_reputation, get_verifier_services_for,
-    get_verifier_stake, get_verifier_stake_token, get_verifiers, get_version, has_admin,
-    increment_approval_count, increment_dispute_count, increment_session_op_count,
-    increment_total_credits, increment_verifier_pending, is_issuer as storage_is_issuer,
-    is_methodology_valid, is_paused, is_verifier, remove_credit_approvals,
-    remove_credit_from_owner, remove_credit_verifiers, remove_from_pending_credits,
-    remove_pending_credit_from_verifier, remove_unbonding_request, remove_verifier_stake_token,
-    set_admin, set_approved_stake_token, set_credit, set_credit_by_project_vintage,
-    set_credit_verifiers, set_issuers, set_methodologies, set_min_stake, set_next_verifier_id,
-    set_paused, set_required_approvals, set_retirement_contract, set_session,
-    set_unbonding_request, set_verifier_id, set_verifier_services, set_verifier_stake,
-    set_verifier_stake_token, set_verifiers, verifier_has_credit_approval, SLASH_PERCENT,
-    UNBONDING_PERIOD_SECS,
+    get_unbonding_request, get_verifier_id, get_verifier_pending_count, get_verifier_reputation,
+    get_verifier_services_for, get_verifier_stake, get_verifier_stake_token, get_verifiers,
+    get_version, has_admin, increment_approval_count, increment_dispute_count,
+    increment_session_op_count, increment_total_credits, increment_verifier_pending,
+    is_issuer as storage_is_issuer, is_methodology_valid, is_paused, is_verifier,
+    remove_credit_approvals, remove_credit_from_owner, remove_credit_verifiers,
+    remove_from_pending_credits, remove_pending_credit_from_verifier, remove_unbonding_request,
+    remove_verifier_stake_token, set_admin, set_approved_stake_token, set_credit,
+    set_credit_by_project_vintage, set_credit_verifiers, set_issuers, set_methodologies,
+    set_min_stake, set_next_verifier_id, set_paused, set_required_approvals,
+    set_retirement_contract, set_session, set_unbonding_request, set_verifier_id,
+    set_verifier_services, set_verifier_stake, set_verifier_stake_token, set_verifiers,
+    verifier_has_credit_approval, SLASH_PERCENT, UNBONDING_PERIOD_SECS,
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, DisputeResolution, Methodology,
-    ProjectMetadata, ServiceType, Session, UnbondingRequest, VALID_ISO_COUNTRY_CODES,
-    VerifierReputation,
+    ProjectMetadata, ServiceType, Session, UnbondingRequest, VerifierReputation,
+    VALID_ISO_COUNTRY_CODES,
 };
 
 #[cfg_attr(not(feature = "library"), contract)]
@@ -654,7 +653,7 @@ impl CreditRegistry {
     /// - [`CarbonChainError::NotInitialized`] — contract has not been initialised.
     /// - [`CarbonChainError::ContractPaused`] — contract is paused.
     /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current issuer nonce.
-        /// - [`CarbonChainError::InvalidMetadata`] — `methodology` is not registered, `vintage_year` is outside valid range, or `geography` is not a valid ISO 3166-1 alpha-2 code.
+    /// - [`CarbonChainError::InvalidMetadata`] — `methodology` is not registered, `vintage_year` is outside valid range, or `geography` is not a valid ISO 3166-1 alpha-2 code.
     /// - [`CarbonChainError::InvalidTonnes`] — `tonnes` is zero, negative, or exceeds the upper bound.
     pub fn submit_credit(
         env: Env,
@@ -708,7 +707,10 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidMetadata);
         }
         // Validate geography: must be a valid ISO 3166-1 alpha-2 country code
-        if !VALID_ISO_COUNTRY_CODES.iter().any(|&code| code == geography.as_str()) {
+        if !VALID_ISO_COUNTRY_CODES
+            .iter()
+            .any(|&code| String::from_str(&env, code) == geography)
+        {
             return Err(CarbonChainError::InvalidMetadata);
         }
 
@@ -2330,13 +2332,14 @@ mod tests {
             &String::from_str(&env, "Verified Carbon Standard"),
             &client.get_nonce(&admin),
         );
-        client.register_project(
-            &admin,
-            &String::from_str(&env, "PROJ-COUNT"),
-            &String::from_str(&env, "Test Project"),
-            &String::from_str(&env, "A test project"),
-            &String::from_str(&env, "NG"),
-        );
+        let project_id = String::from_str(&env, "PROJ-TEST");
+            client.register_project(
+                &admin,
+                &project_id,
+                &String::from_str(&env, "Test Project"),
+                &String::from_str(&env, "A test project"),
+                &String::from_str(&env, "NG"),
+            );
 
         let mut ids = soroban_sdk::Vec::new(&env);
         for year in 2020u32..2023u32 {
@@ -2540,16 +2543,18 @@ mod tests {
         let issuer = Address::generate(&env);
         let _ = submit_test_credit(&env, &client, &admin, &issuer);
         let nonce = client.get_nonce(&issuer);
-        let result = client.try_submit_credit(
-            &issuer,
-            &String::from_str(&env, "PROJ-001"),
-            &2024,
-            &String::from_str(&env, "VCS"),
-            &String::from_str(&env, "NG"),
-            &0,
-            &String::from_str(&env, "bafybei123"),
-            &nonce,
-        );
+        let project_id = String::from_str(&env, "PROJ-TEST");
+        let code = String::from_str(&env, "NG");
+            let result = client.try_submit_credit(
+                &issuer,
+                &project_id,
+                &2024,
+                &String::from_str(&env, "VCS"),
+                &code,
+                &1_000_000,
+                &String::from_str(&env, "bafybei123"),
+                &nonce,
+            );
         assert!(result.is_err());
     }
 
@@ -3978,46 +3983,6 @@ mod tests {
         assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
     }
 
-    /// Submits a credit with the given `geography`, registering a fresh issuer,
-    /// methodology and project (with a valid "NG" geography) so that only the
-    /// submit-time geography check is exercised.
-    fn submit_credit_with_geography(
-        env: &Env,
-        client: &CreditRegistryClient,
-        admin: &Address,
-        issuer: &Address,
-        project_id: &str,
-        geography: &str,
-    ) {
-        let admin_nonce = client.get_nonce(admin);
-        client.register_issuer(admin, issuer, &admin_nonce);
-        let admin_nonce2 = client.get_nonce(admin);
-        client.register_methodology(
-            admin,
-            &String::from_str(env, "VCS"),
-            &String::from_str(env, "Verified Carbon Standard"),
-            &admin_nonce2,
-        );
-        client.register_project(
-            admin,
-            &String::from_str(env, project_id),
-            &String::from_str(env, "Test Project"),
-            &String::from_str(env, "A test project"),
-            &String::from_str(env, "NG"),
-        );
-        let nonce = client.get_nonce(issuer);
-        client.try_submit_credit(
-            issuer,
-            &String::from_str(env, project_id),
-            &2024,
-            &String::from_str(env, "VCS"),
-            &String::from_str(env, geography),
-            &1_000_000,
-            &String::from_str(env, "bafybei123"),
-            &nonce,
-        );
-    }
-
     #[test]
     fn test_submit_credit_valid_geography_accepted() {
         let valid_codes = ["US", "NG", "BR", "CN", "DE"];
@@ -4034,10 +3999,10 @@ mod tests {
         );
         for (idx, code) in valid_codes.iter().enumerate() {
             let project_id = format!("PROJ-VALID-{idx}");
-            let admin_nonce3 = client.get_nonce(&admin);
+            let _admin_nonce3 = client.get_nonce(&admin);
             client.register_project(
                 &admin,
-                &String::from_str(&env, project_id),
+                &String::from_str(&env, project_id.as_str()),
                 &String::from_str(&env, "Test Project"),
                 &String::from_str(&env, "A test project"),
                 &String::from_str(&env, "NG"),
@@ -4045,12 +4010,12 @@ mod tests {
             let nonce = client.get_nonce(&issuer);
             let result = client.try_submit_credit(
                 &issuer,
-                &String::from_str(&env, project_id),
+                &String::from_str(&env, project_id.as_str()),
                 &2024,
                 &String::from_str(&env, "VCS"),
                 &String::from_str(&env, code),
                 &1_000_000,
-                &String::from_str(env, "bafybei123"),
+                &String::from_str(&env, "bafybei123"),
                 &nonce,
             );
             assert!(result.is_ok(), "geography {code} should be accepted");
@@ -4073,10 +4038,10 @@ mod tests {
         );
         for (idx, code) in invalid_codes.iter().enumerate() {
             let project_id = format!("PROJ-INVALID-{idx}");
-            let admin_nonce3 = client.get_nonce(&admin);
+            let _admin_nonce3 = client.get_nonce(&admin);
             client.register_project(
                 &admin,
-                &String::from_str(&env, project_id),
+                &String::from_str(&env, project_id.as_str()),
                 &String::from_str(&env, "Test Project"),
                 &String::from_str(&env, "A test project"),
                 &String::from_str(&env, "NG"),
@@ -4084,12 +4049,12 @@ mod tests {
             let nonce = client.get_nonce(&issuer);
             let result = client.try_submit_credit(
                 &issuer,
-                &String::from_str(&env, project_id),
+                &String::from_str(&env, project_id.as_str()),
                 &2024,
                 &String::from_str(&env, "VCS"),
                 &String::from_str(&env, code),
                 &1_000_000,
-                &String::from_str(env, "bafybei123"),
+                &String::from_str(&env, "bafybei123"),
                 &nonce,
             );
             assert_eq!(
@@ -4955,14 +4920,13 @@ mod tests {
             &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
         );
 
-        let ids = soroban_sdk::vec![&env, id1, id2];
-        let merged = client.merge_credits(&issuer, &ids).unwrap();
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
+        let merged = client.merge_credits(&issuer, &ids);
 
         let merged_credit = client.get_credit(&merged);
         assert_eq!(merged_credit.status, CreditStatus::Active);
         assert_eq!(
-            merged_credit.tonnes,
-            2_000_000,
+            merged_credit.tonnes, 2_000_000,
             "merged tonnes must equal sum of sources"
         );
         assert_eq!(merged_credit.owner, issuer);
@@ -4982,14 +4946,24 @@ mod tests {
         register_project_custom(&env, &client, &admin, &String::from_str(&env, "PROJ-A"));
         register_project_custom(&env, &client, &admin, &String::from_str(&env, "PROJ-B"));
         let id1 = submit_and_mint_active_credit(
-            &env, &client, &issuer, &verifier,
-            &String::from_str(&env, "PROJ-A"), 2024, 1_000_000,
+            &env,
+            &client,
+            &issuer,
+            &verifier,
+            &String::from_str(&env, "PROJ-A"),
+            2024,
+            1_000_000,
         );
         let id2 = submit_and_mint_active_credit(
-            &env, &client, &issuer, &verifier,
-            &String::from_str(&env, "PROJ-B"), 2024, 1_000_000,
+            &env,
+            &client,
+            &issuer,
+            &verifier,
+            &String::from_str(&env, "PROJ-B"),
+            2024,
+            1_000_000,
         );
-        let ids = soroban_sdk::vec![&env, id1, id2];
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
         let result = client.try_merge_credits(&issuer, &ids);
         assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
     }
@@ -5011,7 +4985,7 @@ mod tests {
         let id2 = submit_and_mint_active_credit(
             &env, &client, &other, &verifier, &project, 2024, 1_000_000,
         );
-        let ids = soroban_sdk::vec![&env, id1, id2];
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
         let result = client.try_merge_credits(&issuer, &ids);
         assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
     }
@@ -5031,7 +5005,7 @@ mod tests {
         let id2 = submit_and_mint_active_credit(
             &env, &client, &issuer, &verifier, &project, 2025, 1_000_000,
         );
-        let ids = soroban_sdk::vec![&env, id1, id2];
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
         let result = client.try_merge_credits(&issuer, &ids);
         assert_eq!(result, Err(Ok(CarbonChainError::InvalidMetadata)));
     }
@@ -5059,12 +5033,9 @@ mod tests {
             &vnonce,
         );
         assert_eq!(client.get_credit(&id2).status, CreditStatus::Flagged);
-        let ids = soroban_sdk::vec![&env, id1, id2];
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
         let result = client.try_merge_credits(&issuer, &ids);
-        assert_eq!(
-            result,
-            Err(Ok(CarbonChainError::InvalidStatusTransition))
-        );
+        assert_eq!(result, Err(Ok(CarbonChainError::InvalidStatusTransition)));
     }
 
     #[test]
@@ -5083,7 +5054,7 @@ mod tests {
         let id2 = submit_and_mint_active_credit(
             &env, &client, &issuer, &verifier, &project, 2024, 1_000_000,
         );
-        let ids = soroban_sdk::vec![&env, id1, id2];
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
         let result = client.try_merge_credits(&rando, &ids);
         assert_eq!(result, Err(Ok(CarbonChainError::Unauthorized)));
     }
@@ -5126,13 +5097,19 @@ mod tests {
         assert!(before.contains(&id1));
         assert!(before.contains(&id2));
 
-        let ids = soroban_sdk::vec![&env, id1, id2];
-        let merged = client.merge_credits(&issuer, &ids).unwrap();
+        let ids = soroban_sdk::vec![&env, id1.clone(), id2.clone()];
+        let merged = client.merge_credits(&issuer, &ids);
 
         let after = client.list_credits_by_owner(&issuer);
         assert_eq!(after.len(), 1);
         assert!(after.contains(&merged));
-        assert!(!after.contains(&id1), "source credit must be removed from owner index");
-        assert!(!after.contains(&id2), "source credit must be removed from owner index");
+        assert!(
+            !after.contains(&id1),
+            "source credit must be removed from owner index"
+        );
+        assert!(
+            !after.contains(&id2),
+            "source credit must be removed from owner index"
+        );
     }
 } // end mod tests
