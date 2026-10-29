@@ -2243,10 +2243,19 @@ mod tests {
         for i in 0..n {
             let idx = i as usize;
             let inonce = registry.get_nonce(owner);
+            let proj_id = String::from_str(env, suffixes[idx]);
+            // Register the project before submitting (owner is an issuer, mock_all_auths allows it)
+            registry.register_project(
+                owner,
+                &proj_id,
+                &String::from_str(env, "Test Project"),
+                &String::from_str(env, "Desc"),
+                &String::from_str(env, "NG"),
+            );
             let cid = registry.submit_credit(
                 owner,
-                &String::from_str(env, "PROJ-001"),
-                2024 + i,
+                &proj_id,
+                2024,
                 &String::from_str(env, "VCS"),
                 &String::from_str(env, "NG"),
                 1_000_000,

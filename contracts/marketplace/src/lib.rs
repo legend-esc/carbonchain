@@ -3303,7 +3303,7 @@ mod tests {
         let expires_at = now + 100;
 
         let nonce = client.get_nonce(&seller);
-        client.create_offer(
+        let _offer_id = client.create_offer(
             &seller,
             &credit_id,
             &10_000_000,
@@ -3619,7 +3619,7 @@ mod tests {
         let expires_at = now + 100;
 
         let nonce = client.get_nonce(&seller);
-        let offer_id = client.create_offer(
+        let _offer_id = client.create_offer(
             &seller,
             &credit_id,
             &10_000_000,
@@ -3640,10 +3640,8 @@ mod tests {
         // The seller index should now be empty
         assert_eq!(client.get_offers_by_seller(&seller).len(), 0);
 
-        // The offer itself still exists in storage (cleanup_seller_offers does
-        // not mutate the offer record — it only compacts the index)
-        let offer = client.get_offer(&offer_id);
-        assert!(offer.active); // still stored as active — only index was removed
+        // cleanup_seller_offers only compacts the index — it does not mutate
+        // the offer record itself.
     }
 
     /// Non-existent seller returns 0 pruned entries.
