@@ -2,7 +2,7 @@ name: CarbonChain CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
     branches: [main]
 
@@ -456,8 +456,8 @@ jobs:
         id: cache-cargo-audit-sec
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-path: ~/.cargo/bin/cargo-audit
-        key: ${{ runner.os }}-cargo-audit
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit
       - name: Install cargo-audit
         if: steps.cache-cargo-audit-sec.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
