@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, HttpStatus, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  INestApplication,
+  HttpStatus,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import request from 'supertest';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
@@ -207,8 +212,7 @@ describe('Auth account lockout (e2e) #1174', () => {
     }
 
     // Verify the lock is set and the service returns the expected shape.
-    const { locked, retryAfter } =
-      await authService.isAccountLocked(ACCOUNT);
+    const { locked, retryAfter } = await authService.isAccountLocked(ACCOUNT);
 
     expect(locked).toBe(true);
     expect(typeof retryAfter).toBe('number');
@@ -330,7 +334,7 @@ describe('Swagger documentation smoke test (e2e) #1176', () => {
     const server = app.getHttpServer();
     const response = await request(server).get('/api-json');
 
-    if (response.status === HttpStatus.NOT_FOUND) {
+    if (response.status === 404) {
       // Swagger is not mounted in this isolated test module; manual UI check
       // is required. Mark as pending rather than failing.
       console.warn(
