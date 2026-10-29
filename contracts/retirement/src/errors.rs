@@ -22,4 +22,6 @@ pub enum RetirementError {
     InvalidRegistry = 209,
     /// No retirement record exists for the given retirement ID.
     RecordNotFound = 210,
+    /// Attempted to downgrade the contract to an older schema version.
+    DowngradeNotAllowed = 211,
 }
