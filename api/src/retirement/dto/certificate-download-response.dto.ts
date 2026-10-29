@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import type { CertificateDownloadMetadata } from '@shared';
+import type { CertificateDownloadMetadata } from '../../../../shared/index';
 
 /**
  * Swagger and API DTO representation of certificate download metadata.
@@ -24,7 +24,8 @@ export class CertificateDownloadResponseDto implements CertificateDownloadMetada
   contentType: 'application/pdf';
 
   @ApiProperty({
-    description: 'HTTP Content-Disposition header with attachment directive and filename',
+    description:
+      'HTTP Content-Disposition header with attachment directive and filename',
     example: 'attachment; filename="retirement-certificate-RET-0192a83f.pdf"',
   })
   contentDisposition: string;

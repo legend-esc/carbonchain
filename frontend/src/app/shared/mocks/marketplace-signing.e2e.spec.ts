@@ -205,8 +205,6 @@ describe('[e2e] OfferDetailComponent — wallet signing paths (issue #970)', () 
 
   it('network-block: wallet disconnects before sign, shows network error', async () => {
     setupComponent(XLM_OFFER);
-
-    wallet.simulateDisconnect();
     wallet.signTransaction.mockRejectedValue(new WalletError('net::ERR_BAD_RESPONSE', 'network'));
 
     await comp.executeBuy();

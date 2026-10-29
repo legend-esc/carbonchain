@@ -4,6 +4,11 @@ import { of, throwError, Subject } from 'rxjs';
 import { MarketplaceListComponent } from './marketplace-list.component';
 import { MarketplaceStore } from '../core/store/marketplace.store';
 import { Offer } from '@shared';
+import { vi } from 'vitest';
+
+const apiSpy = {
+  getListings: vi.fn(),
+};
 
 const mockOffer: Offer = {
   id: '1',
@@ -35,6 +40,9 @@ function createStoreMock(offers: Offer[] = [], errorMsg: string | null = null) {
     nextPage: vi.fn().mockResolvedValue(undefined),
     prevPage: vi.fn().mockResolvedValue(undefined),
     reset: vi.fn(),
+    setOffers: (val: Offer[]) => _offers.set(val),
+    setError: (val: string | null) => _error.set(val),
+    setLoading: (val: boolean) => _loading.set(val),
   };
 }
 
@@ -72,12 +80,7 @@ describe('MarketplaceListComponent', () => {
   });
 
   it('renders offers in a table when store has offers', async () => {
-    storeMock = createStoreMock([mockOffer]);
-    await TestBed.configureTestingModule({
-      imports: [MarketplaceListComponent],
-      providers: [{ provide: MarketplaceStore, useValue: storeMock }],
-    }).compileComponents();
-
+    storeMock.setOffers([mockOffer]);
     fixture = TestBed.createComponent(MarketplaceListComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
@@ -89,13 +92,9 @@ describe('MarketplaceListComponent', () => {
   });
 
   it('shows error message when store has an error', async () => {
-    storeMock = createStoreMock([], 'Network error');
-    await TestBed.configureTestingModule({
-      imports: [MarketplaceListComponent],
-      providers: [{ provide: MarketplaceStore, useValue: storeMock }],
-    }).compileComponents();
-
+    storeMock.setError('Network error');
     fixture = TestBed.createComponent(MarketplaceListComponent);
+    component = fixture.componentInstance;
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -105,12 +104,7 @@ describe('MarketplaceListComponent', () => {
   });
 
   it('emits offerSelected when a row is clicked', async () => {
-    storeMock = createStoreMock([mockOffer]);
-    await TestBed.configureTestingModule({
-      imports: [MarketplaceListComponent],
-      providers: [{ provide: MarketplaceStore, useValue: storeMock }],
-    }).compileComponents();
-
+    storeMock.setOffers([mockOffer]);
     fixture = TestBed.createComponent(MarketplaceListComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
@@ -139,7 +133,6 @@ describe('MarketplaceListComponent', () => {
   // #340 — pagination boundary tests
   describe('pagination boundary conditions', () => {
     it('empty state: shows "No active listings" and no table when 0 listings', async () => {
-      apiSpy.getListings.mockReturnValue(of([]));
       fixture.detectChanges();
       await fixture.whenStable();
       fixture.detectChanges();
@@ -151,7 +144,7 @@ describe('MarketplaceListComponent', () => {
 
     it('last page: renders exactly the returned rows when fewer items than a full page', async () => {
       const partialPage = [mockOffer, { ...mockOffer, id: '2' }, { ...mockOffer, id: '3' }];
-      apiSpy.getListings.mockReturnValue(of(partialPage));
+      storeMock.setOffers(partialPage);
       fixture.detectChanges();
       await fixture.whenStable();
       fixture.detectChanges();
@@ -161,8 +154,7 @@ describe('MarketplaceListComponent', () => {
     });
 
     it('refresh button is disabled while loading', () => {
-      // Keep isLoading true by never resolving the observable
-      apiSpy.getListings.mockReturnValue(new Subject());
+      storeMock.setLoading(true);
       fixture.detectChanges();
 
       const btn = fixture.nativeElement.querySelector('.btn-primary') as HTMLButtonElement;
@@ -170,9 +162,7 @@ describe('MarketplaceListComponent', () => {
     });
 
     it('refresh button is enabled after load completes', async () => {
-      apiSpy.getListings.mockReturnValue(of([mockOffer]));
-      fixture.detectChanges();
-      await fixture.whenStable();
+      storeMock.setLoading(false);
       fixture.detectChanges();
 
       const btn = fixture.nativeElement.querySelector('.btn-primary') as HTMLButtonElement;

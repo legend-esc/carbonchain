@@ -160,7 +160,7 @@ describe('StellarService - sequence number integration', () => {
   describe('getNextSequenceNumber (private via invokeContract)', () => {
     it.skip('fetches from Horizon on first call and caches the result', async () => {
       mockLoadAccount.mockResolvedValue({
-        sequenceNumber: '42',
+        sequence: '42',
         accountId: () => signerKeypair.publicKey(),
       });
       mockSimulateTransaction.mockResolvedValue({
@@ -249,7 +249,7 @@ describe('StellarService - sequence number integration', () => {
         hash: 'retry-txn',
       });
       mockLoadAccount.mockResolvedValue({
-        sequenceNumber: '51',
+        sequence: '51',
         accountId: () => signerKeypair.publicKey(),
       });
 
@@ -314,7 +314,7 @@ describe('StellarService - sequence number integration', () => {
         successful: true,
       });
       mockLoadAccount.mockResolvedValue({
-        sequenceNumber: '31',
+        sequence: '31',
         accountId: () => signerKeypair.publicKey(),
       });
 
@@ -564,10 +564,14 @@ describe('StellarService - sequence number integration', () => {
   // ── submitTransaction (#1178) ──────────────────────────────────────────────
 
   describe('submitTransaction (#1178)', () => {
-    const { TransactionBuilder: RealTxBuilder, Networks, Asset, Account } =
-      jest.requireActual<typeof import('@stellar/stellar-sdk')>(
-        '@stellar/stellar-sdk',
-      );
+    const {
+      TransactionBuilder: RealTxBuilder,
+      Networks,
+      Asset,
+      Account,
+    } = jest.requireActual<typeof import('@stellar/stellar-sdk')>(
+      '@stellar/stellar-sdk',
+    );
 
     function buildSignedXdr(sourceKeypair: Keypair): string {
       const account = new Account(sourceKeypair.publicKey(), '100');
@@ -656,15 +660,14 @@ describe('StellarService - sequence number integration', () => {
   // ── simulateContractCall (#1179) ───────────────────────────────────────────
 
   describe('simulateContractCall (#1179)', () => {
-    const { xdr: realXdr, Address, nativeToScVal } =
-      jest.requireActual<typeof import('@stellar/stellar-sdk')>(
-        '@stellar/stellar-sdk',
-      );
+    const { Address, nativeToScVal } = jest.requireActual<
+      typeof import('@stellar/stellar-sdk')
+    >('@stellar/stellar-sdk');
 
     it('builds the simulation transaction with the supplied source account', async () => {
       const sourceAccount = Keypair.random().publicKey();
       mockLoadAccount.mockResolvedValue({
-        sequenceNumber: '77',
+        sequence: '77',
         accountId: () => sourceAccount,
       });
       mockSimulateTransaction.mockResolvedValue({
@@ -691,21 +694,17 @@ describe('StellarService - sequence number integration', () => {
       // The operation must target the requested contract and method.
       const op = simulatedTx.operations[0];
       expect(op.type).toBe('invokeHostFunction');
-      const invocation = realXdr.HostFunction.fromXDR(
-        op.func,
-        'base64',
-      ) as InstanceType<typeof realXdr.HostFunction>;
-      const invokeContractArgs = invocation.invokeContract();
+      const invokeContractArgs = op.func.invokeContract;
       expect(
-        Address.fromScAddress(invokeContractArgs.contractAddress()).toString(),
+        Address.fromScAddress(invokeContractArgs.contractAddress).toString(),
       ).toBe(CONTRACT_ID);
-      expect(invokeContractArgs.functionName().toString()).toBe('quote');
+      expect(String(invokeContractArgs.functionName)).toBe('quote');
     });
 
     it('returns the raw SimulateTransactionResponse', async () => {
       const sourceAccount = Keypair.random().publicKey();
       mockLoadAccount.mockResolvedValue({
-        sequenceNumber: '10',
+        sequence: '10',
         accountId: () => sourceAccount,
       });
       const simulationResponse = {
@@ -728,7 +727,7 @@ describe('StellarService - sequence number integration', () => {
     it('does not sign the transaction before simulating', async () => {
       const sourceAccount = Keypair.random().publicKey();
       mockLoadAccount.mockResolvedValue({
-        sequenceNumber: '5',
+        sequence: '5',
         accountId: () => sourceAccount,
       });
       mockSimulateTransaction.mockResolvedValue({
@@ -930,17 +929,21 @@ describe('StellarService - sequence number integration', () => {
   // ── buildContractTransaction (#1177) ───────────────────────────────────────
 
   describe('buildContractTransaction (#1177)', () => {
-    const { TransactionBuilder: ActualTransactionBuilder, xdr, Networks } =
-      jest.requireActual<typeof import('@stellar/stellar-sdk')>(
-        '@stellar/stellar-sdk',
-      );
+    const {
+      TransactionBuilder: ActualTransactionBuilder,
+      xdr,
+      Networks,
+    } = jest.requireActual<typeof import('@stellar/stellar-sdk')>(
+      '@stellar/stellar-sdk',
+    );
 
-    const SOURCE_ACCOUNT = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+    const SOURCE_ACCOUNT =
+      'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
     beforeEach(() => {
       mockLoadAccount.mockResolvedValue({
         accountId: () => SOURCE_ACCOUNT,
-        sequenceNumber: '12345',
+        sequence: '12345',
       });
       mockFeeStats.mockResolvedValue({ fee_charged: { p50: '200' } });
       mockSimulateTransaction.mockResolvedValue({
@@ -1062,7 +1065,7 @@ describe('StellarService - sequence number integration', () => {
     it('removes the address from the local account info cache', async () => {
       mockLoadAccount.mockResolvedValue({
         accountId: () => ADDRESS,
-        sequenceNumber: '10',
+        sequence: '10',
       });
 
       // Prime the cache

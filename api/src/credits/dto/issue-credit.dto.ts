@@ -47,7 +47,9 @@ export class IssueCreditDto {
   })
   @IsString()
   @IsNotEmpty()
-  @IsValidGeography({ message: 'geography must be a valid ISO 3166-1 alpha-2 country code' })
+  @IsValidGeography({
+    message: 'geography must be a valid ISO 3166-1 alpha-2 country code',
+  })
   geography: string;
 
   @ApiProperty({

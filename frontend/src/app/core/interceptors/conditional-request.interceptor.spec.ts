@@ -6,13 +6,14 @@ import {
   withInterceptors,
 } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { conditionalRequestInterceptor } from './conditional-request.interceptor';
+import { conditionalRequestInterceptor, clearCache } from './conditional-request.interceptor';
 
 describe('conditionalRequestInterceptor (Issue #966)', () => {
   let http: HttpClient;
   let controller: HttpTestingController;
 
   beforeEach(() => {
+    clearCache();
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withInterceptors([conditionalRequestInterceptor])),

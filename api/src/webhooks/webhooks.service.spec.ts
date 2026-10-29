@@ -166,7 +166,9 @@ function buildMockDataSource() {
       const offsetMatch = s.match(/OFFSET \$(\d+)/);
       let result = filtered;
       if (limitMatch) {
-        const limit = (params as unknown[])[Number(limitMatch[1]) - 1] as number;
+        const limit = (params as unknown[])[
+          Number(limitMatch[1]) - 1
+        ] as number;
         const offset = offsetMatch
           ? ((params as unknown[])[Number(offsetMatch[1]) - 1] as number)
           : 0;
@@ -292,7 +294,7 @@ function buildMockDataSource() {
    */
   function filterDeliveries(sql: string, params?: unknown[]) {
     let all = Object.values(deliveries);
-    const p = (params ?? []) as unknown[];
+    const p = params ?? [];
     let idx = 0;
 
     if (sql.includes('webhook_id = $')) {
@@ -667,8 +669,8 @@ describe('WebhooksService', () => {
 
       expect(result.total).toBe(5);
       expect(result.page).toBe(1);
-      expect(result.pageSize).toBe(20);
-      expect(result.items.length).toBe(5);
+      expect(result.pageSize).toBe(50);
+      expect(result.data.length).toBe(5);
     });
 
     it('filters by status', async () => {
@@ -677,7 +679,7 @@ describe('WebhooksService', () => {
       const result = await service.getDeliveries({ status: 'success' });
 
       expect(result.total).toBe(3);
-      expect(result.items.every((d) => d.status === 'success')).toBe(true);
+      expect(result.data.every((d) => d.status === 'success')).toBe(true);
     });
 
     it('filters by eventType', async () => {
@@ -688,7 +690,7 @@ describe('WebhooksService', () => {
       });
 
       expect(result.total).toBe(2);
-      expect(result.items.every((d) => d.event_type === 'credit_retired')).toBe(
+      expect(result.data.every((d) => d.eventType === 'credit_retired')).toBe(
         true,
       );
     });
@@ -702,7 +704,7 @@ describe('WebhooksService', () => {
       });
 
       expect(result.total).toBe(3);
-      expect(result.items.map((d) => d.id).sort()).toEqual([
+      expect(result.data.map((d) => d.id).sort()).toEqual([
         'del-2',
         'del-3',
         'del-4',
@@ -719,7 +721,7 @@ describe('WebhooksService', () => {
       });
 
       expect(result.total).toBe(1);
-      expect(result.items[0].id).toBe('del-5');
+      expect(result.data[0].id).toBe('del-5');
     });
 
     it('paginates results and reports total', async () => {
@@ -727,19 +729,19 @@ describe('WebhooksService', () => {
 
       const page1 = await service.getDeliveries({ page: 1, pageSize: 2 });
       expect(page1.total).toBe(5);
-      expect(page1.items.length).toBe(2);
+      expect(page1.data.length).toBe(2);
 
       const page3 = await service.getDeliveries({ page: 3, pageSize: 2 });
       expect(page3.total).toBe(5);
-      expect(page3.items.length).toBe(1);
+      expect(page3.data.length).toBe(1);
     });
 
     it('throws BadRequestException for invalid status', async () => {
       await seedDeliveries();
 
-      await expect(
-        service.getDeliveries({ status: 'bogus' }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.getDeliveries({ status: 'bogus' })).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('throws BadRequestException for invalid date', async () => {

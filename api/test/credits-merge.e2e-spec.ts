@@ -162,7 +162,9 @@ describe('CreditsController POST /credits/merge (e2e)', () => {
 
   it('returns 400 when caller does not own all credits', async () => {
     app = await createApp(() => {
-      throw new BadRequestException('Caller is not the owner of credit credit-bbb');
+      throw new BadRequestException(
+        'Caller is not the owner of credit credit-bbb',
+      );
     });
 
     await request(app.getHttpServer())
@@ -176,7 +178,9 @@ describe('CreditsController POST /credits/merge (e2e)', () => {
 
   it('returns 400 when any credit is not Active', async () => {
     app = await createApp(() => {
-      throw new BadRequestException('Credit credit-aaa is not Active (status: Retired)');
+      throw new BadRequestException(
+        'Credit credit-aaa is not Active (status: Retired)',
+      );
     });
 
     await request(app.getHttpServer())

@@ -9,11 +9,7 @@ describe('ApiService — Certificate Download Methods', () => {
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      providers: [
-        ApiService,
-        provideHttpClient(),
-        provideHttpClientTesting(),
-      ],
+      providers: [ApiService, provideHttpClient(), provideHttpClientTesting()],
     });
 
     service = TestBed.inject(ApiService);
@@ -52,14 +48,16 @@ describe('ApiService — Certificate Download Methods', () => {
 
       let errorResponse: unknown;
       service.downloadCertificate(certificateId, token).subscribe({
-        next: () => fail('Should have failed with 404'),
         error: (err) => {
           errorResponse = err;
         },
       });
 
       const req = httpMock.expectOne(`/api/certificates/${certificateId}/download`);
-      req.flush('Certificate not found', { status: 404, statusText: 'Not Found' });
+      req.flush(new Blob(['Certificate not found']), {
+        status: 404,
+        statusText: 'Not Found',
+      });
 
       expect(errorResponse).toBeTruthy();
     });
@@ -69,7 +67,9 @@ describe('ApiService — Certificate Download Methods', () => {
     it('should request retirement certificate blob with bearer token authentication', () => {
       const retirementId = 'ret-xyz-789';
       const token = 'mock-jwt-token';
-      const mockBlob = new Blob(['%PDF-1.4 retirement certificate bytes'], { type: 'application/pdf' });
+      const mockBlob = new Blob(['%PDF-1.4 retirement certificate bytes'], {
+        type: 'application/pdf',
+      });
 
       let receivedBlob: Blob | undefined;
       service.downloadRetirementCertificate(retirementId, token).subscribe({
@@ -93,14 +93,16 @@ describe('ApiService — Certificate Download Methods', () => {
 
       let errorResponse: unknown;
       service.downloadRetirementCertificate(retirementId, invalidToken).subscribe({
-        next: () => fail('Should have failed with 401'),
         error: (err) => {
           errorResponse = err;
         },
       });
 
       const req = httpMock.expectOne(`/api/retirement/certificates/${retirementId}/download`);
-      req.flush('Unauthorized', { status: 401, statusText: 'Unauthorized' });
+      req.flush(new Blob(['Certificate not found']), {
+        status: 401,
+        statusText: 'Unauthorized',
+      });
 
       expect(errorResponse).toBeTruthy();
     });

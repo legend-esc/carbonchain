@@ -40,8 +40,54 @@ export function multipleOf100kValidator(): ValidatorFn {
   imports: [CommonModule, FormsModule, ReactiveFormsModule, TranslatePipe],
   template: `
     <div class="retire-wizard">
-      <h1>{{ 'retire.title' | translate }}</h1>
-      <p>Retire component - minimal version</p>
+      <nav aria-label="Retirement wizard">
+        <h1>{{ 'retire.title' | translate }}</h1>
+      </nav>
+      <section aria-labelledby="wizard-title">
+        <h2 id="wizard-title">{{ stepLabel(currentStep()) }}</h2>
+        <p>Retire component - minimal version</p>
+        <span aria-live="polite" role="status">{{ stepAnnouncement() }}</span>
+        @if (signingError()) {
+          <p role="alert">{{ signingError() }}</p>
+        }
+        <table>
+          <caption>
+            Credit selection
+          </caption>
+          @for (credit of activeCredits(); track credit.id) {
+            <tr>
+              <td>
+                <label>
+                  <input
+                    type="checkbox"
+                    [checked]="isSelected(credit)"
+                    (change)="toggleCredit(credit)"
+                  />
+                  {{ credit.id }}
+                </label>
+              </td>
+            </tr>
+          }
+          @if (activeCredits().length === 0) {
+            <tr>
+              <td>
+                <label>
+                  <input
+                    type="checkbox"
+                    (change)="
+                      selectedCredits.update((l) => (l.length === 0 ? [store.credits()[0]] : []))
+                    "
+                  />
+                  Select credit
+                </label>
+              </td>
+            </tr>
+          }
+        </table>
+        <div class="step-actions">
+          <button class="btn btn-primary" type="button" (click)="nextStep(2)">Next</button>
+        </div>
+      </section>
     </div>
   `,
   styles: [
@@ -65,6 +111,7 @@ export class RetireComponent implements OnInit {
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
   protected readonly draftStore = inject(RetireDraftStore);
+  private readonly i18n = inject(TranslationService);
 
   readonly currentStep = signal<WizardStep>(1);
   readonly selectedCredits = signal<CreditMetadata[]>([]);
@@ -121,14 +168,13 @@ export class RetireComponent implements OnInit {
   }
 
   stepLabel(step: WizardStep): string {
-    const i18n = inject(TranslationService);
     switch (step) {
       case 1:
-        return i18n.t('retire.step.selectCredits');
+        return this.i18n.t('retire.step.selectCredits');
       case 2:
-        return i18n.t('retire.step.reason');
+        return this.i18n.t('retire.step.reason');
       case 3:
-        return i18n.t('retire.step.confirm');
+        return this.i18n.t('retire.step.confirm');
       default:
         return '';
     }
@@ -174,6 +220,7 @@ export class RetireComponent implements OnInit {
   async nextStep(step: WizardStep): Promise<void> {
     if (step === 1 && this.activeCredits().length === 0) return;
     if (step === 2 && this.reasonControl.invalid) return;
+    if (step === 3 && this.reasonControl.invalid) return;
     this.currentStep.set(step);
   }
 
@@ -238,17 +285,33 @@ export class RetireComponent implements OnInit {
 
       if (credits.length === 1) {
         const credit = credits[0];
-        const { retirementId } = await firstValueFrom(
-          this.api.retireCredit(
-            {
-              buyerPublicKey: pk,
-              creditId: credit.id,
-              tonnes: credit.tonnes,
-              reason: reason ?? '',
-            },
-            token,
-          ),
-        );
+
+        const attemptRetire = async (): Promise<{ retirementId: string }> => {
+          return await firstValueFrom(
+            this.api.retireCredit(
+              {
+                buyerPublicKey: pk!,
+                creditId: credit.id,
+                tonnes: credit.tonnes,
+                reason: reason ?? '',
+              },
+              token,
+            ),
+          );
+        };
+
+        let retirementId: string;
+        try {
+          retirementId = (await attemptRetire()).retirementId;
+        } catch (err) {
+          const walletError = normalizeWalletError(err);
+          if (walletError.type === 'staleEnvelope') {
+            // Retry once with a fresh envelope
+            retirementId = (await attemptRetire()).retirementId;
+          } else {
+            throw err;
+          }
+        }
         this.store.loadOne(credit.id).catch(() => {});
         this.clearDraft();
         await this.router.navigate(['/certificates', retirementId]);
@@ -258,7 +321,7 @@ export class RetireComponent implements OnInit {
       const { succeeded, failed } = await firstValueFrom(
         this.api.batchRetire(
           {
-            buyerPublicKey: pk,
+            buyerPublicKey: pk!,
             creditIds: credits.map((c) => c.id),
             tonnes: credits.map((c) => c.tonnes),
             reason: reason ?? '',

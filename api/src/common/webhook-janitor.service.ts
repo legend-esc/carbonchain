@@ -121,7 +121,7 @@ export class WebhookJanitorService implements OnModuleInit, OnModuleDestroy {
       );
 
       const all = await this.webhooksService.getDeliveries();
-      const toDelete = all.filter((d) => d.createdAt < cutoff);
+      const toDelete = all.data.filter((d) => d.createdAt < cutoff);
 
       for (const delivery of toDelete) {
         await this.webhooksService.deleteDelivery(delivery.id);

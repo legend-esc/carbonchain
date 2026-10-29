@@ -53,8 +53,7 @@ export class AuthController {
         transaction: {
           type: 'string',
           description: 'Base64-encoded challenge transaction XDR',
-          example:
-            'AAAAAgAAAAB...base64-xdr...AAAAAA==',
+          example: 'AAAAAgAAAAB...base64-xdr...AAAAAA==',
         },
         network_passphrase: {
           type: 'string',
@@ -84,7 +83,10 @@ export class AuthController {
       type: 'object',
       properties: {
         statusCode: { type: 'number', example: 429 },
-        message: { type: 'string', example: 'ThrottlerException: Too Many Requests' },
+        message: {
+          type: 'string',
+          example: 'ThrottlerException: Too Many Requests',
+        },
         error: { type: 'string', example: 'Too Many Requests' },
       },
     },
@@ -381,7 +383,10 @@ export class AuthController {
       type: 'object',
       properties: {
         statusCode: { type: 'number', example: 429 },
-        message: { type: 'string', example: 'ThrottlerException: Too Many Requests' },
+        message: {
+          type: 'string',
+          example: 'ThrottlerException: Too Many Requests',
+        },
         error: { type: 'string', example: 'Too Many Requests' },
       },
     },
@@ -459,7 +464,10 @@ export class AuthController {
       type: 'object',
       properties: {
         statusCode: { type: 'number', example: 429 },
-        message: { type: 'string', example: 'ThrottlerException: Too Many Requests' },
+        message: {
+          type: 'string',
+          example: 'ThrottlerException: Too Many Requests',
+        },
         error: { type: 'string', example: 'Too Many Requests' },
       },
     },
@@ -523,7 +531,10 @@ export class AuthController {
       type: 'object',
       properties: {
         statusCode: { type: 'number', example: 429 },
-        message: { type: 'string', example: 'ThrottlerException: Too Many Requests' },
+        message: {
+          type: 'string',
+          example: 'ThrottlerException: Too Many Requests',
+        },
         error: { type: 'string', example: 'Too Many Requests' },
       },
     },
@@ -573,11 +584,23 @@ export class AuthController {
     schema: {
       type: 'object',
       properties: {
-        active: { type: 'boolean', description: 'Whether the token is currently valid' },
-        account: { type: 'string', description: 'Stellar account address (when active)' },
+        active: {
+          type: 'boolean',
+          description: 'Whether the token is currently valid',
+        },
+        account: {
+          type: 'string',
+          description: 'Stellar account address (when active)',
+        },
         jti: { type: 'string', description: 'Token identifier' },
-        exp: { type: 'number', description: 'Expiration timestamp (access tokens only)' },
-        iat: { type: 'number', description: 'Issued-at timestamp (access tokens only)' },
+        exp: {
+          type: 'number',
+          description: 'Expiration timestamp (access tokens only)',
+        },
+        iat: {
+          type: 'number',
+          description: 'Issued-at timestamp (access tokens only)',
+        },
         token_type: {
           type: 'string',
           enum: ['access', 'refresh'],
@@ -618,7 +641,10 @@ export class AuthController {
       type: 'object',
       properties: {
         statusCode: { type: 'number', example: 429 },
-        message: { type: 'string', example: 'ThrottlerException: Too Many Requests' },
+        message: {
+          type: 'string',
+          example: 'ThrottlerException: Too Many Requests',
+        },
         error: { type: 'string', example: 'Too Many Requests' },
       },
     },
@@ -632,9 +658,7 @@ export class AuthController {
   @Throttle({ limit: 30, ttl: 60_000 })
   @Post('introspect')
   @HttpCode(HttpStatus.OK)
-  async introspect(
-    @Body() body: IntrospectTokenDto,
-  ): Promise<{
+  async introspect(@Body() body: IntrospectTokenDto): Promise<{
     active: boolean;
     account?: string;
     jti?: string;
@@ -646,5 +670,34 @@ export class AuthController {
       throw new Error('token is required');
     }
     return this.authService.introspectToken(body.token);
+  }
+
+  /**
+   * Throws `TooManyRequestsException` if the account extracted from the
+   * challenge XDR is currently locked due to too many failed auth attempts.
+   */
+  private async assertNotLocked(transaction: string): Promise<void> {
+    try {
+      const account = this.authService.extractAccountFromChallenge(transaction);
+      if (!account) return;
+      const { locked, retryAfter } =
+        await this.authService.isAccountLocked(account);
+      if (locked) {
+        throw Object.assign(
+          new HttpException(
+            {
+              message:
+                'Account temporarily locked due to too many failed attempts',
+              retryAfter,
+            },
+            429,
+          ),
+          { retryAfter },
+        );
+      }
+    } catch (err) {
+      if ((err as { status?: number }).status === 429) throw err;
+      // Ignore parse errors — let the main handler produce the right error
+    }
   }
 }

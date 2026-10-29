@@ -158,7 +158,10 @@ export class RetirementController {
   @ApiOperation({ summary: 'Get on-chain certificate IPFS hash' })
   @ApiResponse({ status: 200, description: 'IPFS hash of the certificate' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 404, description: 'Certificate hash not found on-chain' })
+  @ApiResponse({
+    status: 404,
+    description: 'Certificate hash not found on-chain',
+  })
   @UseGuards(JwtAuthGuard)
   @Get('certificate/:retirementId/ipfs')
   async getCertificateIpfsHash(
@@ -175,8 +178,7 @@ export class RetirementController {
   private async buildCertificateStream(
     retirementId: string,
   ): Promise<StreamableFile> {
-    const retirement =
-      await this.retirementService.getRetirement(retirementId);
+    const retirement = await this.retirementService.getRetirement(retirementId);
     if (!retirement) {
       throw new NotFoundException(
         `Retirement record ${retirementId} not found`,

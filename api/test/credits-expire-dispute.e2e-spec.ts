@@ -13,11 +13,13 @@ import { CreditStatus } from '../src/shared';
 
 // ─── Shared mock credit factory ───────────────────────────────────────────────
 
-function makeMockCredit(overrides: Partial<{
-  id: string;
-  status: CreditStatus;
-  ipfs_hash: string;
-}> = {}) {
+function makeMockCredit(
+  overrides: Partial<{
+    id: string;
+    status: CreditStatus;
+    ipfs_hash: string;
+  }> = {},
+) {
   return {
     id: overrides.id ?? 'credit-abc',
     project_id: 'PROJ-001',
@@ -48,7 +50,9 @@ describe('POST /credits/:id/expire (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
   });
 
@@ -82,9 +86,12 @@ describe('POST /credits/:id/expire (e2e)', () => {
 
   it('400 — cannot expire a Retired credit', async () => {
     mockExpire.mockRejectedValue(
-      Object.assign(new Error('Credit cannot be expired — current status: Retired'), {
-        status: 400,
-      }),
+      Object.assign(
+        new Error('Credit cannot be expired — current status: Retired'),
+        {
+          status: 400,
+        },
+      ),
     );
 
     await request(app.getHttpServer())
@@ -96,9 +103,12 @@ describe('POST /credits/:id/expire (e2e)', () => {
 
   it('400 — cannot expire an already Expired credit', async () => {
     mockExpire.mockRejectedValue(
-      Object.assign(new Error('Credit cannot be expired — current status: Expired'), {
-        status: 400,
-      }),
+      Object.assign(
+        new Error('Credit cannot be expired — current status: Expired'),
+        {
+          status: 400,
+        },
+      ),
     );
 
     await request(app.getHttpServer())
@@ -125,7 +135,9 @@ describe('POST /credits/:id/dispute (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
   });
 
@@ -166,9 +178,12 @@ describe('POST /credits/:id/dispute (e2e)', () => {
 
   it('400 — cannot dispute an already Disputed credit', async () => {
     mockDispute.mockRejectedValue(
-      Object.assign(new Error('Credit cannot be disputed — current status: Disputed'), {
-        status: 400,
-      }),
+      Object.assign(
+        new Error('Credit cannot be disputed — current status: Disputed'),
+        {
+          status: 400,
+        },
+      ),
     );
 
     await request(app.getHttpServer())
@@ -183,9 +198,12 @@ describe('POST /credits/:id/dispute (e2e)', () => {
 
   it('400 — cannot dispute a Retired credit', async () => {
     mockDispute.mockRejectedValue(
-      Object.assign(new Error('Credit cannot be disputed — current status: Retired'), {
-        status: 400,
-      }),
+      Object.assign(
+        new Error('Credit cannot be disputed — current status: Retired'),
+        {
+          status: 400,
+        },
+      ),
     );
 
     await request(app.getHttpServer())
@@ -215,7 +233,9 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
   });
 
@@ -275,9 +295,12 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
 
   it('400 — cannot resolve a non-Disputed credit', async () => {
     mockResolve.mockRejectedValue(
-      Object.assign(new Error('Credit is not in Disputed status — current status: Active'), {
-        status: 400,
-      }),
+      Object.assign(
+        new Error('Credit is not in Disputed status — current status: Active'),
+        {
+          status: 400,
+        },
+      ),
     );
 
     await request(app.getHttpServer())

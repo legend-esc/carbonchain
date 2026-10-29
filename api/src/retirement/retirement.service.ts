@@ -468,7 +468,6 @@ export class RetirementService {
     return {
       retirementId,
       certificateIpfsHash: certificateIpfsHash ?? '',
-      certificateUrl: `/retirement/certificate/${retirementId}`,
       ...(estimatedFeeStroops !== undefined ? { estimatedFeeStroops } : {}),
     };
   }

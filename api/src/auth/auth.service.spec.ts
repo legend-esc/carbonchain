@@ -43,11 +43,23 @@ function createFakeCache() {
     return true;
   });
 
+  const mget = jest.fn(async <T>(keys: string[]): Promise<Array<T | null>> => {
+    return keys.map((key) => {
+      const entry = store.get(key);
+      if (!entry) return null;
+      if (entry.expiry && Math.floor(Date.now() / 1000) > entry.expiry) {
+        store.delete(key);
+        return null;
+      }
+      return entry.value as T;
+    });
+  });
+
   const clear = (): void => {
     store.clear();
   };
 
-  return { set, get, del, clear };
+  return { set, get, del, clear, mget };
 }
 
 type FakeCache = ReturnType<typeof createFakeCache>;

@@ -1,5 +1,5 @@
 import pino from 'pino';
-import { RequestContextStore } from './request-context.store';
+import { RequestContextStore } from './request-context';
 
 const isProduction = process.env.NODE_ENV === 'production';
 

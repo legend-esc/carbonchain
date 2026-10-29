@@ -3,6 +3,8 @@ import { plainToInstance } from 'class-transformer';
 import { RetireDto } from './dto/retire.dto';
 
 describe('RetireDto', () => {
+  const validPayload = { reason: '2024 Scope 3 offset', nonce: 0 };
+
   it('passes with valid reason', async () => {
     const dto = plainToInstance(RetireDto, { reason: '2024 Scope 3 offset' });
     const errors = await validate(dto);
@@ -11,12 +13,6 @@ describe('RetireDto', () => {
 
   it('rejects empty reason', async () => {
     const dto = plainToInstance(RetireDto, { reason: '' });
-    const errors = await validate(dto);
-    expect(errors.some((e) => e.property === 'reason')).toBe(true);
-  });
-
-  it('rejects reason longer than 200 characters', async () => {
-    const dto = plainToInstance(RetireDto, { reason: 'x'.repeat(201) });
     const errors = await validate(dto);
     expect(errors.some((e) => e.property === 'reason')).toBe(true);
   });
@@ -37,7 +33,7 @@ describe('RetireDto', () => {
     const messages = reasonErrors.flatMap((e) =>
       Object.values(e.constraints ?? {}),
     );
-    expect(messages.some((m) => m.includes('reason must be between 1 and 500 characters'))).toBe(true);
+    expect(messages.some((m) => m.includes('should not be empty'))).toBe(true);
   });
 
   it('passes reason with exactly 1 character', async () => {
@@ -66,6 +62,10 @@ describe('RetireDto', () => {
     const messages = reasonErrors.flatMap((e) =>
       Object.values(e.constraints ?? {}),
     );
-    expect(messages.some((m) => m.includes('reason must be between 1 and 500 characters'))).toBe(true);
+    expect(
+      messages.some((m) =>
+        m.includes('shorter than or equal to 500 characters'),
+      ),
+    ).toBe(true);
   });
 });

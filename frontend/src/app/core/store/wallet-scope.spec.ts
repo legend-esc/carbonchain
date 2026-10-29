@@ -60,7 +60,7 @@ const OFFERS = {
     price_xlm: '20000000',
     status: 'open',
   },
-} as never;
+};
 
 describe('Issue #965 — cache keyed by (network, address)', () => {
   let wallet: StellarWalletService;
@@ -241,8 +241,8 @@ describe('Issue #965 — cache keyed by (network, address)', () => {
   it("never files another account's rows even if the API returns them", async () => {
     await connect(USER_A);
     // A misbehaving API hands back B's credit under A's request.
-    api.getCredit.mockImplementation((id: string) => of(CREDITS['credit-b1']));
-    api.listCreditsByOwner.mockReturnValue(of({ data: ['credit-b1'], offset: 0, limit: 50 }));
+    api['getCredit'].mockImplementation((id: string) => of(CREDITS['credit-b1']));
+    api['listCreditsByOwner'].mockReturnValue(of({ data: ['credit-b1'], offset: 0, limit: 50 }));
 
     const store = TestBed.runInInjectionContext(() => TestBed.inject(CreditStore));
     await TestBed.runInInjectionContext(() => store.loadByOwner(USER_A));

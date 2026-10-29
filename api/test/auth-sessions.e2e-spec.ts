@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ExecutionContext, CanActivate } from '@nestjs/common';
+import {
+  INestApplication,
+  ExecutionContext,
+  CanActivate,
+} from '@nestjs/common';
 import * as request from 'supertest';
 import { AuthModule } from '../src/auth/auth.module';
 import { AuthService } from '../src/auth/auth.service';
@@ -29,12 +33,16 @@ class InMemoryCacheService {
   }
 
   async mget(keys: string[]): Promise<(string | null)[]> {
-    return keys.map((key) => (this.store.has(key) ? (this.store.get(key) as string) : null));
+    return keys.map((key) =>
+      this.store.has(key) ? (this.store.get(key) as string) : null,
+    );
   }
 
   async scanKeys(pattern: string): Promise<string[]> {
     const regex = new RegExp(
-      '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+      '^' +
+        pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') +
+        '$',
     );
     return Array.from(this.store.keys()).filter((key) => regex.test(key));
   }
@@ -55,7 +63,11 @@ class FakeJwtAuthGuard implements CanActivate {
     if (!account) {
       return false;
     }
-    req.user = { account, sub: account, role: req.headers['x-test-role'] || 'user' };
+    req.user = {
+      account,
+      sub: account,
+      role: req.headers['x-test-role'] || 'user',
+    };
     return true;
   }
 }
@@ -187,7 +199,10 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
       // Ensure a measurable time difference.
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await authService.rotateRefreshToken(pair.refreshToken, { userAgent, ip });
+      await authService.rotateRefreshToken(pair.refreshToken, {
+        userAgent,
+        ip,
+      });
 
       const after = await authService.getActiveSessions(account);
       expect(after.length).toBe(1);

@@ -149,9 +149,13 @@ describe('CreditStore — optimistic splitCredit', () => {
     splitCredit.mockReturnValue(throwError(() => new Error('Internal Server Error')));
 
     await TestBed.runInInjectionContext(() => store.loadOne('credit-1'));
-    await TestBed.runInInjectionContext(() =>
-      store.splitCredit('credit-1', '500000', 'test-token'),
-    );
+    try {
+      await TestBed.runInInjectionContext(() =>
+        store.splitCredit('credit-1', '500000', 'test-token'),
+      );
+    } catch {
+      // splitCredit re-throws after handling the error
+    }
 
     // Should be back to original state: 1 active credit
     expect(store.credits().length).toBe(1);
@@ -161,24 +165,41 @@ describe('CreditStore — optimistic splitCredit', () => {
   });
 
   it('shows error toast when credit not found', async () => {
-    await TestBed.runInInjectionContext(() =>
-      store.splitCredit('nonexistent', '500000', 'test-token'),
-    );
+    try {
+      await TestBed.runInInjectionContext(() =>
+        store.splitCredit('nonexistent', '500000', 'test-token'),
+      );
+    } catch {
+      // splitCredit re-throws after handling the error
+    }
 
     expect(showError).toHaveBeenCalledWith('Credit not found');
     expect(store.credits().length).toBe(0);
   });
 });
 
-const CREDIT_A = { ...ACTIVE_CREDIT, id: 'credit-a', project_id: 'proj-1', tonnes: '1000000' };
+const CREDIT_A = {
+  ...ACTIVE_CREDIT,
+  id: 'credit-a',
+  project_id: 'proj-1',
+  tonnes: '1000000',
+  owner: 'GABC...WALLET',
+};
 const CREDIT_B = {
   ...ACTIVE_CREDIT,
   id: 'credit-b',
   project_id: 'proj-1',
   tonnes: '2000000',
   status: CreditStatus.Retired,
+  owner: 'GABC...WALLET',
 };
-const CREDIT_C = { ...ACTIVE_CREDIT, id: 'credit-c', project_id: 'proj-2', tonnes: '500000' };
+const CREDIT_C = {
+  ...ACTIVE_CREDIT,
+  id: 'credit-c',
+  project_id: 'proj-2',
+  tonnes: '500000',
+  owner: 'GABC...WALLET',
+};
 
 describe('CreditStore — loadByProject', () => {
   let store: CreditStore;

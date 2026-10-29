@@ -54,7 +54,8 @@ export class OracleController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Oracle health info — paused, oracle count, threshold, last updates',
+    description:
+      'Oracle health info — paused, oracle count, threshold, last updates',
     type: Object,
   })
   @ApiResponse({ status: 503, description: 'Oracle contract not initialized' })
@@ -75,10 +76,22 @@ export class OracleController {
     status: 201,
     description: 'MRV data ingested, returns anomaly flag',
   })
-  @ApiResponse({ status: 400, description: 'Invalid payload (bad tonnes, bad timestamp, or bad nonce)' })
-  @ApiResponse({ status: 401, description: 'Invalid oracle signature or stale timestamp' })
-  @ApiResponse({ status: 403, description: 'IP address not in webhook allowlist' })
-  @ApiResponse({ status: 503, description: 'Oracle contract not initialized or paused' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid payload (bad tonnes, bad timestamp, or bad nonce)',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid oracle signature or stale timestamp',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'IP address not in webhook allowlist',
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'Oracle contract not initialized or paused',
+  })
   @UseGuards(WebhookIpAllowlistGuard)
   @Post('mrv')
   ingestMrv(@Body() dto: MrvWebhookDto): Promise<{ anomaly: boolean }> {
@@ -99,7 +112,9 @@ export class OracleController {
    *
    * Issue #475
    */
-  @ApiOperation({ summary: 'Get paginated MRV history for a project (Issue #475)' })
+  @ApiOperation({
+    summary: 'Get paginated MRV history for a project (Issue #475)',
+  })
   @ApiQuery({
     name: 'page',
     required: false,
@@ -140,16 +155,21 @@ export class OracleController {
    * Issue #476
    */
   @ApiOperation({
-    summary: 'Get aggregated MRV sequestration metrics for a project (Issue #476)',
+    summary:
+      'Get aggregated MRV sequestration metrics for a project (Issue #476)',
   })
   @ApiQuery({
     name: 'excludeAnomalies',
     required: false,
     type: String,
-    description: 'Set to "true" to exclude anomalous readings from totalTonnes (default false)',
+    description:
+      'Set to "true" to exclude anomalous readings from totalTonnes (default false)',
     example: 'true',
   })
-  @ApiResponse({ status: 200, description: 'Aggregated MRV metrics with monthly breakdown' })
+  @ApiResponse({
+    status: 200,
+    description: 'Aggregated MRV metrics with monthly breakdown',
+  })
   @ApiResponse({ status: 404, description: 'Project not found' })
   @Get(':projectId/aggregate')
   getAggregate(
@@ -182,7 +202,10 @@ export class OracleController {
     },
   })
   @ApiResponse({ status: 200, description: 'Threshold updated' })
-  @ApiResponse({ status: 400, description: 'Invalid thresholdBps (must be integer 0–10000)' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid thresholdBps (must be integer 0–10000)',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Admin only' })
   @UseGuards(JwtAuthGuard, AdminGuard)

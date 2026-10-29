@@ -59,7 +59,9 @@ describe('Webhook rotation & DLQ (e2e)', () => {
       .compile();
 
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
 
     webhooksService = moduleRef.get<WebhooksService>(WebhooksService);
@@ -143,7 +145,7 @@ describe('Webhook rotation & DLQ (e2e)', () => {
     it('resets failed deliveries globally and reactivates webhooks', async () => {
       const retrySpy = jest
         .spyOn(webhooksService, 'retryFailedDeliveries')
-        .mockResolvedValue({ retried: 3, reactivated: 1 } as any);
+        .mockResolvedValue({ retried: 3, reactivated: 1 });
 
       const res = await request(app.getHttpServer())
         .post('/webhooks/retry-failed')
@@ -157,7 +159,7 @@ describe('Webhook rotation & DLQ (e2e)', () => {
     it('resets failed deliveries for a specific webhook', async () => {
       const retrySpy = jest
         .spyOn(webhooksService, 'retryFailedDeliveries')
-        .mockResolvedValue({ retried: 2, reactivated: 1 } as any);
+        .mockResolvedValue({ retried: 2, reactivated: 1 });
 
       const res = await request(app.getHttpServer())
         .post('/webhooks/retry-failed')
@@ -176,9 +178,9 @@ describe('Webhook rotation & DLQ (e2e)', () => {
         .mockImplementation(async (id?: string) => {
           if (id === webhookId || id === undefined) {
             deactivatedRow.active = true;
-            return { retried: 1, reactivated: 1 } as any;
+            return { retried: 1, reactivated: 1 };
           }
-          return { retried: 0, reactivated: 0 } as any;
+          return { retried: 0, reactivated: 0 };
         });
 
       const res = await request(app.getHttpServer())
@@ -193,7 +195,7 @@ describe('Webhook rotation & DLQ (e2e)', () => {
     it('returns zero counts when there are no failed deliveries', async () => {
       jest
         .spyOn(webhooksService, 'retryFailedDeliveries')
-        .mockResolvedValue({ retried: 0, reactivated: 0 } as any);
+        .mockResolvedValue({ retried: 0, reactivated: 0 });
 
       const res = await request(app.getHttpServer())
         .post('/webhooks/retry-failed')

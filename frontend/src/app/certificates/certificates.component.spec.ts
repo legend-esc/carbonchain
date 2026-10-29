@@ -24,8 +24,21 @@ describe('CertificatesComponent — PDF Blob Response Handling', () => {
   };
 
   const actualPdfBuffer = new Uint8Array([
-    0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, // %PDF-1.4 header
-    0x0a, 0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a,
+    0x25,
+    0x50,
+    0x44,
+    0x46,
+    0x2d,
+    0x31,
+    0x2e,
+    0x34, // %PDF-1.4 header
+    0x0a,
+    0x25,
+    0xe2,
+    0xe3,
+    0xcf,
+    0xd3,
+    0x0a,
   ]);
   const realPdfBlob = new Blob([actualPdfBuffer], { type: 'application/pdf' });
 
@@ -53,7 +66,9 @@ describe('CertificatesComponent — PDF Blob Response Handling', () => {
       token: signal('jwt-token-xyz'),
     };
 
-    createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:http://localhost/mock-pdf-uuid');
+    createObjectURLSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:http://localhost/mock-pdf-uuid');
     revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     TestBed.configureTestingModule({

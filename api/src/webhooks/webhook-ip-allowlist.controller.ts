@@ -37,18 +37,19 @@ import {
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('oracle/webhook/allowlist')
 export class WebhookIpAllowlistController {
-  constructor(
-    private readonly allowlistService: WebhookIpAllowlistService,
-  ) {}
+  constructor(private readonly allowlistService: WebhookIpAllowlistService) {}
 
-  @ApiOperation({ summary: 'Add an IP/CIDR to the webhook allowlist (Issue #1170)' })
+  @ApiOperation({
+    summary: 'Add an IP/CIDR to the webhook allowlist (Issue #1170)',
+  })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
         cidr: {
           type: 'string',
-          description: 'IP address or CIDR range to allow (e.g. "10.0.0.1" or "192.168.0.0/24")',
+          description:
+            'IP address or CIDR range to allow (e.g. "10.0.0.1" or "192.168.0.0/24")',
           example: '192.168.0.0/24',
         },
       },
@@ -68,8 +69,14 @@ export class WebhookIpAllowlistController {
     return this.allowlistService.addEntry(body.cidr);
   }
 
-  @ApiOperation({ summary: 'List all webhook IP allowlist entries (Issue #1170)' })
-  @ApiResponse({ status: 200, description: 'List of allowlist entries', type: Array })
+  @ApiOperation({
+    summary: 'List all webhook IP allowlist entries (Issue #1170)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of allowlist entries',
+    type: Array,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Admin only' })
   @Get()
@@ -77,13 +84,18 @@ export class WebhookIpAllowlistController {
     return this.allowlistService.listEntries();
   }
 
-  @ApiOperation({ summary: 'Remove an IP/CIDR from the webhook allowlist (Issue #1170)' })
+  @ApiOperation({
+    summary: 'Remove an IP/CIDR from the webhook allowlist (Issue #1170)',
+  })
   @ApiParam({
     name: 'cidr',
     description: 'URL-encoded IP or CIDR to remove',
     example: '192.168.0.0%2F24',
   })
-  @ApiResponse({ status: 200, description: 'IP/CIDR removed from the allowlist' })
+  @ApiResponse({
+    status: 200,
+    description: 'IP/CIDR removed from the allowlist',
+  })
   @ApiResponse({ status: 404, description: 'Entry not found in the allowlist' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Admin only' })

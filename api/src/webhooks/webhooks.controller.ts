@@ -10,21 +10,21 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiQuery,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import type {
   Webhook,
   WebhookDelivery,
   WebhookRegistrationResult,
   WebhookMetrics,
+  PaginatedWebhookDeliveries,
+  RetryFailedDeliveriesResult,
+  WebhookDeliveryFilters,
+  WebhookSecretRotationResult,
 } from './webhooks.service';
 import { WebhooksService } from './webhooks.service';
 import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
-import { AdminGuard } from '../auth/admin.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
 import {
   WebhookJanitorService,
   JanitorStats,
@@ -132,21 +132,10 @@ export class WebhooksController {
     description: 'Unauthorized or client IP not in allowlist',
   })
   @Get('deliveries')
-  async getFilteredDeliveries(@Query() query: Record<string, unknown>): Promise<{
-    data: WebhookDelivery[];
-    total: number;
-    page: number;
-    pageSize: number;
-  }> {
-    const filters: {
-      webhookId?: string;
-      status?: string;
-      eventType?: string;
-      from?: Date;
-      to?: Date;
-      page?: number;
-      pageSize?: number;
-    } = {};
+  async getFilteredDeliveries(
+    @Query() query: Record<string, unknown>,
+  ): Promise<PaginatedWebhookDeliveries> {
+    const filters: WebhookDeliveryFilters = {};
 
     if (query.webhookId !== undefined && query.webhookId !== '') {
       if (typeof query.webhookId !== 'string') {
@@ -159,7 +148,15 @@ export class WebhooksController {
       if (typeof query.status !== 'string') {
         throw new BadRequestException('status must be a string');
       }
-      filters.status = query.status;
+      const validStatuses = ['pending', 'success', 'failed'] as const;
+      if (
+        !validStatuses.includes(query.status as (typeof validStatuses)[number])
+      ) {
+        throw new BadRequestException(
+          'status must be one of: pending, success, failed',
+        );
+      }
+      filters.status = query.status as 'pending' | 'success' | 'failed';
     }
 
     if (query.eventType !== undefined && query.eventType !== '') {
@@ -218,7 +215,10 @@ export class WebhooksController {
 
   @ApiOperation({ summary: 'Get webhook by ID' })
   @ApiResponse({ status: 200, description: 'Webhook details' })
-  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request or invalid webhook ID',
+  })
   @ApiResponse({
     status: 401,
     description: 'Unauthorized or client IP not in allowlist',
@@ -235,7 +235,10 @@ export class WebhooksController {
 
   @ApiOperation({ summary: 'Delete a webhook' })
   @ApiResponse({ status: 200, description: 'Webhook deleted' })
-  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request or invalid webhook ID',
+  })
   @ApiResponse({
     status: 401,
     description: 'Unauthorized or client IP not in allowlist',
@@ -260,7 +263,10 @@ export class WebhooksController {
     description:
       'Secret rotated. The new `secret` is returned only in this response; the old secret is invalidated immediately.',
   })
-  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request or invalid webhook ID',
+  })
   @ApiResponse({
     status: 401,
     description: 'Unauthorized or client IP not in allowlist',
@@ -271,7 +277,7 @@ export class WebhooksController {
   @Post(':id/rotate-secret')
   async rotateWebhookSecret(
     @Param('id') id: string,
-  ): Promise<WebhookRegistrationResult> {
+  ): Promise<WebhookSecretRotationResult> {
     const result = await this.webhooksService.rotateWebhookSecret(id);
     if (!result) {
       throw new NotFoundException(`Webhook ${id} not found`);
@@ -293,10 +299,12 @@ export class WebhooksController {
     status: 201,
     description:
       'Failed deliveries requeued for retry; deactivated webhooks reactivated. ' +
-      'Retried deliveries are re-signed with HMAC-SHA256 (`x-carbonchain-signature: ` +
-      'sha256=<hex>`) and carry `x-carbonchain-timestamp` and `x-carbonchain-retry` headers.',
+      'Retried deliveries are re-signed with HMAC-SHA256 (`x-carbonchain-signature: sha256=<hex>`) and carry `x-carbonchain-timestamp` and `x-carbonchain-retry` headers.',
   })
-  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request or invalid webhook ID',
+  })
   @ApiResponse({
     status: 401,
     description: 'Unauthorized or client IP not in allowlist',
@@ -308,21 +316,39 @@ export class WebhooksController {
   async retryFailedDeliveries(
     @Body() body: { webhookId?: string } = {},
     @Query('webhookId') queryWebhookId?: string,
-  ): Promise<{ retried: number; webhooksReactivated: number }> {
+  ): Promise<RetryFailedDeliveriesResult> {
     const webhookId = body?.webhookId ?? queryWebhookId;
     return this.webhooksService.retryFailedDeliveries(webhookId);
   }
 
   @ApiOperation({ summary: 'List deliveries, optionally filtered by webhook' })
   @ApiResponse({ status: 200, description: 'List of deliveries' })
-  @ApiResponse({ status: 400, description: 'Bad request or invalid webhook ID' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request or invalid webhook ID',
+  })
   @ApiResponse({
     status: 401,
     description: 'Unauthorized or client IP not in allowlist',
   })
   @ApiResponse({ status: 404, description: 'Webhook not found' })
   @Get(':id/deliveries')
-  async getDeliveries(@Param('id') id: string): Promise<WebhookDelivery[]> {
+  async getDeliveries(
+    @Param('id') id: string,
+  ): Promise<PaginatedWebhookDeliveries> {
     return this.webhooksService.getDeliveries(id);
+  }
+
+  @ApiOperation({ summary: 'Get webhook metrics' })
+  @ApiResponse({ status: 200, description: 'Webhook metrics' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @ApiResponse({ status: 403, description: 'Admin privileges required' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('metrics')
+  async getWebhookMetrics(): Promise<WebhookMetrics> {
+    return this.webhooksService.getWebhookMetrics();
   }
 }

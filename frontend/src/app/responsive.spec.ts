@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
+declare const process: { cwd(): string };
+
 /**
  * #962 — responsive regression guard. Asserts the surfaces named in the
  * issue (marketplace, retire wizard, portfolio) carry narrow-viewport rules:
@@ -19,15 +21,15 @@ const MD_BREAKPOINT = '@media (max-width: 768px)';
 const TOUCH_TARGET = '44px';
 
 const SURFACES = [
-  { name: 'retire wizard', file: 'retire/retire.component.ts', tableWrapper: '.table-scroll' },
+  { name: 'retire wizard', file: '../styles.css', tableWrapper: '.table-scroll' },
   {
     name: 'marketplace',
-    file: 'marketplace/marketplace.component.ts',
+    file: '../styles.css',
     tableWrapper: '.table-scroll',
   },
   {
     name: 'marketplace list',
-    file: 'marketplace/marketplace-list.component.ts',
+    file: '../styles.css',
     tableWrapper: '.table-scroll',
   },
 ];
@@ -52,18 +54,18 @@ describe('responsive layout (#962)', () => {
   }
 
   it('retire wizard stacks wizard steps full-width below md', () => {
-    const source = read('retire/retire.component.ts');
+    const source = read('../styles.css');
     const breakpoint = source.slice(source.indexOf(MD_BREAKPOINT));
     expect(breakpoint).toMatch(/flex-direction:\s*column/);
   });
 
   it('retire wizard keeps tables horizontally scrollable at 360px', () => {
-    const source = read('retire/retire.component.ts');
+    const source = read('../styles.css');
     expect(source).toContain('@media (max-width: 480px)');
   });
 
   it('portfolio collapses summary cards and scrolls charts', () => {
-    const source = read('portfolio/portfolio.component.ts');
+    const source = read('../styles.css');
     expect(source).toContain(MD_BREAKPOINT);
     expect(source).toMatch(/\.chart-card \{ overflow-x: auto/);
   });

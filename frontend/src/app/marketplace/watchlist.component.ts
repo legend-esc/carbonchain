@@ -17,7 +17,7 @@ import { WatchlistStore, type WatchAlert } from '../core/store/watchlist.store';
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <section class="watchlist" aria-labelledby="watchlist-heading">
+    <section class="watchlist" aria-labelledby="watchlist-heading" aria-live="polite">
       <h2 id="watchlist-heading">Watchlist</h2>
 
       @if (watchlist.isEmpty()) {

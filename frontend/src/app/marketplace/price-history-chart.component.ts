@@ -218,9 +218,9 @@ export class PriceHistoryChartComponent {
   readonly describeSeries = computed(() => {
     const pts = this.points();
     if (pts.length === 0) return 'No price points recorded yet.';
-    return pts
+    return `recorded price series: ${pts
       .map((p) => `${this.formatDate(p.timestamp)}: ${this.formatPrice(p.price)}`)
-      .join('; ');
+      .join('; ')}`;
   });
 
   private readonly bounds = computed(() => {

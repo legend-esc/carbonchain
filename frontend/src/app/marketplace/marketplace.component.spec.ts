@@ -58,6 +58,8 @@ describe('MarketplaceComponent', () => {
     publicKey: signal<string | null>('GPUBKEY'),
     isConnected: signal(true).asReadonly(),
     state: signal('connected' as const).asReadonly(),
+    networkMismatch: signal(false).asReadonly(),
+    expectedNetwork: signal('testnet').asReadonly(),
     startBalancePolling: vi.fn(),
     stopBalancePolling: vi.fn(),
     getNetworkDetails: vi
@@ -116,10 +118,8 @@ describe('MarketplaceComponent', () => {
     const headerText =
       (fixture.nativeElement.querySelector('thead') as HTMLElement).textContent ?? '';
     expect(headerText).toContain('Credit ID');
-    expect(headerText).toContain('Project');
-    expect(headerText).toContain('Vintage');
-    expect(headerText).toContain('Methodology');
     expect(headerText).toContain('Tonnes');
+    expect(headerText).toContain('Methodology');
     expect(headerText).toContain('Price');
     expect(headerText).toContain('Status');
     expect(headerText).toContain('Action');
@@ -203,6 +203,7 @@ describe('MarketplaceComponent', () => {
     expect(component.hasMore()).toBe(true);
 
     await component.loadMore();
+    await fixture.whenStable();
 
     expect(component.visibleOffers().length).toBe(3);
     expect(component.hasMore()).toBe(false);

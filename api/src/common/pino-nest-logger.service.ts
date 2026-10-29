@@ -58,12 +58,26 @@ export class PinoNestLogger implements LoggerService {
    */
   private stringify(message: unknown): string {
     if (typeof message === 'string') {
-      return message;
+      return this.redactString(message);
     }
     if (message !== null && typeof message === 'object') {
       return JSON.stringify(sanitize(message));
     }
     return String(message);
+  }
+
+  /**
+   * Redact sensitive `key=value` pairs inside a plain-text log message so that
+   * secrets (passwords, tokens, keys, ...) are not emitted in clear text.
+   */
+  private redactString(value: string): string {
+    return value.replace(
+      /\b(?:password|token|apiKey|accessToken|refreshToken|secret|privateKey|signature|nonce|clientSecret|authorization)=[^\s]+/gi,
+      (match) => {
+        const key = match.split('=')[0];
+        return `${key}=[REDACTED]`;
+      },
+    );
   }
 
   /**

@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
+declare const process: { cwd(): string };
+
 /**
  * #964 — asserts the service worker config caches read paths and leaves write
  * paths (POST/PUT/DELETE) network-only. Angular's SW only caches GETs, so

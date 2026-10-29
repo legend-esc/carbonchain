@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  BadRequestException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { CacheService } from '../common/cache.service';
 import ipRangeCheck from 'ip-range-check';
 
@@ -143,8 +139,7 @@ export class WebhookIpAllowlistService {
    * Loads from Redis when available, otherwise from the in-memory fallback.
    */
   private async getEntryMap(): Promise<Map<string, AllowlistEntry>> {
-    const raw =
-      await this.cacheService.get<AllowlistEntry[]>(ALLOWLIST_KEY);
+    const raw = await this.cacheService.get<AllowlistEntry[]>(ALLOWLIST_KEY);
     if (raw && Array.isArray(raw)) {
       return new Map(raw.map((e) => [e.cidr, e]));
     }

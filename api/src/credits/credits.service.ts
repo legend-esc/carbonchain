@@ -17,6 +17,10 @@ import { CREDIT_REPOSITORY } from './credit.repository';
 import { CacheService } from '../common/cache.service';
 import { NonceService } from '../common/nonce.service';
 import { IssueCreditDto } from './dto/issue-credit.dto';
+import { ExpireCreditDto } from './dto/expire-credit.dto';
+import { DisputeCreditDto } from './dto/dispute-credit.dto';
+import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import { BatchStatusTransitionDto } from './dto/batch-status-transition.dto';
 import { parseCreditId } from '../common/credit-id';
 
 // Cache key helpers
@@ -560,7 +564,7 @@ export class CreditsService {
     await this.invalidateCreditCache(creditId);
 
     const metadata = this.entityToMetadata(entity);
-    this.logger.log(`Credit ${creditId} expired. Reason: ${dto.reason}`);
+    this.logger.log(`Credit ${creditId} expired. Admin: ${dto.adminPublicKey}`);
     return metadata;
   }
 
@@ -725,14 +729,14 @@ export class CreditsService {
       try {
         if (dto.action === 'expire') {
           await this.expireCredit(creditId, {
-            reason: dto.reason ?? 'Batch expiry',
+            adminPublicKey: callerPublicKey,
           });
         } else {
           await this.disputeCredit(
             creditId,
             {
+              disputerPublicKey: callerPublicKey,
               evidenceIpfsHash: dto.evidenceIpfsHash!,
-              reason: dto.reason ?? 'Batch dispute',
             },
             callerPublicKey,
           );
@@ -1065,160 +1069,6 @@ export class CreditsService {
     await this.invalidateCreditCache(childCredit2);
 
     return { childCredit1, childCredit2 };
-  }
-
-  // ── Issue #485: Credit expiry ─────────────────────────────────────────────
-
-  /**
-   * POST /api/v1/credits/:id/expire
-   *
-   * Transition an Active (or Disputed) credit to Expired on-chain by calling
-   * `expire_credit` on the credit registry contract.  Only the admin may call
-   * this endpoint.
-   *
-   * The contract enforces:
-   *   - Credit must be Active or Disputed (not Retired / Flagged / already Expired).
-   *   - Caller must be the registered contract admin.
-   *
-   * On success the off-chain index is updated and caches are invalidated.
-   */
-  async expireCredit(
-    creditId: string,
-    adminPublicKey: string,
-  ): Promise<{ creditId: string; status: CreditStatus }> {
-    // Issue #941 — validate creditId format
-    creditId = parseCreditId(creditId);
-    this.logger.log(`Expiring credit ${creditId} by admin ${adminPublicKey}`);
-
-    const args = [
-      nativeToScVal(adminPublicKey, { type: 'address' }),
-      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    await this.stellarService.invokeContract(
-      this.contractId,
-      'expire_credit',
-      args,
-      signer,
-    );
-
-    // Update off-chain index
-    const entity = await this.creditRepo.findById(creditId);
-    if (entity) {
-      entity.status = CreditStatus.Expired;
-      await this.creditRepo.save(entity);
-    }
-
-    await this.invalidateCreditCache(creditId);
-
-    return { creditId, status: CreditStatus.Expired };
-  }
-
-  // ── Issue #486: Credit dispute lifecycle ──────────────────────────────────
-
-  /**
-   * POST /api/v1/credits/:id/dispute
-   *
-   * Transition an Active credit to Disputed on-chain and store the evidence
-   * IPFS hash.  Any verifier (or the credit owner) may raise a dispute.
-   *
-   * Contract enforces:
-   *   - Credit must not already be Retired or Disputed.
-   *   - `dispute_credit` stores evidence in DataKey::Dispute(credit_id).
-   *   - CreditDisputed event is emitted.
-   */
-  async disputeCredit(
-    creditId: string,
-    disputerPublicKey: string,
-    evidenceIpfsHash: string,
-  ): Promise<{ creditId: string; status: CreditStatus }> {
-    // Issue #941 — validate creditId format
-    creditId = parseCreditId(creditId);
-    this.logger.log(
-      `Disputing credit ${creditId} by ${disputerPublicKey} with evidence ${evidenceIpfsHash}`,
-    );
-
-    const args = [
-      nativeToScVal(disputerPublicKey, { type: 'address' }),
-      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
-      nativeToScVal(evidenceIpfsHash, { type: 'string' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    await this.stellarService.invokeContract(
-      this.contractId,
-      'dispute_credit',
-      args,
-      signer,
-    );
-
-    // Update off-chain index
-    const entity = await this.creditRepo.findById(creditId);
-    if (entity) {
-      entity.status = CreditStatus.Disputed;
-      await this.creditRepo.save(entity);
-    }
-
-    await this.invalidateCreditCache(creditId);
-
-    return { creditId, status: CreditStatus.Disputed };
-  }
-
-  /**
-   * POST /api/v1/credits/:id/resolve
-   *
-   * Resolve a disputed credit.  Only the admin may call this.
-   *
-   * Outcome codes (mirror the contract):
-   *   0 → Active   (dispute upheld, credit reinstated)
-   *   1 → Flagged  (dispute escalated)
-   *   2 → Retired  (credit revoked)
-   *
-   * Contract enforces:
-   *   - Credit must be in Disputed status.
-   *   - Caller must be the registered contract admin.
-   *   - DisputeResolved event is emitted; dispute evidence entry is removed.
-   */
-  async resolveDispute(
-    creditId: string,
-    adminPublicKey: string,
-    outcome: number,
-  ): Promise<{ creditId: string; status: CreditStatus; outcome: number }> {
-    // Issue #941 — validate creditId format
-    creditId = parseCreditId(creditId);
-    this.logger.log(
-      `Resolving dispute for credit ${creditId} with outcome ${outcome} by admin ${adminPublicKey}`,
-    );
-
-    const args = [
-      nativeToScVal(adminPublicKey, { type: 'address' }),
-      nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
-      nativeToScVal(outcome, { type: 'u32' }),
-    ];
-    const signer = this.keypairService.getAdminKeypair();
-    await this.stellarService.invokeContract(
-      this.contractId,
-      'resolve_dispute',
-      args,
-      signer,
-    );
-
-    // Map the numeric outcome to the resulting CreditStatus for the off-chain index.
-    const outcomeStatus: CreditStatus =
-      outcome === 0
-        ? CreditStatus.Active
-        : outcome === 1
-          ? CreditStatus.Flagged
-          : CreditStatus.Retired;
-
-    const entity = await this.creditRepo.findById(creditId);
-    if (entity) {
-      entity.status = outcomeStatus;
-      await this.creditRepo.save(entity);
-    }
-
-    await this.invalidateCreditCache(creditId);
-
-    return { creditId, status: outcomeStatus, outcome };
   }
 
   // ── Issue #487: Credit merging ────────────────────────────────────────────

@@ -24,7 +24,12 @@ import { StellarWalletService } from '../services/stellar-wallet.service';
     }
 
     @if (wallet.networkMismatch()) {
-      <div class="network-modal-backdrop" role="alertdialog" aria-modal="true">
+      <div
+        class="network-modal-backdrop"
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="Network mismatch warning"
+      >
         <div class="network-modal">
           <h3>Wrong network</h3>
           <p>Please switch to {{ expectedNetworkLabel() }} in Freighter.</p>

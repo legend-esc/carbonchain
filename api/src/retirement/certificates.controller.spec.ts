@@ -132,12 +132,12 @@ describe('CertificatesController', () => {
       );
       expect(certificateService.generatePdf).toHaveBeenCalledWith({
         retirementId: 'R1',
-        creditId: 'CR-1',
-        buyer: 'GXYZ',
-        tonnes: '500',
-        reason: 'Scope 1 compensation',
+        creditId: 'CREDIT1',
+        buyer: 'GBUYER',
+        tonnes: '100',
+        reason: 'offset',
         timestamp: 1_700_000_000,
-        vintageYear: 2023,
+        vintageYear: 2024,
       });
     });
 

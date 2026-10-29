@@ -3,6 +3,8 @@ import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
+import { StellarService } from '../stellar/stellar.service';
+import { CacheService } from '../common/cache.service';
 
 const mockConfigService = {
   get: jest.fn((key: string, def?: string) => {
@@ -18,6 +20,7 @@ const mockWebhooksService = {
   deleteWebhook: jest.fn(),
   validateWebhookUrl: jest.fn().mockResolvedValue(undefined),
   getDeliveries: jest.fn(),
+  getWebhookMetrics: jest.fn(),
 };
 
 describe('WebhooksController', () => {
@@ -31,6 +34,8 @@ describe('WebhooksController', () => {
       providers: [
         { provide: WebhooksService, useValue: mockWebhooksService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarService, useValue: {} },
+        { provide: CacheService, useValue: {} },
       ],
     }).compile();
 

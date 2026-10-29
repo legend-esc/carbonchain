@@ -152,7 +152,9 @@ describe('Webhook IP Allowlist Management (e2e) — Issue #1170', () => {
       .get('/oracle/webhook/allowlist')
       .expect(HttpStatus.OK);
 
-    expect(res.body.filter((e: any) => e.cidr === '192.168.1.0/24')).toHaveLength(1);
+    expect(
+      res.body.filter((e: any) => e.cidr === '192.168.1.0/24'),
+    ).toHaveLength(1);
   });
 
   it('DELETE /oracle/webhook/allowlist/:cidr handles CIDR with slash (URL-encoded)', async () => {
@@ -266,7 +268,9 @@ describe('Webhook Metrics Endpoint (e2e) — Issue #1184', () => {
 
     const res = await request(app.getHttpServer()).get('/webhooks/metrics');
 
-    expect([HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN]).toContain(res.status);
+    expect([HttpStatus.UNAUTHORIZED, HttpStatus.FORBIDDEN]).toContain(
+      res.status,
+    );
   });
 
   it('exposes Prometheus metrics for webhook deliveries', async () => {
@@ -304,9 +308,8 @@ describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 
-    const { WebhookIpAllowlistService } = await import(
-      '../src/webhooks/webhook-ip-allowlist.service'
-    );
+    const { WebhookIpAllowlistService } =
+      await import('../src/webhooks/webhook-ip-allowlist.service');
     const service = new WebhookIpAllowlistService(fakeCache);
 
     const allowlist = await service.getAllowlist();
@@ -329,9 +332,8 @@ describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 
-    const { WebhookIpAllowlistService } = await import(
-      '../src/webhooks/webhook-ip-allowlist.service'
-    );
+    const { WebhookIpAllowlistService } =
+      await import('../src/webhooks/webhook-ip-allowlist.service');
     const service = new WebhookIpAllowlistService(fakeCache);
 
     expect(await service.isAllowed('10.5.5.5')).toBe(true);
@@ -348,9 +350,8 @@ describe('WebhookIpAllowlistGuard dynamic list (e2e) — Issue #1170', () => {
       connect: jest.fn(async () => undefined),
     } as unknown as CacheService;
 
-    const { WebhookIpAllowlistService } = await import(
-      '../src/webhooks/webhook-ip-allowlist.service'
-    );
+    const { WebhookIpAllowlistService } =
+      await import('../src/webhooks/webhook-ip-allowlist.service');
     const service = new WebhookIpAllowlistService(fakeCache);
 
     expect(await service.isAllowed('8.8.8.8')).toBe(true);

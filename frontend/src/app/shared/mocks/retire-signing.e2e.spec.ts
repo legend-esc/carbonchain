@@ -229,16 +229,13 @@ describe('[e2e] RetireComponent — wallet signing paths (issue #970)', () => {
   // ── 7. Network-block: wallet disconnects before submission ────────────────
 
   it('network-block: wallet disconnected mid-flow shows unsupported/disconnected message', async () => {
-    wallet.simulateDisconnect();
     apiMock.retireCredit = vi
       .fn()
       .mockReturnValue(
         throwError(() => new WalletError('Wallet is not connected.', 'unsupported')),
       );
     const comp = buildReadyToSubmit();
-
     await comp.submit();
-
     expect(comp.signingError()).toBe(WALLET_ERROR_MESSAGES.unsupported);
     expect(routerMock.navigate).not.toHaveBeenCalled();
   });

@@ -51,10 +51,6 @@ import { AdminGuard } from '../admin/admin.guard';
     AdminGuard,
   ],
   controllers: [WebhooksController, WebhookIpAllowlistController],
-  exports: [
-    WebhooksService,
-    WebhookJanitorService,
-    WebhookIpAllowlistService,
-  ],
+  exports: [WebhooksService, WebhookJanitorService, WebhookIpAllowlistService],
 })
 export class WebhooksModule {}

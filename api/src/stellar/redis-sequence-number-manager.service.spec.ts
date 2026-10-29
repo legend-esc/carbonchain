@@ -8,14 +8,16 @@ import { RedisSequenceNumberManager } from './redis-sequence-number-manager.serv
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildRedisClient(overrides: Partial<{
-  get: jest.Mock;
-  set: jest.Mock;
-  incr: jest.Mock;
-  pexpire: jest.Mock;
-  del: jest.Mock;
-  scan: jest.Mock;
-}> = {}) {
+function buildRedisClient(
+  overrides: Partial<{
+    get: jest.Mock;
+    set: jest.Mock;
+    incr: jest.Mock;
+    pexpire: jest.Mock;
+    del: jest.Mock;
+    scan: jest.Mock;
+  }> = {},
+) {
   const client = {
     get: jest.fn(),
     set: jest.fn(),
@@ -26,6 +28,34 @@ function buildRedisClient(overrides: Partial<{
     ...overrides,
   };
   return client;
+}
+
+/** Stateful fake Redis supporting GET / SET NX / INCR for concurrency tests. */
+function buildStatefulRedisClient() {
+  const store = new Map<string, string>();
+  return {
+    get: jest.fn(async (key: string) =>
+      store.has(key) ? store.get(key)! : null,
+    ),
+    set: jest.fn(async (key: string, val: string, ...modifiers: unknown[]) => {
+      const isNx = modifiers.includes('NX');
+      if (isNx && store.has(key)) return null;
+      store.set(key, val);
+      return 'OK';
+    }),
+    incr: jest.fn(async (key: string) => {
+      const cur = Number(store.get(key) ?? '0');
+      const next = cur + 1;
+      store.set(key, String(next));
+      return next;
+    }),
+    pexpire: jest.fn(async () => 'OK'),
+    del: jest.fn(async (key: string) => {
+      store.delete(key);
+      return 1;
+    }),
+    scan: jest.fn(async () => ['0', []] as [string, string[]]),
+  };
 }
 
 function buildCacheService(client: any, connected = true): CacheService {
@@ -82,7 +112,9 @@ async function buildManager({
     ],
   }).compile();
 
-  const manager = module.get<RedisSequenceNumberManager>(RedisSequenceNumberManager);
+  const manager = module.get<RedisSequenceNumberManager>(
+    RedisSequenceNumberManager,
+  );
   return { manager, cacheService, redisClient, inMemory };
 }
 
@@ -111,7 +143,9 @@ describe('RedisSequenceNumberManager', () => {
   // ── getNextSequenceNumberAtomic ────────────────────────────────────────────
 
   it('falls back to in-memory manager when Redis is not connected', async () => {
-    const { manager, redisClient, inMemory } = await buildManager({ connected: false });
+    const { manager, redisClient, inMemory } = await buildManager({
+      connected: false,
+    });
     const fetchFn = jest.fn<Promise<number>, []>().mockResolvedValue(100);
     const spy = jest.spyOn(inMemory, 'getNextSequenceNumberAtomic');
 
@@ -142,13 +176,17 @@ describe('RedisSequenceNumberManager', () => {
     );
     // INCR returns next sequence (101)
     expect(redisClient.incr).toHaveBeenCalledWith(`stellar:seq:${PK_A}`);
-    expect(redisClient.pexpire).toHaveBeenCalledWith(`stellar:seq:${PK_A}`, 60_000);
+    expect(redisClient.pexpire).toHaveBeenCalledWith(
+      `stellar:seq:${PK_A}`,
+      60_000,
+    );
     expect(seq).toBe(101);
   });
 
   it('uses cached counter via INCR when cache is warm', async () => {
     const { manager, redisClient } = await buildManager({});
     redisClient.get.mockResolvedValue('200'); // warm cache
+    redisClient.set.mockResolvedValue('OK'); // lock acquired
     redisClient.incr.mockResolvedValue(201);
     redisClient.pexpire.mockResolvedValue('OK');
 
@@ -158,17 +196,15 @@ describe('RedisSequenceNumberManager', () => {
     expect(fetchFn).not.toHaveBeenCalled();
     expect(redisClient.incr).toHaveBeenCalledWith(`stellar:seq:${PK_A}`);
     expect(seq).toBe(201);
-    expect(redisClient.pexpire).toHaveBeenCalledWith(`stellar:seq:${PK_A}`, 60_000);
+    expect(redisClient.pexpire).toHaveBeenCalledWith(
+      `stellar:seq:${PK_A}`,
+      60_000,
+    );
   });
 
   it('returns sequential numbers across concurrent calls for the same key', async () => {
-    const { manager, redisClient } = await buildManager({});
-    redisClient.get.mockResolvedValue(null);
-    redisClient.set.mockResolvedValue('OK');
-    redisClient.incr.mockImplementation(() => {
-      const key = `stellar:seq:${PK_A}`;
-      return Promise.resolve(101);
-    });
+    const redisClient = buildStatefulRedisClient();
+    const { manager } = await buildManager({ client: redisClient });
     redisClient.pexpire.mockResolvedValue('OK');
 
     const fetchFn = jest.fn<Promise<number>, []>().mockResolvedValue(100);
@@ -191,7 +227,9 @@ describe('RedisSequenceNumberManager', () => {
       // simulate lock always held → SET NX returns null
       return Promise.resolve(null);
     });
-    const spy = jest.spyOn(inMemory, 'getNextSequenceNumberAtomic').mockResolvedValue(50);
+    const spy = jest
+      .spyOn(inMemory, 'getNextSequenceNumberAtomic')
+      .mockResolvedValue(50);
     const fetchFn = jest.fn<Promise<number>, []>().mockResolvedValue(100);
 
     const seq = await manager.getNextSequenceNumberAtomic(PK_A, fetchFn);
@@ -200,8 +238,13 @@ describe('RedisSequenceNumberManager', () => {
   });
 
   it('falls back to in-memory when redis client is unavailable', async () => {
-    const { manager, inMemory } = await buildManager({ client: null, connected: true });
-    const spy = jest.spyOn(inMemory, 'getNextSequenceNumberAtomic').mockResolvedValue(77);
+    const { manager, inMemory } = await buildManager({
+      client: null,
+      connected: true,
+    });
+    const spy = jest
+      .spyOn(inMemory, 'getNextSequenceNumberAtomic')
+      .mockResolvedValue(77);
     const fetchFn = jest.fn<Promise<number>, []>().mockResolvedValue(100);
 
     const seq = await manager.getNextSequenceNumberAtomic(PK_A, fetchFn);
@@ -247,7 +290,10 @@ describe('RedisSequenceNumberManager', () => {
 
   it('clears all stellar:seq keys via SCAN and DEL', async () => {
     const { manager, redisClient } = await buildManager({});
-    redisClient.scan.mockResolvedValueOnce(['0', ['stellar:seq:aaa', 'stellar:seq:bbb']]);
+    redisClient.scan.mockResolvedValueOnce([
+      '0',
+      ['stellar:seq:aaa', 'stellar:seq:bbb'],
+    ]);
     redisClient.del.mockResolvedValue(2);
     const inMemoryClear = jest.fn();
     // Clear also calls inMemoryFallback.clear — mock via replace.
@@ -262,7 +308,10 @@ describe('RedisSequenceNumberManager', () => {
       'COUNT',
       100,
     );
-    expect(redisClient.del).toHaveBeenCalledWith(['stellar:seq:aaa', 'stellar:seq:bbb']);
+    expect(redisClient.del).toHaveBeenCalledWith([
+      'stellar:seq:aaa',
+      'stellar:seq:bbb',
+    ]);
   });
 
   it('clear handles empty scan results gracefully', async () => {

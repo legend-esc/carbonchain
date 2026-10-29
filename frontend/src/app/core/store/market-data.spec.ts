@@ -202,9 +202,14 @@ describe('MarketEventsStore', () => {
     localStorage.clear();
     walletAddressSignal.set(null);
     networkSignal.set(null);
-    getEvents = vi.fn().mockResolvedValue({
-      events: [event('e1', 'OfferListed', 1, { project_id: 'p1', price_xlm: '10000000' })],
-      nextCursor: null,
+    getEvents = vi.fn().mockImplementation(({ eventType }: { eventType: string }) => {
+      if (eventType === 'OfferListed') {
+        return of({
+          events: [event('e1', 'OfferListed', 1, { project_id: 'p1', price_xlm: '10000000' })],
+          nextCursor: null,
+        });
+      }
+      return of({ events: [], nextCursor: null });
     });
     TestBed.configureTestingModule({
       providers: [{ provide: ApiService, useValue: { getEvents } }],

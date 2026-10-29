@@ -320,6 +320,21 @@ export class CacheService implements OnModuleDestroy {
   }
 
   /**
+   * Returns the remaining TTL (in seconds) for a key, or -1 if no TTL / not found.
+   */
+  async ttl(key: string): Promise<number> {
+    if (!this.isCacheAvailable()) return -1;
+    try {
+      return await this.client!.ttl(key);
+    } catch (err) {
+      this.logger.warn(
+        `Cache TTL failed for key ${key}: ${(err as Error).message}`,
+      );
+      return -1;
+    }
+  }
+
+  /**
    * Delete one or more keys. Used for cache invalidation.
    */
   async del(...keys: string[]): Promise<void> {

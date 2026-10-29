@@ -1,8 +1,13 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
+import { signal } from '@angular/core';
+import { of } from 'rxjs';
 import { OfferDetailComponent } from './offer-detail.component';
 import { Offer } from '@shared';
 import { ComponentRef } from '@angular/core';
+import { StellarWalletService } from '../core/services/stellar-wallet.service';
+import { AuthService } from '../core/services/auth.service';
+import { ApiService } from '../core/services/api.service';
 
 const mockOffer: Offer = {
   id: '42',
@@ -19,10 +24,30 @@ describe('OfferDetailComponent', () => {
   let component: OfferDetailComponent;
   let ref: ComponentRef<OfferDetailComponent>;
 
+  const walletMock = {
+    publicKey: signal('GPUBKEY1234567890'),
+    signTransaction: vi.fn().mockResolvedValue('signed-xdr'),
+  };
+
+  const authMock = {
+    token: signal('mock-token'),
+  };
+
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [OfferDetailComponent],
-      providers: [provideRouter([])],
+      providers: [
+        provideRouter([]),
+        { provide: StellarWalletService, useValue: walletMock },
+        { provide: AuthService, useValue: authMock },
+        {
+          provide: ApiService,
+          useValue: {
+            getBuyOfferXdr: vi.fn().mockReturnValue(of({ xdr: 'fake-xdr' })),
+            buyOffer: vi.fn().mockReturnValue(of(undefined)),
+          },
+        },
+      ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(OfferDetailComponent);
@@ -48,15 +73,15 @@ describe('OfferDetailComponent', () => {
     component.closed.subscribe(() => (emitted = true));
 
     const closeBtn = fixture.nativeElement.querySelector(
-      '[aria-label="Close"]',
+      '[aria-label="Close offer details"]',
     ) as HTMLButtonElement;
     closeBtn.click();
 
     expect(emitted).toBe(true);
   });
 
-  it('shows expired offer message when errorCode=123', () => {
-    ref.setInput('errorCode', 123);
+  it('shows expired offer message when errorCode=309', () => {
+    ref.setInput('errorCode', 309);
     fixture.detectChanges();
 
     const text = fixture.nativeElement.textContent as string;
@@ -79,6 +104,6 @@ describe('OfferDetailComponent', () => {
   });
 
   it('formats XLM correctly', () => {
-    expect(component.formatXlm('50000000')).toBe('5 XLM');
+    expect(component.formatTonnes('50000000')).toBe('50 t');
   });
 });

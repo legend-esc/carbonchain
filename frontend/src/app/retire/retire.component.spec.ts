@@ -105,20 +105,20 @@ describe('RetireComponent', () => {
 
   it('goToStep(3) advances to the confirm step when the reason is valid', () => {
     const comp = withSelection();
-    comp.goToStep(3);
+    comp.nextStep(3);
     expect(comp.currentStep()).toBe(3);
   });
 
   it('goToStep(3) is blocked while the reason is empty', () => {
     const fixture = TestBed.createComponent(RetireComponent);
     const comp = fixture.componentInstance;
-    comp.goToStep(3);
+    comp.nextStep(3);
     expect(comp.currentStep()).toBe(1);
   });
 
   it('reset() returns to step 1 and clears fields', () => {
     const comp = withSelection();
-    comp.goToStep(3);
+    comp.nextStep(3);
     comp.reset();
     expect(comp.currentStep()).toBe(1);
     expect(comp.selectedCredits()).toEqual([]);

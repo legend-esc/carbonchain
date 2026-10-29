@@ -113,7 +113,9 @@ export function assertA11yThreshold(
   const report = evaluateA11yThreshold(results, customThreshold);
   if (!report.passed) {
     const details = report.blockingViolations
-      .map((v) => `  - [${v.impact?.toUpperCase()}] ${v.id}: ${v.help} (${v.nodes.length} element(s))`)
+      .map(
+        (v) => `  - [${v.impact?.toUpperCase()}] ${v.id}: ${v.help} (${v.nodes.length} element(s))`,
+      )
       .join('\n');
 
     throw new Error(

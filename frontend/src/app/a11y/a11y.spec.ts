@@ -173,7 +173,7 @@ describe('a11y — primary flows (axe, WCAG 2.1 AA)', () => {
           {
             provide: ApiService,
             useValue: {
-              retireCredit: vi.fn().mockReturnValue(of(null)).pipe(),
+              retireCredit: vi.fn().mockReturnValue(of(null)),
               listCreditsByOwner: vi.fn().mockReturnValue(of({ data: [], offset: 0, limit: 50 })),
               getCredit: vi.fn().mockReturnValue(of(credit)),
             },

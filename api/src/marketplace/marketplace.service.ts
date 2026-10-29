@@ -597,9 +597,7 @@ export class MarketplaceService {
         }
       }
     } catch (err) {
-      this.logger.warn(
-        `quoteOffer simulation failed for offer ${offerId}: ${(err as Error).message}`,
-      );
+      mapMarketplaceError(err as Error);
     }
 
     const netAmount = String(BigInt(grossAmount) + BigInt(estimatedFee));

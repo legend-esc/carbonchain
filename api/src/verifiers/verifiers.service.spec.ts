@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import {
   BadRequestException,
   ConflictException,
@@ -26,6 +26,8 @@ describe('VerifiersService.approveCredit', () => {
   const CREDIT_ID =
     'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
 
+  let signingMode = 'test';
+
   const testKeypair = () => Keypair.random();
 
   beforeEach(async () => {
@@ -44,14 +46,22 @@ describe('VerifiersService.approveCredit', () => {
       set: jest.fn(),
     };
 
+    mockConfigService = {
+      get: jest.fn(),
+      set: jest.fn(),
+    };
+
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return CONTRACT_ID;
+      if (key === 'VERIFIER_SIGNING_MODE') return signingMode;
+      return undefined;
+    });
+
     const module: TestingModule = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({
-          load: [() => ({ CREDIT_REGISTRY_CONTRACT_ID: CONTRACT_ID })],
-        }),
-      ],
+      imports: [],
       providers: [
         VerifiersService,
+        { provide: ConfigService, useValue: mockConfigService },
         { provide: StellarService, useValue: mockStellarService },
         { provide: StellarKeypairService, useValue: mockKeypairService },
         { provide: CacheService, useValue: mockCacheService },
@@ -114,6 +124,10 @@ describe('VerifiersService.approveCredit', () => {
   };
 
   describe('method name and nonce', () => {
+    beforeEach(() => {
+      signingMode = 'test';
+    });
+
     it('should call invokeContract with approve_and_mint (not approve_credit)', async () => {
       spyListVerifiers([VERIFIER_ADDR]);
       setupSuccess();
@@ -154,15 +168,19 @@ describe('VerifiersService.approveCredit', () => {
   });
 
   describe('buildContractTransaction (client-side signing flow)', () => {
+    beforeEach(() => {
+      signingMode = 'production';
+    });
+
     it('should call buildContractTransaction with contract id, approve_and_mint, args and verifier source account', async () => {
       spyListVerifiers([VERIFIER_ADDR]);
       setupSuccess();
 
       await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
 
-      expect(
-        mockStellarService.buildContractTransaction,
-      ).toHaveBeenCalledTimes(1);
+      expect(mockStellarService.buildContractTransaction).toHaveBeenCalledTimes(
+        1,
+      );
       const [contractId, method, args, sourceAccount] =
         mockStellarService.buildContractTransaction.mock.calls[0];
       expect(contractId).toBe(CONTRACT_ID);
@@ -212,6 +230,10 @@ describe('VerifiersService.approveCredit', () => {
   });
 
   describe('error handling', () => {
+    beforeEach(() => {
+      signingMode = 'test';
+    });
+
     const setupErrorMocks = () => {
       spyListVerifiers([VERIFIER_ADDR]);
       setReadMock();
@@ -278,6 +300,10 @@ describe('VerifiersService.approveCredit', () => {
   });
 
   describe('multi-sig threshold enforcement (#771)', () => {
+    beforeEach(() => {
+      signingMode = 'production';
+    });
+
     it('should proceed to invokeContract when approval count is below threshold', async () => {
       spyListVerifiers([VERIFIER_ADDR]);
       setReadMock();
@@ -289,9 +315,9 @@ describe('VerifiersService.approveCredit', () => {
 
       await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
 
-      expect(
-        mockStellarService.buildContractTransaction,
-      ).toHaveBeenCalledTimes(1);
+      expect(mockStellarService.buildContractTransaction).toHaveBeenCalledTimes(
+        1,
+      );
     });
 
     it('should throw BadRequestException when threshold is unconfigured (0)', async () => {

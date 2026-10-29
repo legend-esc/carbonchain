@@ -295,4 +295,18 @@ export class RedisSequenceNumberManager {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     return (this.cacheService as any)['client'] ?? null;
   }
+
+  /**
+   * Publish an account cache invalidation event so other pods evict their
+   * in-memory account-info caches for `address`. No-op when Redis is unavailable.
+   */
+  async publishAccountInvalidation(address: string): Promise<void> {
+    if (!this.cacheService.isConnected) return;
+    const client = this.getRedisClient();
+    if (!client) return;
+    await client.publish('carbonchain:account-invalidation', address);
+    this.logger.debug(
+      `[#1180] Published account cache invalidation for ${address}`,
+    );
+  }
 }

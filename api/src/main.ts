@@ -83,5 +83,5 @@ async function bootstrap() {
 bootstrap().catch((error) => {
   // Route startup failures through Pino so they are emitted as structured
   // JSON (with redaction) rather than plain console.error output.
-  new PinoNestLogger().fatal(error, 'Bootstrap failed');
+  new PinoNestLogger().error(error, 'Bootstrap failed');
 });

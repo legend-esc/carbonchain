@@ -1,6 +1,6 @@
 import { PinoNestLogger } from './pino-nest-logger.service';
 import { pinoLogger } from './logger';
-import { RequestContextStore } from './request-context.store';
+import { RequestContextStore } from './request-context';
 
 jest.mock('./logger', () => ({
   pinoLogger: {
@@ -96,7 +96,10 @@ describe('PinoNestLogger', () => {
 
   describe('secret redaction', () => {
     it('redacts password fields in object messages', () => {
-      logger.log({ username: 'alice', password: 'super-secret' }, 'AuthService');
+      logger.log(
+        { username: 'alice', password: 'super-secret' },
+        'AuthService',
+      );
       const [, message] = (pinoLogger.info as jest.Mock).mock.calls[0];
       const parsed = JSON.parse(message);
       expect(parsed.username).toBe('alice');
@@ -105,7 +108,10 @@ describe('PinoNestLogger', () => {
     });
 
     it('redacts token fields in object messages', () => {
-      logger.log({ accessToken: 'abc.def.ghi', refreshToken: 'xyz' }, 'AuthService');
+      logger.log(
+        { accessToken: 'abc.def.ghi', refreshToken: 'xyz' },
+        'AuthService',
+      );
       const [, message] = (pinoLogger.info as jest.Mock).mock.calls[0];
       const parsed = JSON.parse(message);
       expect(parsed.accessToken).toBe('[REDACTED]');
@@ -149,40 +155,36 @@ describe('PinoNestLogger', () => {
   });
 
   describe('JSON output shape', () => {
-    it('produces a JSON object with level, timestamp, service and message', () => {
+    it('passes the message string through as the second argument', () => {
       logger.log('shape-check', 'AppService');
       const [, message] = (pinoLogger.info as jest.Mock).mock.calls[0];
-      const parsed = JSON.parse(message);
-      expect(parsed).toHaveProperty('level');
-      expect(parsed).toHaveProperty('timestamp');
-      expect(parsed).toHaveProperty('service');
-      expect(parsed).toHaveProperty('message', 'shape-check');
-      expect(typeof parsed.timestamp).toBe('string');
-      expect(parsed.service).toBe('api');
+      expect(message).toBe('shape-check');
     });
 
-    it('includes requestId in the JSON output shape when context is active', () => {
+    it('sanitizes object messages before passing them through', () => {
+      logger.log({ username: 'alice', password: 'super-secret' }, 'AppService');
+      const [, message] = (pinoLogger.info as jest.Mock).mock.calls[0];
+      const parsed = JSON.parse(message);
+      expect(parsed.username).toBe('alice');
+      expect(parsed.password).toBe('[REDACTED]');
+    });
+
+    it('includes requestId in the options object when context is active', () => {
       RequestContextStore.run({ requestId: 'req-shape' }, () => {
         logger.log('shape-check', 'AppService');
       });
-      const [, message] = (pinoLogger.info as jest.Mock).mock.calls[0];
-      const parsed = JSON.parse(message);
-      expect(parsed.requestId).toBe('req-shape');
-      expect(parsed).toHaveProperty('level');
-      expect(parsed).toHaveProperty('timestamp');
-      expect(parsed).toHaveProperty('service');
+      const [options] = (pinoLogger.info as jest.Mock).mock.calls[0];
+      expect(options.requestId).toBe('req-shape');
+      expect(options.context).toBe('AppService');
     });
 
-    it('includes traceId in the JSON output shape when context is active', () => {
-      RequestContextStore.run(
-        { requestId: 'req-trace', traceId: 'trace-abc' },
-        () => {
-          logger.log('shape-check', 'AppService');
-        },
-      );
-      const [, message] = (pinoLogger.info as jest.Mock).mock.calls[0];
-      const parsed = JSON.parse(message);
-      expect(parsed.traceId).toBe('trace-abc');
+    it('does not include traceId since RequestContext only carries requestId', () => {
+      RequestContextStore.run({ requestId: 'req-trace' }, () => {
+        logger.log('shape-check', 'AppService');
+      });
+      const [options] = (pinoLogger.info as jest.Mock).mock.calls[0];
+      expect(options.traceId).toBeUndefined();
+      expect(options.requestId).toBe('req-trace');
     });
   });
 });

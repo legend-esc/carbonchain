@@ -28,7 +28,9 @@ describe('POST /credits/batch-transition (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
   });
 
@@ -108,7 +110,10 @@ describe('POST /credits/batch-transition (e2e)', () => {
       succeeded: ['id-6'],
       failed: [
         { creditId: 'id-7', error: 'Credit id-7 not found' },
-        { creditId: 'id-8', error: 'Credit id-8 cannot be expired — current status: Retired' },
+        {
+          creditId: 'id-8',
+          error: 'Credit id-8 cannot be expired — current status: Retired',
+        },
       ],
     });
 

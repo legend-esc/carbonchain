@@ -193,7 +193,7 @@ export class AuthService {
       );
     }
 
-    if (!StrKey.isValidEd25519PublicKey(clientAccount)) {
+    if (!StrKey.isValidEd25519PublicKey(clientAccount!)) {
       throw new BadRequestException('Invalid client account in challenge');
     }
 
@@ -214,7 +214,7 @@ export class AuthService {
     }
 
     // Verify client signature
-    const clientKeypair = Keypair.fromPublicKey(clientAccount);
+    const clientKeypair = Keypair.fromPublicKey(clientAccount!);
     const clientSig = tx.signatures.find((sig) => {
       try {
         return clientKeypair.verify(txHash, sig.signature);
@@ -538,6 +538,22 @@ export class AuthService {
       locked: true,
       retryAfter: ttl && ttl > 0 ? ttl : this.lockoutDurationSeconds,
     };
+  }
+
+  /**
+   * Best-effort extraction of the Stellar account from a SEP-10 challenge XDR.
+   * Returns `undefined` if the XDR cannot be parsed.
+   */
+  extractAccountFromChallenge(
+    signedTransactionXdr: string,
+  ): string | undefined {
+    try {
+      const tx = new Transaction(signedTransactionXdr, this.networkPassphrase);
+      const manageDataOp = tx.operations.find((op) => op.type === 'manageData');
+      return manageDataOp?.source ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Issue #1174 — Reset the failed attempt counter after a successful auth. */

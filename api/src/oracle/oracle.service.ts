@@ -241,7 +241,7 @@ export class OracleService {
         [],
       );
       if (!rv) return false;
-      return Boolean(scValToNative(rv as Parameters<typeof scValToNative>[0]));
+      return Boolean(scValToNative(rv));
     } catch (err) {
       this.logger.warn(
         `Oracle status: paused() call failed: ${(err as Error).message}`,
@@ -259,7 +259,7 @@ export class OracleService {
         [],
       );
       if (!rv) return 0;
-      return Number(scValToNative(rv as Parameters<typeof scValToNative>[0]));
+      return Number(scValToNative(rv));
     } catch (err) {
       this.logger.warn(
         `Oracle status: get_oracle_count() call failed: ${(err as Error).message}`,
@@ -277,7 +277,7 @@ export class OracleService {
         [],
       );
       if (!rv) return 2000;
-      return Number(scValToNative(rv as Parameters<typeof scValToNative>[0]));
+      return Number(scValToNative(rv));
     } catch (err) {
       this.logger.warn(
         `Oracle status: get_anomaly_threshold() call failed: ${(err as Error).message}`,
@@ -314,20 +314,20 @@ export class OracleService {
             [nativeToScVal(projectId, { type: 'string' })],
           );
           if (!rv) return { projectId, lastUpdate: null };
-          const point = scValToNative(
-            rv as Parameters<typeof scValToNative>[0],
-          ) as Record<string, unknown> | null;
+          const point = scValToNative(rv) as Record<string, unknown> | null;
           if (!point) return { projectId, lastUpdate: null };
           return {
             projectId,
             lastUpdate: {
-              oracle: String(point['oracle'] ?? ''),
-              project_id: String(point['project_id'] ?? projectId),
-              tonnes_sequestered: BigInt(point['tonnes'] ?? 0).toString(),
+              oracle: (point['oracle'] as string) ?? '',
+              project_id: (point['project_id'] as string) ?? projectId,
+              tonnes_sequestered: BigInt(
+                Number(point['tonnes'] ?? 0),
+              ).toString(),
               measurement_date: Number(point['recorded_at'] ?? 0),
               methodology: '',
               anomaly_flag: Boolean(point['anomaly'] ?? false),
-            } as MrvDataPoint,
+            },
           };
         } catch {
           return { projectId, lastUpdate: null };

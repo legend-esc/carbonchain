@@ -24,7 +24,9 @@ describe('AdminVerifiersComponent', () => {
   function createApiSpy() {
     return {
       listVerifiers: vi.fn().mockReturnValue(of([])),
+      listVerifierApplications: vi.fn().mockReturnValue(of([])),
       getAdminStats: vi.fn().mockReturnValue(of(mockStats)),
+      getVerifierStake: vi.fn().mockReturnValue(of({ stake: '0' })),
       registerVerifier: vi.fn(),
       suspendVerifier: vi.fn(),
       configureVerifier: vi.fn(),

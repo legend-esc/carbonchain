@@ -15,8 +15,13 @@
  * exact release string and fails the build if it is absent.
  */
 
+import { vi } from 'vitest';
 import * as SentryBrowser from '@sentry/browser';
 import { resolveRelease, initSentry } from './sentry-config';
+
+vi.mock('@sentry/browser', () => ({
+  init: vi.fn(),
+}));
 
 // `__SENTRY_RELEASE__` is replaced by the Vite define at build time.  In the
 // test environment the symbol is not defined, so `resolveRelease()` should fall
@@ -74,25 +79,24 @@ describe('resolveRelease (sentry-config)', () => {
 });
 
 describe('initSentry', () => {
-  let sentryInitSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
-    sentryInitSpy = vi.spyOn(SentryBrowser, 'init').mockImplementation(() => undefined);
+    vi.clearAllMocks();
+    vi.mocked(SentryBrowser.init).mockImplementation(() => undefined);
   });
 
   afterEach(() => {
-    sentryInitSpy.mockRestore();
+    vi.clearAllMocks();
   });
 
   it('does not call Sentry.init when no DSN is provided', () => {
     initSentry(undefined);
-    expect(sentryInitSpy).not.toHaveBeenCalled();
+    expect(SentryBrowser.init).not.toHaveBeenCalled();
   });
 
   it('does not call Sentry.init when DSN is an empty string', () => {
     initSentry('');
     initSentry('   ');
-    expect(sentryInitSpy).not.toHaveBeenCalled();
+    expect(SentryBrowser.init).not.toHaveBeenCalled();
   });
 
   it('calls Sentry.init with the DSN and the resolved release when a DSN is provided', () => {
@@ -105,8 +109,8 @@ describe('initSentry', () => {
         configurable: true,
       });
       initSentry(dsn);
-      expect(sentryInitSpy).toHaveBeenCalledOnce();
-      expect(sentryInitSpy).toHaveBeenCalledWith(expect.objectContaining({ dsn, release }));
+      expect(SentryBrowser.init).toHaveBeenCalledOnce();
+      expect(SentryBrowser.init).toHaveBeenCalledWith(expect.objectContaining({ dsn, release }));
     } finally {
       delete (globalThis as Record<string, unknown>)['__SENTRY_RELEASE__'];
     }
@@ -115,6 +119,8 @@ describe('initSentry', () => {
   it('uses "unknown" as the release when the bundle constant is missing', () => {
     const dsn = 'https://abc123@sentry.io/99999';
     initSentry(dsn);
-    expect(sentryInitSpy).toHaveBeenCalledWith(expect.objectContaining({ release: 'unknown' }));
+    expect(SentryBrowser.init).toHaveBeenCalledWith(
+      expect.objectContaining({ release: 'unknown' }),
+    );
   });
 });

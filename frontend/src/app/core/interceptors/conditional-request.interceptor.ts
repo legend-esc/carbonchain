@@ -28,6 +28,11 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+/** Clear the in-memory cache. Exposed for testing. */
+export function clearCache(): void {
+  cache.clear();
+}
+
 function isCacheable(req: HttpRequest<unknown>): boolean {
   if (req.method !== 'GET') return false;
   const url = req.url;

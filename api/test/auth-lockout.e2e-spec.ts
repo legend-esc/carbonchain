@@ -22,7 +22,9 @@ class InMemoryCacheService {
     return entry.expiresAt !== undefined && entry.expiresAt <= Date.now();
   }
 
-  private getEntry(key: string): { value: string; expiresAt?: number } | undefined {
+  private getEntry(
+    key: string,
+  ): { value: string; expiresAt?: number } | undefined {
     const entry = this.store.get(key);
     if (!entry) {
       return undefined;
@@ -229,9 +231,7 @@ describe('Auth account lockout (e2e) #1174', () => {
     expect(await cache.get(failedAttemptsKey(ACCOUNT))).not.toBeNull();
 
     // Simulate a successful verify path.
-    jest
-      .spyOn(authService as any, 'validateChallenge')
-      .mockResolvedValue(true);
+    jest.spyOn(authService as any, 'validateChallenge').mockResolvedValue(true);
 
     const result = await authService.verifyAndIssueToken({
       account: ACCOUNT,

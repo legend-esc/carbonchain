@@ -7,10 +7,7 @@ import {
 } from './a11y-threshold';
 
 describe('a11y-threshold — score & violation rules', () => {
-  function makeAxeResults(
-    violations: Partial<Result>[],
-    passesCount: number = 10,
-  ): AxeResults {
+  function makeAxeResults(violations: Partial<Result>[], passesCount: number = 10): AxeResults {
     return {
       violations: violations as Result[],
       passes: Array.from({ length: passesCount }, (_, i) => ({ id: `pass-${i}` })) as never[],

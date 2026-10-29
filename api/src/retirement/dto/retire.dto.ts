@@ -24,10 +24,10 @@ import { ApiProperty } from '@nestjs/swagger';
  * only; the proxy route must never add independent logic.
  */
 export class RetireDto {
-  @ApiProperty({ example: '2024 Scope 3 offset', maxLength: 200 })
+  @ApiProperty({ example: '2024 Scope 3 offset', maxLength: 500 })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(200)
+  @MaxLength(500)
   reason: string;
 
   @ApiProperty({

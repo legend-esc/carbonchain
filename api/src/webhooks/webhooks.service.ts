@@ -126,6 +126,30 @@ export interface PaginatedWebhookDeliveries {
   pageSize: number;
 }
 
+/** #1184 — aggregate webhook metrics for the admin dashboard. */
+export interface WebhookMetrics {
+  totalWebhooks: number;
+  activeWebhooks: number;
+  inactiveWebhooks: number;
+  totalDeliveries: number;
+  successfulDeliveries: number;
+  failedDeliveries: number;
+  pendingDeliveries: number;
+  averageDeliveryLatencyMs: number;
+  failureRateByEventType: Array<{
+    eventType: string;
+    total: number;
+    failed: number;
+    failureRate: number;
+  }>;
+  topFailingWebhooks: Array<{
+    id: string;
+    url: string;
+    failureCount: number;
+    active: boolean;
+  }>;
+}
+
 const VALID_DELIVERY_STATUSES: readonly ('pending' | 'success' | 'failed')[] = [
   'pending',
   'success',
@@ -333,9 +357,7 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
    *
    * @throws NotFoundException when no webhook with the given id exists.
    */
-  async rotateWebhookSecret(
-    id: string,
-  ): Promise<WebhookSecretRotationResult> {
+  async rotateWebhookSecret(id: string): Promise<WebhookSecretRotationResult> {
     const secret = randomBytes(32).toString('hex');
 
     const result = await this.dataSource.query(

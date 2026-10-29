@@ -2,6 +2,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
+declare const process: { cwd(): string };
+
 /**
  * #961 — guards i18n coverage in the test suite (in addition to the
  * `npm run i18n:check` build-time lint). Every locale must carry the same

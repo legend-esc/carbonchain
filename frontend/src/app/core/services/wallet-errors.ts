@@ -123,7 +123,13 @@ export function normalizeWalletError(err: unknown): WalletError {
     return new WalletError(textOf(err) || 'Request rejected.', 'userRejected', err);
   }
 
-  if (text.includes('timeout') || text.includes('timed out') || text.includes('etimedout')) {
+  if (
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('etimedout') ||
+    text.includes('did not respond') ||
+    text.includes('respond within')
+  ) {
     return new WalletError(textOf(err) || 'Wallet request timed out.', 'timeout', err);
   }
 

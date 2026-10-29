@@ -126,7 +126,7 @@ export class VerifiersController {
     @Param('address') address: string,
     @Param('creditId') creditId: string,
     @Request() req: any,
-  ): Promise<void> {
+  ): Promise<void | string> {
     return this.verifiersService.approveCredit(
       address,
       creditId,

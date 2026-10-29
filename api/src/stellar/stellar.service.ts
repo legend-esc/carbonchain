@@ -184,7 +184,7 @@ export class StellarService implements OnModuleInit {
       publicKey,
       async () => {
         const account = await this.horizonServer.loadAccount(publicKey);
-        return Number(account.sequenceNumber);
+        return Number(account.sequence);
       },
     );
   }
@@ -229,12 +229,15 @@ export class StellarService implements OnModuleInit {
    */
   private computeSorobanFee(
     simulation: rpc.Api.SimulateTransactionSuccessResponse,
+    baseFee: number = 0,
   ): string {
     const minResourceFee = parseInt(
       String(simulation.minResourceFee ?? '0'),
       10,
     );
-    const withBuffer = Math.ceil(minResourceFee * this.feeBufferMultiplier);
+    const withBuffer = Math.ceil(
+      (baseFee + minResourceFee) * this.feeBufferMultiplier,
+    );
     // Ensure we always pay at least the minimum base fee (100 stroops).
     return String(Math.max(withBuffer, FALLBACK_BASE_FEE));
   }
@@ -745,7 +748,7 @@ export class StellarService implements OnModuleInit {
     }
 
     const assembledTx = rpc.assembleTransaction(tx, simulation).build();
-    const fee = this.computeSorobanFee(simulation);
+    const fee = this.computeSorobanFee(simulation, baseFee);
 
     // Rebuild with the buffered fee while preserving the assembled sorobanData
     // (resource fee + footprint). The result is unsigned.
@@ -842,7 +845,7 @@ export class StellarService implements OnModuleInit {
           // next attempt re-fetches the current sequence from Horizon.
           await this.seqNoManager.reset(pk);
           if (this.inMemorySeqManager) {
-            await this.inMemorySeqManager.reset(pk);
+            this.inMemorySeqManager.reset(pk);
           }
 
           await new Promise<void>((resolve) => setTimeout(resolve, delay));
@@ -1277,7 +1280,7 @@ export class StellarService implements OnModuleInit {
     let account: Account;
     if (sourceAccount) {
       const accountInfo = await this.getAccountInfo(sourceAccount);
-      account = new Account(sourceAccount, accountInfo.sequenceNumber);
+      account = new Account(sourceAccount, accountInfo.sequence);
     } else {
       // Dummy source account (all-zeroes) is valid for simulation-only calls
       // because the RPC node does not enforce account existence.

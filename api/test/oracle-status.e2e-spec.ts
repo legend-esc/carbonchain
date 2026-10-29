@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { OracleModule } from '../src/oracle/oracle.module';
-import { OracleService, OracleStatusResponse } from '../src/oracle/oracle.service';
+import {
+  OracleService,
+  OracleStatusResponse,
+} from '../src/oracle/oracle.service';
 import { CacheService } from '../src/common/cache.service';
 import { ConfigModule } from '@nestjs/config';
 
@@ -69,9 +72,7 @@ describe('Oracle status endpoint (e2e) — Issue #1169', () => {
   });
 
   it('GET /oracle/status is public (no auth required)', async () => {
-    await request(app.getHttpServer())
-      .get('/oracle/status')
-      .expect(200);
+    await request(app.getHttpServer()).get('/oracle/status').expect(200);
   });
 
   it('GET /oracle/status includes paused, oracle count, and threshold', async () => {
@@ -135,11 +136,18 @@ describe('OracleService.getOracleStatus — Issue #1169', () => {
       }),
     } as any;
 
-    const mockKeypair = { getAdminKeypair: () => ({ publicKey: () => 'GADMIN' }) } as any;
+    const mockKeypair = {
+      getAdminKeypair: () => ({ publicKey: () => 'GADMIN' }),
+    } as any;
 
     // Import after mocking context — we use the real service with mocked deps
     const { OracleService } = await import('../src/oracle/oracle.service');
-    const service = new OracleService(mockStellar, mockKeypair, mockConfig, fakeCache);
+    const service = new OracleService(
+      mockStellar,
+      mockKeypair,
+      mockConfig,
+      fakeCache,
+    );
 
     const result = await service.getOracleStatus();
 
@@ -186,13 +194,20 @@ describe('OracleService.getOracleStatus — Issue #1169', () => {
     } as any;
 
     const mockStellar = {
-      readContract: jest.fn(async () => ({} as any)),
+      readContract: jest.fn(async () => ({}) as any),
     } as any;
 
-    const mockKeypair = { getAdminKeypair: () => ({ publicKey: () => 'GADMIN' }) } as any;
+    const mockKeypair = {
+      getAdminKeypair: () => ({ publicKey: () => 'GADMIN' }),
+    } as any;
 
     const { OracleService } = await import('../src/oracle/oracle.service');
-    const service = new OracleService(mockStellar, mockKeypair, mockConfig, fakeCache);
+    const service = new OracleService(
+      mockStellar,
+      mockKeypair,
+      mockConfig,
+      fakeCache,
+    );
 
     const result = await service.getOracleStatus();
 

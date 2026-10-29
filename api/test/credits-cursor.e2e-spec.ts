@@ -28,8 +28,7 @@ import { CREDIT_REPOSITORY } from './../src/credits/credit.repository';
 import { JwtAuthGuard } from './../src/auth/jwt-auth.guard';
 import { CreditStatus } from '../../shared';
 
-const TEST_ACCOUNT =
-  'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
+const TEST_ACCOUNT = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
 
 class TestJwtAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -122,7 +121,9 @@ describe('Credits cursor pagination (e2e)', () => {
 
     expect(first.body.next_cursor).not.toBeNull();
     const cursor = first.body.next_cursor as string;
-    const firstIds = first.body.data.map((c: { id: string }) => c.id) as string[];
+    const firstIds = first.body.data.map(
+      (c: { id: string }) => c.id,
+    ) as string[];
 
     // Get second page using cursor
     const second = await request(app.getHttpServer())
@@ -135,7 +136,9 @@ describe('Credits cursor pagination (e2e)', () => {
     expect(second.body.pagination_mode).toBe('cursor');
 
     // Second page must not contain any IDs from first page
-    const secondIds = second.body.data.map((c: { id: string }) => c.id) as string[];
+    const secondIds = second.body.data.map(
+      (c: { id: string }) => c.id,
+    ) as string[];
     const overlap = secondIds.filter((id) => firstIds.includes(id));
     expect(overlap).toHaveLength(0);
   });
@@ -314,6 +317,6 @@ async function seedCredits(repo: ICreditRepository): Promise<void> {
   ];
 
   for (const c of credits) {
-    await repo.save(c as Parameters<typeof repo.save>[0]);
+    await repo.save(c);
   }
 }

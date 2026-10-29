@@ -689,7 +689,9 @@ export class MarketplaceComponent implements OnInit {
   /** Focus returns here when the dialog closes. */
   private lastFocused: HTMLElement | null = null;
 
-  readonly hasMore = computed(() => this.nextCursor !== null);
+  hasMore(): boolean {
+    return this.nextCursor !== null;
+  }
 
   readonly hasActiveFilters = computed(() => {
     const f = this.filters;
