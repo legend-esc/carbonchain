@@ -8,7 +8,6 @@ import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { AdminGuard } from '../src/admin/admin.guard';
 import { createHmac } from 'crypto';
-import { DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 
 describe('Webhook rotation & DLQ (e2e)', () => {

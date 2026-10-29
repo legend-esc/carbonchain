@@ -47,6 +47,7 @@ const DEFAULT_LOCKOUT_DURATION_SECONDS = 15 * 60;
 
 /** Issue #1173 — user-facing session metadata record. */
 export interface SessionRecord {
+  familyId: string;
   account: string;
   userAgent?: string;
   ip?: string;
@@ -322,6 +323,7 @@ export class AuthService {
     const now = Date.now();
     const existing = await this.cache.get<SessionRecord>(sessionKey);
     const session: SessionRecord = {
+      familyId: resolvedFamilyId,
       account,
       userAgent: metadata?.userAgent ?? existing?.userAgent,
       ip: metadata?.ip ?? existing?.ip,
@@ -396,6 +398,7 @@ export class AuthService {
     if (existingSession) {
       const updated: SessionRecord = {
         ...existingSession,
+        familyId,
         userAgent: metadata?.userAgent ?? existingSession.userAgent,
         ip: metadata?.ip ?? existingSession.ip,
         lastUsedAt: Date.now(),
@@ -654,6 +657,20 @@ export class AuthService {
   async isTokenRevoked(jti: string): Promise<boolean> {
     const [result] = await this.checkTokensRevoked([jti]);
     return result?.revoked === true;
+  }
+
+  /**
+   * Issue #1175 — Directly blocklist an access token JTI (e.g. for admin
+   * revocation or test helpers). The JTI is stored with a default TTL equal
+   * to the access token lifetime.
+   */
+  async revokeToken(jti: string): Promise<void> {
+    if (!jti) {
+      return;
+    }
+    const blocklistKey = `${ACCESS_BLOCKLIST_PREFIX}${jti}`;
+    await this.cache.set(blocklistKey, true, ACCESS_TOKEN_TTL_SECONDS);
+    this.logger.log(`JWT revoked by direct revokeToken: jti=${jti}`);
   }
 
   /**

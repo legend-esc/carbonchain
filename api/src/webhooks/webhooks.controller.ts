@@ -9,6 +9,8 @@ import {
   UseGuards,
   NotFoundException,
   BadRequestException,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import type {
@@ -275,10 +277,20 @@ export class WebhooksController {
   @ApiResponse({ status: 404, description: 'Webhook not found' })
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post(':id/rotate-secret')
+  @HttpCode(HttpStatus.OK)
   async rotateWebhookSecret(
     @Param('id') id: string,
   ): Promise<WebhookSecretRotationResult> {
-    const result = await this.webhooksService.rotateWebhookSecret(id);
+    let result: WebhookSecretRotationResult;
+    try {
+      result = await this.webhooksService.rotateWebhookSecret(id);
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (msg.toLowerCase().includes('not found')) {
+        throw new NotFoundException(`Webhook ${id} not found`);
+      }
+      throw err;
+    }
     if (!result) {
       throw new NotFoundException(`Webhook ${id} not found`);
     }
@@ -313,6 +325,7 @@ export class WebhooksController {
   @ApiResponse({ status: 404, description: 'Webhook not found' })
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('retry-failed')
+  @HttpCode(HttpStatus.OK)
   async retryFailedDeliveries(
     @Body() body: { webhookId?: string } = {},
     @Query('webhookId') queryWebhookId?: string,

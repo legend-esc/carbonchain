@@ -3,39 +3,48 @@ import {
   INestApplication,
   ExecutionContext,
   CanActivate,
+  UnauthorizedException,
 } from '@nestjs/common';
 import request from 'supertest';
-import { AuthModule } from '../src/auth/auth.module';
+import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
-import { CacheModule } from '../src/common/cache.module';
 import { CacheService } from '../src/common/cache.service';
+import { StellarKeypairService } from '../src/stellar/stellar-keypair.service';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { AdminGuard } from '../src/admin/admin.guard';
-import { ConfigModule } from '@nestjs/config';
 
 /**
  * In-memory fake CacheService used by the e2e tests.
- * Implements the subset of CacheService used by AuthService, including
- * `mget` and `scanKeys` needed for batch revocation checks and session listing.
+ * Stores arbitrary values (not just strings) to match the behaviour of the
+ * real CacheService which JSON-serialises/deserialises on get/set.
+ * Implements the full subset used by AuthService.
  */
 class InMemoryCacheService {
-  private store = new Map<string, string>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private store = new Map<string, any>();
 
-  async get(key: string): Promise<string | null> {
-    return this.store.has(key) ? (this.store.get(key) as string) : null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async get<T = any>(key: string): Promise<T | null> {
+    return this.store.has(key) ? (this.store.get(key) as T) : null;
   }
 
-  async set(key: string, value: string, _ttl?: number): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async set(key: string, value: any, _ttl?: number): Promise<boolean> {
     this.store.set(key, value);
+    return true;
   }
 
   async del(key: string): Promise<void> {
     this.store.delete(key);
   }
 
-  async mget(keys: string[]): Promise<(string | null)[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async mget<T = any>(keys: string[]): Promise<(T | null)[]> {
     return keys.map((key) =>
-      this.store.has(key) ? (this.store.get(key) as string) : null,
+      this.store.has(key) ? (this.store.get(key) as T) : null,
     );
   }
 
@@ -48,6 +57,10 @@ class InMemoryCacheService {
     return Array.from(this.store.keys()).filter((key) => regex.test(key));
   }
 
+  async ttl(_key: string): Promise<number> {
+    return -1;
+  }
+
   async reset(): Promise<void> {
     this.store.clear();
   }
@@ -55,26 +68,26 @@ class InMemoryCacheService {
 
 /**
  * Fake JWT guard that reads the user from the `x-test-user` header.
- * Allows tests to simulate authenticated users without issuing real JWTs.
+ * Throws UnauthorizedException when the header is absent so NestJS returns 401.
  */
 class FakeJwtAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
     const account = req.headers['x-test-user'];
     if (!account) {
-      return false;
+      throw new UnauthorizedException();
     }
     req.user = {
       account,
       sub: account,
-      role: req.headers['x-test-role'] || 'user',
+      role: req.headers['x-test-role'] ?? 'user',
     };
     return true;
   }
 }
 
 /**
- * Fake admin guard that checks the `x-test-role` header.
+ * Fake admin guard: allows access only when `req.user.role === 'admin'`.
  */
 class FakeAdminGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
@@ -96,14 +109,40 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
     cache = new InMemoryCacheService();
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [
-        AuthModule,
-        CacheModule,
-        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+      controllers: [AuthController],
+      providers: [
+        AuthService,
+        { provide: CacheService, useValue: cache },
+        {
+          provide: JwtService,
+          useValue: {
+            sign: jest
+              .fn()
+              .mockImplementation(
+                (payload: Record<string, unknown>) =>
+                  `mock.jwt.${JSON.stringify(payload)}`,
+              ),
+            verify: jest.fn().mockReturnValue({ sub: account }),
+            decode: jest.fn().mockReturnValue({ sub: account }),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
+          },
+        },
+        {
+          provide: StellarKeypairService,
+          useValue: {
+            getAdminKeypair: jest.fn(() => ({ publicKey: () => 'GADMIN' })),
+            getAdminPublicKey: jest.fn(() => 'GADMIN'),
+          },
+        },
+        Reflector,
+        JwtAuthGuard,
       ],
     })
-      .overrideProvider(CacheService)
-      .useValue(cache)
       .overrideGuard(JwtAuthGuard)
       .useClass(FakeJwtAuthGuard)
       .overrideGuard(AdminGuard)
@@ -126,7 +165,7 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
 
   describe('GET /auth/sessions', () => {
     it('returns active sessions with device metadata', async () => {
-      await authService.issueTokenPair(account, { userAgent, ip });
+      await authService.issueTokenPair(account, undefined, { userAgent, ip });
 
       const res = await request(app.getHttpServer())
         .get('/auth/sessions')
@@ -149,8 +188,8 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
     });
 
     it('only returns sessions for the authenticated account', async () => {
-      await authService.issueTokenPair(account, { userAgent, ip });
-      await authService.issueTokenPair('other@example.com', {
+      await authService.issueTokenPair(account, undefined, { userAgent, ip });
+      await authService.issueTokenPair('other@example.com', undefined, {
         userAgent: 'other-agent',
         ip: '10.0.0.1',
       });
@@ -167,7 +206,10 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
 
   describe('DELETE /auth/sessions/:familyId', () => {
     it('revokes the session and subsequent refresh fails', async () => {
-      const pair = await authService.issueTokenPair(account, { userAgent, ip });
+      const pair = await authService.issueTokenPair(account, undefined, {
+        userAgent,
+        ip,
+      });
 
       const sessions = await authService.getActiveSessions(account);
       expect(sessions.length).toBe(1);
@@ -182,7 +224,7 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
       expect(after.length).toBe(0);
 
       await expect(
-        authService.rotateRefreshToken(pair.refreshToken, { userAgent, ip }),
+        authService.rotateRefreshToken(pair.refresh_token, { userAgent, ip }),
       ).rejects.toBeDefined();
     });
 
@@ -195,7 +237,14 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
 
   describe('rotateRefreshToken', () => {
     it('updates lastUsedAt on rotation', async () => {
-      const pair = await authService.issueTokenPair(account, { userAgent, ip });
+      const pair = await authService.issueTokenPair(account, undefined, {
+        userAgent,
+        ip,
+      });
+
+      // Verify the refresh token was actually stored in the mock cache.
+      const storedToken = await cache.get(`auth:refresh:token:${pair.refresh_token}`);
+      expect(storedToken).not.toBeNull();
 
       const before = await authService.getActiveSessions(account);
       expect(before.length).toBe(1);
@@ -204,7 +253,7 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
       // Ensure a measurable time difference.
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await authService.rotateRefreshToken(pair.refreshToken, {
+      await authService.rotateRefreshToken(pair.refresh_token, {
         userAgent,
         ip,
       });

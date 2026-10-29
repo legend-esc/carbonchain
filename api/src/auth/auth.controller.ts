@@ -700,4 +700,104 @@ export class AuthController {
       // Ignore parse errors — let the main handler produce the right error
     }
   }
+
+  // ── Issue #1173: Session management ──────────────────────────────────────
+
+  /**
+   * GET /auth/sessions — List all active sessions for the authenticated user.
+   */
+  @ApiOperation({ summary: 'List active sessions (Issue #1173)' })
+  @ApiResponse({ status: 200, description: 'Array of active session records' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('sessions')
+  async getSessions(
+    @Request() req: { user: { account: string } },
+  ): Promise<unknown[]> {
+    return this.authService.getActiveSessions(req.user.account);
+  }
+
+  /**
+   * DELETE /auth/sessions/:familyId — Revoke a specific session by family ID.
+   */
+  @ApiOperation({ summary: 'Revoke a session (Issue #1173)' })
+  @ApiParam({ name: 'familyId', description: 'Refresh token family ID' })
+  @ApiResponse({ status: 200, description: 'Session revoked' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Session not found' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Delete('sessions/:familyId')
+  @HttpCode(HttpStatus.OK)
+  async revokeSession(
+    @Request() req: { user: { account: string } },
+    @Param('familyId') familyId: string,
+  ): Promise<{ revoked: boolean }> {
+    await this.authService.revokeSession(req.user.account, familyId);
+    return { revoked: true };
+  }
+
+  // ── Issue #1175: Batch revocation check ──────────────────────────────────
+
+  /**
+   * POST /auth/revocation/check — Batch-check whether JTIs are revoked.
+   * Admin-only.
+   */
+  @ApiOperation({
+    summary: 'Batch-check JTI revocation status (Issue #1175)',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        jtis: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['jtis'],
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Array of { jti, revoked } results',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('revocation/check')
+  async checkRevocations(
+    @Body() body: { jtis: string[] },
+  ): Promise<{ results: Array<{ jti: string; revoked: boolean }> }> {
+    const results = await this.authService.checkTokensRevoked(body.jtis ?? []);
+    return { results };
+  }
+
+  // ── Issue #1174: Admin account unlock ────────────────────────────────────
+
+  /**
+   * POST /auth/unlock — Admin action to clear an account lockout.
+   */
+  @ApiOperation({ summary: 'Unlock a locked account (Issue #1174)' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'Stellar account address' },
+      },
+      required: ['account'],
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Account unlocked' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('unlock')
+  @HttpCode(HttpStatus.OK)
+  async unlock(
+    @Body() body: { account: string },
+  ): Promise<{ unlocked: boolean }> {
+    await this.authService.unlockAccount(body.account);
+    return { unlocked: true };
+  }
 }
