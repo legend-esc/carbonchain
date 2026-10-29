@@ -109,6 +109,9 @@ describe('JWT logout flow (issue #491)', () => {
     const blocklist = new Map<string, boolean>();
     const cacheService = {
       get: jest.fn(async (key: string) => blocklist.get(key) ?? null),
+      mget: jest.fn(async (keys: string[]) =>
+        keys.map((key) => blocklist.get(key) ?? null),
+      ),
       set: jest.fn(async (key: string, value: boolean) => {
         blocklist.set(key, value);
         return true;

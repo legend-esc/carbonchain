@@ -5,11 +5,37 @@
  * Covers: auth guards, correct status transitions, error cases (bad state, missing fields).
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, HttpStatus, ValidationPipe } from '@nestjs/common';
+import {
+  INestApplication,
+  HttpStatus,
+  ValidationPipe,
+  CanActivate,
+  ExecutionContext,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { CreditsService } from '../src/credits/credits.service';
-import { CreditStatus } from '../src/shared';
+import { CreditStatus } from '../../shared';
+import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
+
+const CALLER_PUBLIC_KEY =
+  'GADMINTESTACCOUNT000000000000000000000000000000000000000';
+
+class TestJwtAuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest<{
+      headers: Record<string, string | undefined>;
+      user?: { account: string };
+    }>();
+    if (!req.headers.authorization) {
+      throw new UnauthorizedException();
+    }
+    req.user = { account: 'GTEST_E2E_ACCOUNT' };
+    return true;
+  }
+}
 
 // ─── Shared mock credit factory ───────────────────────────────────────────────
 
@@ -47,6 +73,8 @@ describe('POST /credits/:id/expire (e2e)', () => {
     })
       .overrideProvider(CreditsService)
       .useValue({ expireCredit: mockExpire })
+      .overrideGuard(JwtAuthGuard)
+      .useClass(TestJwtAuthGuard)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -63,7 +91,7 @@ describe('POST /credits/:id/expire (e2e)', () => {
   it('401 — rejects unauthenticated callers', () => {
     return request(app.getHttpServer())
       .post('/credits/credit-abc/expire')
-      .send({ reason: 'vintage passed' })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, reason: 'vintage passed' })
       .expect(HttpStatus.UNAUTHORIZED);
   });
 
@@ -74,7 +102,10 @@ describe('POST /credits/:id/expire (e2e)', () => {
     const { body } = await request(app.getHttpServer())
       .post('/credits/credit-abc/expire')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ reason: 'vintage year 2023 passed' })
+      .send({
+        adminPublicKey: CALLER_PUBLIC_KEY,
+        reason: 'vintage year 2023 passed',
+      })
       .expect(HttpStatus.CREATED);
 
     expect(body.status).toBe(CreditStatus.Expired);
@@ -86,35 +117,29 @@ describe('POST /credits/:id/expire (e2e)', () => {
 
   it('400 — cannot expire a Retired credit', async () => {
     mockExpire.mockRejectedValue(
-      Object.assign(
-        new Error('Credit cannot be expired — current status: Retired'),
-        {
-          status: 400,
-        },
+      new BadRequestException(
+        'Credit cannot be expired — current status: Retired',
       ),
     );
 
     await request(app.getHttpServer())
       .post('/credits/credit-retired/expire')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ reason: 'vintage passed' })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, reason: 'vintage passed' })
       .expect(HttpStatus.BAD_REQUEST);
   });
 
   it('400 — cannot expire an already Expired credit', async () => {
     mockExpire.mockRejectedValue(
-      Object.assign(
-        new Error('Credit cannot be expired — current status: Expired'),
-        {
-          status: 400,
-        },
+      new BadRequestException(
+        'Credit cannot be expired — current status: Expired',
       ),
     );
 
     await request(app.getHttpServer())
       .post('/credits/credit-expired/expire')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ reason: 'duplicate' })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, reason: 'duplicate' })
       .expect(HttpStatus.BAD_REQUEST);
   });
 });
@@ -132,6 +157,8 @@ describe('POST /credits/:id/dispute (e2e)', () => {
     })
       .overrideProvider(CreditsService)
       .useValue({ disputeCredit: mockDispute })
+      .overrideGuard(JwtAuthGuard)
+      .useClass(TestJwtAuthGuard)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -149,6 +176,7 @@ describe('POST /credits/:id/dispute (e2e)', () => {
     return request(app.getHttpServer())
       .post('/credits/credit-abc/dispute')
       .send({
+        disputerPublicKey: CALLER_PUBLIC_KEY,
         evidenceIpfsHash: 'bafybei123',
         reason: 'deforestation detected',
       })
@@ -166,6 +194,7 @@ describe('POST /credits/:id/dispute (e2e)', () => {
       .post('/credits/credit-abc/dispute')
       .set('Authorization', 'Bearer valid-verifier-token')
       .send({
+        disputerPublicKey: CALLER_PUBLIC_KEY,
         evidenceIpfsHash: 'bafybei-evidence',
         reason: 'satellite imagery shows deforestation',
       })
@@ -178,11 +207,8 @@ describe('POST /credits/:id/dispute (e2e)', () => {
 
   it('400 — cannot dispute an already Disputed credit', async () => {
     mockDispute.mockRejectedValue(
-      Object.assign(
-        new Error('Credit cannot be disputed — current status: Disputed'),
-        {
-          status: 400,
-        },
+      new BadRequestException(
+        'Credit cannot be disputed — current status: Disputed',
       ),
     );
 
@@ -190,6 +216,7 @@ describe('POST /credits/:id/dispute (e2e)', () => {
       .post('/credits/credit-disputed/dispute')
       .set('Authorization', 'Bearer valid-verifier-token')
       .send({
+        disputerPublicKey: CALLER_PUBLIC_KEY,
         evidenceIpfsHash: 'bafybei123',
         reason: 'duplicate dispute',
       })
@@ -198,11 +225,8 @@ describe('POST /credits/:id/dispute (e2e)', () => {
 
   it('400 — cannot dispute a Retired credit', async () => {
     mockDispute.mockRejectedValue(
-      Object.assign(
-        new Error('Credit cannot be disputed — current status: Retired'),
-        {
-          status: 400,
-        },
+      new BadRequestException(
+        'Credit cannot be disputed — current status: Retired',
       ),
     );
 
@@ -210,6 +234,7 @@ describe('POST /credits/:id/dispute (e2e)', () => {
       .post('/credits/credit-retired/dispute')
       .set('Authorization', 'Bearer valid-verifier-token')
       .send({
+        disputerPublicKey: CALLER_PUBLIC_KEY,
         evidenceIpfsHash: 'bafybei123',
         reason: 'test',
       })
@@ -230,6 +255,8 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
     })
       .overrideProvider(CreditsService)
       .useValue({ resolveDispute: mockResolve })
+      .overrideGuard(JwtAuthGuard)
+      .useClass(TestJwtAuthGuard)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -246,7 +273,7 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
   it('401 — rejects unauthenticated callers', () => {
     return request(app.getHttpServer())
       .post('/credits/credit-abc/resolve-dispute')
-      .send({ outcome: 0 })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, outcome: 0 })
       .expect(HttpStatus.UNAUTHORIZED);
   });
 
@@ -257,7 +284,7 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
     const { body } = await request(app.getHttpServer())
       .post('/credits/credit-disputed/resolve-dispute')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ outcome: 0 })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, outcome: 0 })
       .expect(HttpStatus.CREATED);
 
     expect(body.status).toBe(CreditStatus.Active);
@@ -274,7 +301,7 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
     const { body } = await request(app.getHttpServer())
       .post('/credits/credit-disputed/resolve-dispute')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ outcome: 1 })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, outcome: 1 })
       .expect(HttpStatus.CREATED);
 
     expect(body.status).toBe(CreditStatus.Flagged);
@@ -287,7 +314,7 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
     const { body } = await request(app.getHttpServer())
       .post('/credits/credit-disputed/resolve-dispute')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ outcome: 2 })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, outcome: 2 })
       .expect(HttpStatus.CREATED);
 
     expect(body.status).toBe(CreditStatus.Retired);
@@ -295,18 +322,15 @@ describe('POST /credits/:id/resolve-dispute (e2e)', () => {
 
   it('400 — cannot resolve a non-Disputed credit', async () => {
     mockResolve.mockRejectedValue(
-      Object.assign(
-        new Error('Credit is not in Disputed status — current status: Active'),
-        {
-          status: 400,
-        },
+      new BadRequestException(
+        'Credit is not in Disputed status — current status: Active',
       ),
     );
 
     await request(app.getHttpServer())
       .post('/credits/credit-active/resolve-dispute')
       .set('Authorization', 'Bearer valid-admin-token')
-      .send({ outcome: 0 })
+      .send({ adminPublicKey: CALLER_PUBLIC_KEY, outcome: 0 })
       .expect(HttpStatus.BAD_REQUEST);
   });
 });

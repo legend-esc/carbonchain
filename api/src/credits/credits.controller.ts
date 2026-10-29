@@ -35,6 +35,7 @@ import { ExpireCreditDto } from './dto/expire-credit.dto';
 import { DisputeCreditDto } from './dto/dispute-credit.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { MergeCreditsDto } from './dto/merge-credits.dto';
+import { BatchStatusTransitionDto } from './dto/batch-status-transition.dto';
 import { CreditMetadata, CreditStatus } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult, CursorPageResult } from './credit.repository';
@@ -42,7 +43,7 @@ import { BulkCreditsDto } from './dto/bulk-credits.dto';
 import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
 import { Idempotent } from '../common/idempotency.interceptor';
 import { RetirementService } from '../retirement/retirement.service';
-import { RetirementRequestDto } from '../retirement/dto/retire.dto';
+import { RetireDto } from '../retirement/dto/retire.dto';
 
 @ApiTags('credits')
 @Controller('credits')
@@ -144,6 +145,18 @@ export class CreditsController {
   async getCreditCount(): Promise<{ count: number }> {
     const count = await this.creditsService.getCreditCount();
     return { count };
+  }
+
+  @ApiOperation({ summary: 'Get pending credit count for a verifier' })
+  @ApiResponse({
+    status: 200,
+    description: 'Pending credit count for the verifier',
+  })
+  @Get('verifier/:address/pending-count')
+  async getVerifierPendingCount(
+    @Param('address') address: string,
+  ): Promise<{ address: string; pendingCount: number }> {
+    return this.creditsService.getVerifierPendingCount(address);
   }
 
   @ApiOperation({ summary: 'Get credit by ID' })
@@ -319,6 +332,27 @@ export class CreditsController {
     );
   }
 
+  @ApiOperation({
+    summary: 'Batch transition credits to Expired or Disputed',
+    description:
+      'Processes each credit sequentially with partial-success mode. ' +
+      'Dispute actions require evidenceIpfsHash.',
+  })
+  @ApiResponse({ status: 201, description: 'Batch transition processed' })
+  @ApiResponse({ status: 400, description: 'Invalid batch transition request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtAuthGuard)
+  @Post('batch-transition')
+  async batchTransitionCredits(
+    @Body() dto: BatchStatusTransitionDto,
+    @Request() req: { user: { account: string } },
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ creditId: string; error: string }>;
+  }> {
+    return this.creditsService.batchTransitionCredits(dto, req.user.account);
+  }
+
   /**
    * ## Thin proxy — retire via credit ID route
    *
@@ -342,7 +376,7 @@ export class CreditsController {
   @Post(':id/retire')
   async retireCredit(
     @Param('id') creditId: string,
-    @Body() body: RetirementRequestDto,
+    @Body() body: RetireDto,
     @Request() req: { user: { account: string } },
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
     return this.retirementService.retireCredit(
