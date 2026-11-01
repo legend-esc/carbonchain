@@ -46,6 +46,7 @@ describe('Oracle Swagger documentation (e2e) — Issue #1171', () => {
       .addBearerAuth()
       .build();
     swaggerDoc = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, swaggerDoc);
 
     await app.init();
   });
@@ -142,9 +143,6 @@ describe('Oracle Swagger documentation (e2e) — Issue #1171', () => {
   // ── Swagger UI renders ─────────────────────────────────────────────────────
 
   it('GET /api/docs returns the Swagger UI HTML', async () => {
-    // We need to set up the Swagger UI endpoint manually
-    SwaggerModule.setup('api/docs', app, swaggerDoc);
-
     const res = await request(app.getHttpServer())
       .get('/api/docs/')
       .expect(200);

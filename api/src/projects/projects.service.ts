@@ -29,6 +29,7 @@ import { Inject } from '@nestjs/common';
 import { uploadToIpfsWithRetry } from './ipfs-upload-retry.util';
 import { isValidIpfsCid } from '../common/ipfs-cid.util';
 import client from 'prom-client';
+import { getOrCreateMetric } from '../common/prometheus.util';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -71,11 +72,15 @@ export class ProjectsService {
       this.config.get<number>('IPFS_TIMEOUT_MS', 30_000),
     );
 
-    this.repinAttemptsCounter = new client.Counter({
-      name: 'carbonchain_ipfs_repin_attempts_total',
-      help: 'Total IPFS re-pin attempts during nightly refresh job',
-      labelNames: ['status'],
-    });
+    this.repinAttemptsCounter = getOrCreateMetric(
+      'carbonchain_ipfs_repin_attempts_total',
+      () =>
+        new client.Counter({
+          name: 'carbonchain_ipfs_repin_attempts_total',
+          help: 'Total IPFS re-pin attempts during nightly refresh job',
+          labelNames: ['status'],
+        }),
+    );
   }
 
   // ── IPFS upload ─────────────────────────────────────────────────────────

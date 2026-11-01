@@ -129,7 +129,9 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
+            get: jest.fn(
+              (_key: string, defaultValue?: unknown) => defaultValue,
+            ),
           },
         },
         {
@@ -243,7 +245,9 @@ describe('Auth Sessions & Batch Revocation (e2e)', () => {
       });
 
       // Verify the refresh token was actually stored in the mock cache.
-      const storedToken = await cache.get(`auth:refresh:token:${pair.refresh_token}`);
+      const storedToken = await cache.get(
+        `auth:refresh:token:${pair.refresh_token}`,
+      );
       expect(storedToken).not.toBeNull();
 
       const before = await authService.getActiveSessions(account);

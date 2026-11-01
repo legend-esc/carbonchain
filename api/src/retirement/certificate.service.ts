@@ -28,6 +28,7 @@ import { Worker } from 'worker_threads';
 import { join } from 'path';
 import { isValidIpfsCid } from '../common/ipfs-cid.util';
 import client from 'prom-client';
+import { getOrCreateMetric } from '../common/prometheus.util';
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -114,20 +115,32 @@ export class CertificateService {
       this.configService.get<number>('CERT_TIMEOUT_MS', 30_000),
     );
 
-    this.activeWorkersGauge = new client.Gauge({
-      name: 'carbonchain_cert_active_workers',
-      help: 'Number of certificate worker threads currently executing',
-    });
+    this.activeWorkersGauge = getOrCreateMetric(
+      'carbonchain_cert_active_workers',
+      () =>
+        new client.Gauge({
+          name: 'carbonchain_cert_active_workers',
+          help: 'Number of certificate worker threads currently executing',
+        }),
+    );
 
-    this.queueDepthGauge = new client.Gauge({
-      name: 'carbonchain_cert_queue_depth',
-      help: 'Number of certificate generation jobs currently waiting in the pool queue',
-    });
+    this.queueDepthGauge = getOrCreateMetric(
+      'carbonchain_cert_queue_depth',
+      () =>
+        new client.Gauge({
+          name: 'carbonchain_cert_queue_depth',
+          help: 'Number of certificate generation jobs currently waiting in the pool queue',
+        }),
+    );
 
-    this.queueOverflowCounter = new client.Counter({
-      name: 'carbonchain_cert_queue_overflow_total',
-      help: 'Total certificate generation requests rejected because the pool queue was full (429)',
-    });
+    this.queueOverflowCounter = getOrCreateMetric(
+      'carbonchain_cert_queue_overflow_total',
+      () =>
+        new client.Counter({
+          name: 'carbonchain_cert_queue_overflow_total',
+          help: 'Total certificate generation requests rejected because the pool queue was full (429)',
+        }),
+    );
   }
 
   // ── Public API ────────────────────────────────────────────────────────────

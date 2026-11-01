@@ -1,10 +1,25 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { HttpStatus, INestApplication } from '@nestjs/common';
+import { Global, HttpStatus, INestApplication, Module } from '@nestjs/common';
 import request from 'supertest';
 import { WebhooksModule } from '../src/webhooks/webhooks.module';
 import { WebhookIpAllowlistService } from '../src/webhooks/webhook-ip-allowlist.service';
 import { CacheService } from '../src/common/cache.service';
 import { ConfigModule } from '@nestjs/config';
+import { DataSource } from 'typeorm';
+import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
+import { AdminGuard } from '../src/admin/admin.guard';
+import { WebhookIpAllowlistGuard } from '../src/webhooks/webhook-ip-allowlist.guard';
+
+const fakeDataSource = {
+  query: jest.fn().mockResolvedValue([]),
+} as unknown as DataSource;
+
+@Global()
+@Module({
+  providers: [{ provide: DataSource, useValue: fakeDataSource }],
+  exports: [DataSource],
+})
+class FakeDataSourceModule {}
 
 /**
  * Issue #1170 — Webhook IP Allowlist Management CRUD endpoints.
@@ -43,14 +58,19 @@ describe('Webhook IP Allowlist Management (e2e) — Issue #1170', () => {
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
+        FakeDataSourceModule,
         WebhooksModule,
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
       ],
     })
       .overrideProvider(CacheService)
       .useValue(fakeCache)
-      // Bypass JWT guard
-      .overrideProvider('JwtAuthGuard')
+      // Bypass auth and IP guards so tests focus on allowlist CRUD.
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AdminGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(WebhookIpAllowlistGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -205,6 +225,7 @@ describe('Webhook Metrics Endpoint (e2e) — Issue #1184', () => {
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
+        FakeDataSourceModule,
         WebhooksModule,
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
       ],
@@ -212,10 +233,10 @@ describe('Webhook Metrics Endpoint (e2e) — Issue #1184', () => {
       .overrideProvider(CacheService)
       .useValue(fakeCache)
       // Bypass JWT guard
-      .overrideProvider('JwtAuthGuard')
+      .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       // Admin guard can be toggled per-test to simulate non-admin access
-      .overrideProvider('AdminGuard')
+      .overrideGuard(AdminGuard)
       .useValue({
         canActivate: (context: any) => {
           if (adminAllowed) {
@@ -228,6 +249,8 @@ describe('Webhook Metrics Endpoint (e2e) — Issue #1184', () => {
           return false;
         },
       })
+      .overrideGuard(WebhookIpAllowlistGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -249,17 +272,16 @@ describe('Webhook Metrics Endpoint (e2e) — Issue #1184', () => {
       .expect(HttpStatus.OK);
 
     expect(res.body).toBeDefined();
-    expect(res.body.webhooks).toBeDefined();
-    expect(typeof res.body.webhooks.total).toBe('number');
-    expect(typeof res.body.webhooks.active).toBe('number');
-    expect(typeof res.body.webhooks.inactive).toBe('number');
+    expect(typeof res.body.totalWebhooks).toBe('number');
+    expect(typeof res.body.activeWebhooks).toBe('number');
+    expect(typeof res.body.inactiveWebhooks).toBe('number');
 
-    expect(res.body.deliveries).toBeDefined();
-    expect(typeof res.body.deliveries.success).toBe('number');
-    expect(typeof res.body.deliveries.failed).toBe('number');
-    expect(typeof res.body.deliveries.pending).toBe('number');
+    expect(typeof res.body.totalDeliveries).toBe('number');
+    expect(typeof res.body.successfulDeliveries).toBe('number');
+    expect(typeof res.body.failedDeliveries).toBe('number');
+    expect(typeof res.body.pendingDeliveries).toBe('number');
 
-    expect(typeof res.body.averageLatencyMs).toBe('number');
+    expect(typeof res.body.averageDeliveryLatencyMs).toBe('number');
     expect(res.body.failureRateByEventType).toBeDefined();
     expect(Array.isArray(res.body.topFailingWebhooks)).toBe(true);
   });

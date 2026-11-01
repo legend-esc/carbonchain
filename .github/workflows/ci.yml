@@ -115,6 +115,9 @@ jobs:
     name: Contracts Coverage Gate
     runs-on: ubuntu-latest
     needs: [build-contracts]
+    permissions:
+      issues: write
+      pull-requests: write
     env:
       # Ratchet this value upward as tests improve. CI is red when measured
       # coverage drops below this percentage.

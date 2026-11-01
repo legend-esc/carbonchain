@@ -226,8 +226,8 @@ describe('Credits cursor pagination (e2e)', () => {
 
     expect(body.data).toBeDefined();
     expect(body.pagination_mode).toBe('cursor');
-    for (const credit of body.data as Array<{ vintageYear: number }>) {
-      expect(credit.vintageYear).toBe(2023);
+    for (const credit of body.data as Array<{ vintage_year: number }>) {
+      expect(credit.vintage_year).toBe(2023);
     }
   });
 

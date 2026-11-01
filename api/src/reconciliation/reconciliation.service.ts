@@ -15,6 +15,7 @@ import { scValToNative, nativeToScVal } from '@stellar/stellar-sdk';
 import { CreditEntity } from '../credits/credit.entity';
 import { StellarService } from '../stellar/stellar.service';
 import client from 'prom-client';
+import { getOrCreateMetric } from '../common/prometheus.util';
 import { CreditStatus } from '../../../shared';
 
 export interface DriftRecord {
@@ -49,22 +50,34 @@ export class ReconciliationService {
     this.contractId =
       this.configService.get<string>('CREDIT_REGISTRY_CONTRACT_ID') ?? '';
 
-    this.dataFreshnessGauge = new client.Gauge({
-      name: 'carbonchain_reconciliation_last_run_timestamp',
-      help: 'Unix epoch seconds of the last successful nightly reconciliation run',
-    });
+    this.dataFreshnessGauge = getOrCreateMetric(
+      'carbonchain_reconciliation_last_run_timestamp',
+      () =>
+        new client.Gauge({
+          name: 'carbonchain_reconciliation_last_run_timestamp',
+          help: 'Unix epoch seconds of the last successful nightly reconciliation run',
+        }),
+    );
 
-    this.driftDetectedCounter = new client.Counter({
-      name: 'carbonchain_reconciliation_drift_detected_total',
-      help: 'Total number of credit status drifts detected vs on-chain state',
-      labelNames: ['chain_status'],
-    });
+    this.driftDetectedCounter = getOrCreateMetric(
+      'carbonchain_reconciliation_drift_detected_total',
+      () =>
+        new client.Counter({
+          name: 'carbonchain_reconciliation_drift_detected_total',
+          help: 'Total number of credit status drifts detected vs on-chain state',
+          labelNames: ['chain_status'],
+        }),
+    );
 
-    this.driftCorrectedCounter = new client.Counter({
-      name: 'carbonchain_reconciliation_drift_corrected_total',
-      help: 'Total number of credit status drifts auto-corrected in the DB',
-      labelNames: ['chain_status'],
-    });
+    this.driftCorrectedCounter = getOrCreateMetric(
+      'carbonchain_reconciliation_drift_corrected_total',
+      () =>
+        new client.Counter({
+          name: 'carbonchain_reconciliation_drift_corrected_total',
+          help: 'Total number of credit status drifts auto-corrected in the DB',
+          labelNames: ['chain_status'],
+        }),
+    );
   }
 
   /**

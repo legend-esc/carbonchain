@@ -215,6 +215,19 @@ export class WebhooksController {
     return this.webhooksService.getDeliveries(filters);
   }
 
+  @ApiOperation({ summary: 'Get webhook metrics' })
+  @ApiResponse({ status: 200, description: 'Webhook metrics' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized or client IP not in allowlist',
+  })
+  @ApiResponse({ status: 403, description: 'Admin privileges required' })
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('metrics')
+  async getWebhookMetrics(): Promise<WebhookMetrics> {
+    return this.webhooksService.getWebhookMetrics();
+  }
+
   @ApiOperation({ summary: 'Get webhook by ID' })
   @ApiResponse({ status: 200, description: 'Webhook details' })
   @ApiResponse({
@@ -350,18 +363,5 @@ export class WebhooksController {
     @Param('id') id: string,
   ): Promise<PaginatedWebhookDeliveries> {
     return this.webhooksService.getDeliveries(id);
-  }
-
-  @ApiOperation({ summary: 'Get webhook metrics' })
-  @ApiResponse({ status: 200, description: 'Webhook metrics' })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized or client IP not in allowlist',
-  })
-  @ApiResponse({ status: 403, description: 'Admin privileges required' })
-  @UseGuards(JwtAuthGuard, AdminGuard)
-  @Get('metrics')
-  async getWebhookMetrics(): Promise<WebhookMetrics> {
-    return this.webhooksService.getWebhookMetrics();
   }
 }

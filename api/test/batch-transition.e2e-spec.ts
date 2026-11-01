@@ -9,10 +9,32 @@
  * - Missing evidenceIpfsHash for dispute action → 400
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, HttpStatus, ValidationPipe } from '@nestjs/common';
+import {
+  INestApplication,
+  HttpStatus,
+  ValidationPipe,
+  CanActivate,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { CreditsService } from '../src/credits/credits.service';
+import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
+
+class TestJwtAuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest<{
+      headers: Record<string, string | undefined>;
+      user?: { account: string };
+    }>();
+    if (!req.headers.authorization) {
+      throw new UnauthorizedException();
+    }
+    req.user = { account: 'GTEST_E2E_ACCOUNT' };
+    return true;
+  }
+}
 
 describe('POST /credits/batch-transition (e2e)', () => {
   let app: INestApplication;
@@ -25,6 +47,8 @@ describe('POST /credits/batch-transition (e2e)', () => {
     })
       .overrideProvider(CreditsService)
       .useValue({ batchTransitionCredits: mockBatchTransition })
+      .overrideGuard(JwtAuthGuard)
+      .useClass(TestJwtAuthGuard)
       .compile();
 
     app = moduleFixture.createNestApplication();

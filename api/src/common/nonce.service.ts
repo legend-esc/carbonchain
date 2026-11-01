@@ -91,6 +91,8 @@ export class NonceService {
   private readonly logger = new Logger(NonceService.name);
   private client: RedisClient | null = null;
   private connected = false;
+  /** True when REDIS_URL is absent — nonce dedup is intentionally disabled. */
+  private disabled = false;
 
   // ── #938: Circuit-breaker state ───────────────────────────────────────────
 
@@ -120,10 +122,10 @@ export class NonceService {
   async connect(): Promise<void> {
     const url = this.config.get<string>('REDIS_URL');
     if (!url) {
+      this.disabled = true;
       this.logger.warn(
         'REDIS_URL not set — nonce deduplication disabled (on-chain guard only)',
       );
-      this._transitionCircuit('down');
       return;
     }
 
@@ -181,6 +183,9 @@ export class NonceService {
     nonce: string | bigint,
     ttlSeconds = NONCE_TTL_SECONDS,
   ): Promise<void> {
+    // ── No Redis configured: explicitly disabled, defer to on-chain guard ──
+    if (this.disabled) return;
+
     // ── #938: circuit check ───────────────────────────────────────────────
     if (!this.client || !this.connected) {
       this.logger.warn(

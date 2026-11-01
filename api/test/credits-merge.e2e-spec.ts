@@ -11,6 +11,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { CreditsService } from './../src/credits/credits.service';
+import { JwtAuthGuard } from './../src/auth/jwt-auth.guard';
 
 // ── shared test data ─────────────────────────────────────────────────────────
 
@@ -65,6 +66,8 @@ describe('CreditsController POST /credits/merge (e2e)', () => {
     })
       .overrideProvider(CreditsService)
       .useValue(buildMockService(mergeImpl))
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     const instance = moduleFixture.createNestApplication();
