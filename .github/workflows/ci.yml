@@ -5,8 +5,30 @@ on:
     branches: ["**"]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
+  # ── Change Detection ───────────────────────────────────────────────────────
+  # Only trigger live Testnet deployment when smart contracts, deployment scripts,
+  # or deployment configurations are modified. Avoids redundant on-chain deployments
+  # and state resets on unrelated frontend, backend, or documentation pushes.
+  changes:
+    name: Detect Changed Paths
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'scripts/deploy-testnet.sh'
+              - 'scripts/smoke-test.sh'
+              - 'scripts/contract-ids.testnet.json'
+              - '.github/workflows/ci.yml'
   # ── Issue #972 ─────────────────────────────────────────────────────────────
   # Build WASM exactly once and upload as an artifact. All downstream jobs that
   # need the compiled artifacts consume the artifact rather than rebuilding from
@@ -339,8 +361,10 @@ jobs:
   deploy:
     name: Testnet Deploy + Smoke Tests
     runs-on: ubuntu-latest
-    needs: [contracts, api]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [contracts, api, changes]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.changes.outputs.contracts == 'true'))
     environment: testnet
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
