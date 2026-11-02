@@ -69,7 +69,7 @@ jobs:
       # them without a second compilation pass. The artifact retention is kept
       # short (1 day) since it is only needed within the same workflow run.
       - name: Upload WASM artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wasm-artifacts
           path: contracts/target/wasm32v1-none/release/*.wasm
@@ -243,7 +243,7 @@ jobs:
               body,
             });
       - name: Upload LCOV report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: contracts-coverage-lcov
           path: contracts/coverage.lcov
@@ -353,7 +353,7 @@ jobs:
         run: cd api && npm run test:cov
       # #249 — upload coverage artifacts
       - name: Upload Coverage Report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: api-coverage-report
           path: api/coverage
@@ -416,7 +416,7 @@ jobs:
           ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
         run: ./scripts/smoke-test.sh
       - name: Upload contract IDs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: contract-ids-testnet
           path: scripts/contract-ids.testnet.json
