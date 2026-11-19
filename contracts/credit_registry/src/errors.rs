@@ -59,4 +59,6 @@ pub enum CarbonChainError {
     /// Returned when the token transfer (transfer or transfer_from) fails during
     /// deposit_stake or withdraw_stake (try_invoke_contract returned an error).
     StakeTransferFailed = 132,
+    /// The credit's vintage is older than the configured maximum age.
+    VintageExpired = 133,
 }

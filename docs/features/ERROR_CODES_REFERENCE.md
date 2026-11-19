@@ -2,13 +2,13 @@
 
 All CarbonChain smart contracts use stable numeric error codes. These codes are stable across contract upgrades and safe to use in API clients and monitoring rules.
 
-## Credit Registry (100–132)
+## Credit Registry (100–133)
 
 | Code | Name | Description | Triggering Functions |
 |------|------|-------------|---------------------|
-| 100 | `NotInitialized` | Contract has not been initialised | `pause`, `unpause`, `register_verifier`, `remove_verifier`, `slash_verifier`, `register_issuer`, `remove_issuer`, `register_methodology`, `submit_credit`, `resolve_flag`, `mark_retired`, `propose_admin`, `accept_admin`, `cancel_admin_transfer`, `update_retirement_contract`, `configure_verifier_services`, `add_verifier_service`, `remove_verifier_service`, `expire_credit`, `resolve_dispute`, `upgrade`, `get_audit_log` |
+| 100 | `NotInitialized` | Contract has not been initialised | `pause`, `unpause`, `register_verifier`, `remove_verifier`, `slash_verifier`, `register_issuer`, `remove_issuer`, `register_methodology`, `submit_credit`, `resolve_flag`, `mark_retired`, `propose_admin`, `accept_admin`, `cancel_admin_transfer`, `update_retirement_contract`, `configure_verifier_services`, `add_verifier_service`, `remove_verifier_service`, `expire_credit`, `resolve_dispute`, `upgrade`, `get_audit_log`, `update_max_vintage_age` |
 | 101 | `AlreadyInitialized` | Contract has already been initialised | `initialize` |
-| 102 | `Unauthorized` | Caller is not authorised for this operation | `pause`, `unpause`, `register_verifier`, `remove_verifier`, `slash_verifier`, `register_issuer`, `remove_issuer`, `approve_and_mint`, `flag_credit`, `resolve_flag`, `transfer_credit`, `split_credit`, `merge_credits`, `propose_admin`, `accept_admin`, `cancel_admin_transfer`, `expire_credit`, `resolve_dispute`, `upgrade`, `get_audit_log` |
+| 102 | `Unauthorized` | Caller is not authorised for this operation | `pause`, `unpause`, `register_verifier`, `remove_verifier`, `slash_verifier`, `register_issuer`, `remove_issuer`, `approve_and_mint`, `flag_credit`, `resolve_flag`, `transfer_credit`, `split_credit`, `merge_credits`, `propose_admin`, `accept_admin`, `cancel_admin_transfer`, `expire_credit`, `resolve_dispute`, `upgrade`, `get_audit_log`, `update_max_vintage_age` |
 | 103 | `InvalidMetadata` | Credit metadata is missing or malformed | `submit_credit`, `register_methodology`, `resolve_dispute`, `merge_credits`, `upgrade` |
 | 104 | `CreditNotFound` | Credit ID does not exist | `approve_and_mint`, `flag_credit`, `resolve_flag`, `mark_retired`, `transfer_credit`, `split_credit`, `merge_credits`, `get_credit`, `get_audit_log`, `expire_credit`, `resolve_dispute`, `dispute_credit` |
 | 105 | `InvalidStatusTransition` | Requested status change is not allowed | `approve_and_mint`, `flag_credit`, `mark_retired`, `transfer_credit`, `split_credit`, `merge_credits`, `expire_credit`, `dispute_credit` |
@@ -21,7 +21,7 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 112 | `ContractPaused` | Contract is paused; state-mutating ops are blocked | `deposit_stake`, `submit_credit`, `approve_and_mint`, `flag_credit`, `resolve_flag`, `mark_retired`, `transfer_credit`, `split_credit`, `merge_credits`, `configure_verifier_services`, `add_verifier_service`, `remove_verifier_service` |
 | 113 | `IssuerNotAllowed` | Issuer is not on the approved list | `submit_credit`, `register_issuer` |
 | 114 | `InvalidMethodology` | Methodology already exists or is malformed | `register_methodology` |
-| 115 | `InvalidNonce` | Replay-protection nonce does not match expected value | `register_verifier`, `remove_verifier`, `deposit_stake`, `withdraw_stake`, `slash_verifier`, `set_min_stake`, `set_stake_token`, `register_issuer`, `remove_issuer`, `register_methodology`, `submit_credit`, `approve_and_mint`, `flag_credit`, `resolve_flag`, `transfer_credit`, `split_credit`, `merge_credits`, `propose_admin`, `update_retirement_contract`, `configure_verifier_services`, `add_verifier_service`, `remove_verifier_service`, `upgrade` |
+| 115 | `InvalidNonce` | Replay-protection nonce does not match expected value | `register_verifier`, `remove_verifier`, `deposit_stake`, `withdraw_stake`, `slash_verifier`, `set_min_stake`, `set_stake_token`, `register_issuer`, `remove_issuer`, `register_methodology`, `submit_credit`, `approve_and_mint`, `flag_credit`, `resolve_flag`, `transfer_credit`, `split_credit`, `merge_credits`, `propose_admin`, `update_retirement_contract`, `configure_verifier_services`, `add_verifier_service`, `remove_verifier_service`, `upgrade`, `update_max_vintage_age` |
 | 116 | `NoPendingAdmin` | No admin transfer is pending | `accept_admin`, `cancel_admin_transfer` |
 | 117 | `InvalidSplit` | Fractional-credit split parameters are invalid | `split_credit` |
 | 118 | `InvalidDisputeStatus` | Cannot dispute or resolve a credit in its current state | `resolve_flag`, `resolve_dispute` |
@@ -39,6 +39,7 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 130 | `UnbondingNotReady` | Withdrawing stake before the 30-day unbonding period has elapsed | `withdraw_stake` |
 | 131 | `InvalidStakeToken` | Supplied `token_id` does not match the approved/deposited token | `deposit_stake`, `withdraw_stake` |
 | 132 | `StakeTransferFailed` | Token transfer failed during `deposit_stake` or `withdraw_stake` | `deposit_stake`, `withdraw_stake` |
+| 133 | `VintageExpired` | Vintage age in UTC calendar years exceeds the configured maximum (default: 15 years) | `submit_credit`, `submit_credit_with_session`, `transfer_credit` |
 
 ## Retirement (200–210)
 
@@ -56,14 +57,14 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 209 | `InvalidRegistry` | `registry_id` does not match the trusted credit registry | `retire`, `batch_retire` |
 | 210 | `RecordNotFound` | A retirement record with the given ID does not exist in storage | `set_certificate_hash` |
 
-## Marketplace (300–316)
+## Marketplace (300–318)
 
 | Code | Name | Description | Triggering Functions |
 |------|------|-------------|---------------------|
 | 300 | `OfferNotFound` | Offer ID does not exist | `get_offer`, `cancel_offer` |
 | 301 | `Unauthorized` | Caller is not the offer owner or admin | `pause`, `unpause`, `create_offer`, `cancel_offer`, `upgrade`, `update_min_price` |
 | 302 | `InvalidPrice` | Offer price is zero, negative, or below the minimum | `create_offer`, `update_offer_price` |
-| 303 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 | `create_offer` |
+| 303 | `InvalidTonnes` | Volume is zero, negative, not a multiple of 100,000, or exceeds the offer or backing credit; offer minimum is invalid | `create_offer`, `create_offer_with_minimum`, `buy_offer`, `buy_offer_quantity` |
 | 304 | `AlreadyClosed` | Offer has already been closed or filled | `cancel_offer`, `update_offer_price`, `buy_offer` |
 | 305 | `CreditNotActive` | Credit linked to the offer is not active | `create_offer` |
 | 306 | `NotInitialized` | Contract has not been initialized | `pause`, `unpause`, `add_allowed_token`, `remove_allowed_token`, `upgrade`, `update_min_price` |
@@ -73,10 +74,12 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 310 | `Overflow` | Arithmetic overflow detected | `create_offer` (via `next_id`), `buy_offer` |
 | 311 | `AlreadyInitialized` | Contract has already been initialized | `initialize` |
 | 312 | `InsufficientFunds` | Buyer does not hold enough of the payment asset | `buy_offer` |
-| 313 | `EscrowFailed` | Escrow transfer succeeded but offer record failed to persist | `create_offer` |
+| 313 | `EscrowFailed` | Offer persistence or an escrow return failed | `create_offer`, `buy_offer`, `buy_offer_quantity`, `reclaim_expired_offer` |
 | 314 | `CreditNotFound` | No credit exists for the given credit ID in the registry | `create_offer`, `cancel_offer` |
 | 315 | `InvalidRegistry` | The `registry_id` does not match the trusted credit registry | `create_offer`, `cancel_offer`, `buy_offer` |
 | 316 | `InvalidToken` | The `token_id` does not match the allowed payment token | `create_offer_with_asset`, `buy_offer` |
+| 317 | `InvalidExpiry` | Expiry must be strictly later than the current ledger timestamp | `create_offer`, `create_offer_with_asset`, `create_offer_with_minimum` |
+| 318 | `BelowMinimumQuantity` | Purchase quantity or a nonzero remainder is below the seller's minimum | `buy_offer`, `buy_offer_quantity` |
 
 ## MRV Oracle (400–412)
 
@@ -101,5 +104,6 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 - Error codes are **stable** — they will not change across contract upgrades.
 - All `tonnes` values use scaled units: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (0.1 tonne).
 - `InvalidInput` (retirement code 208) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
-- Code ranges are non-overlapping: credit_registry (100–132), retirement (200–210), marketplace (300–316), mrv_oracle (400–412). This prevents collisions when the NestJS API surfaces contract errors to clients.
+- Code ranges are non-overlapping: credit_registry (100–133), retirement (200–210), marketplace (300–318), mrv_oracle (400–412). This prevents collisions when the NestJS API surfaces contract errors to clients.
+- `update_max_vintage_age` requires admin authorization and a fresh nonce. A vintage exactly at the age limit remains valid. Zero permits only the current year and the future year already allowed by submission validation. Existing escrowed credits are also checked on transfer; expired escrow stays reclaimable until the registry permits its return.
 - Each contract's error enum is the source of truth: `contracts/credit_registry/src/errors.rs`, `contracts/retirement/src/errors.rs`, `contracts/marketplace/src/lib.rs`, `contracts/mrv_oracle/src/lib.rs`.

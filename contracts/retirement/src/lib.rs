@@ -1,8 +1,10 @@
 #![no_std]
 pub mod errors;
+pub mod events;
 pub mod types;
 
 use crate::errors::RetirementError;
+pub use crate::events::RetirementBatchProcessed;
 use crate::types::{
     BatchRetireFailure, BatchRetireResult, CreditMetadata, CreditStatus, DataKey, RetirementRecord,
     MIN_TTL, TTL_THRESHOLD,
@@ -561,11 +563,25 @@ impl Retirement {
         }
         env.storage().instance().set(&DataKey::AllRetirements, &all);
 
-        // Summary event for off-chain indexers (only emitted when at least one credit retired)
+        // Retain the existing summary for indexers that already consume it.
         BatchRetired {
-            buyer,
+            buyer: buyer.clone(),
             count: succeeded.len(),
             total_tonnes,
+        }
+        .publish(&env);
+
+        // Scope the batch ID to this contract and buyer's consumed nonce. The
+        // successful IDs also tie the summary to the records actually processed.
+        let mut batch_preimage = env.current_contract_address().to_xdr(&env);
+        batch_preimage.append(&buyer.to_xdr(&env));
+        batch_preimage.append(&nonce.to_xdr(&env));
+        batch_preimage.append(&succeeded.clone().to_xdr(&env));
+        RetirementBatchProcessed {
+            batch_id: env.crypto().sha256(&batch_preimage).into(),
+            total_tonnes,
+            credit_count: succeeded.len(),
+            retiree: buyer,
         }
         .publish(&env);
 
@@ -908,8 +924,41 @@ impl Retirement {
 mod tests {
     use super::*;
     use carbonchain_credit_registry::test_helpers::RegistryHelper;
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::{Env, String};
+    use soroban_sdk::testutils::{Address as _, Events, Ledger};
+    use soroban_sdk::{Env, String, TryFromVal};
+
+    fn assert_batch_event(
+        env: &Env,
+        contract_id: &Address,
+        buyer: &Address,
+        total_tonnes: i128,
+        credit_count: u32,
+    ) -> BytesN<32> {
+        let events = env.events().all();
+        let (address, topics, data) = events.last().unwrap();
+        let batch_id = BytesN::<32>::try_from_val(env, &topics.get(1).unwrap()).unwrap();
+        let event = RetirementBatchProcessed {
+            batch_id: batch_id.clone(),
+            total_tonnes,
+            credit_count,
+            retiree: buyer.clone(),
+        };
+        assert_eq!(address, *contract_id);
+        assert_eq!(topics, event.topics(env));
+        assert_eq!(data, event.data(env));
+        assert_eq!(topics.len(), 3);
+        assert_eq!(
+            topics.get(0).unwrap(),
+            Symbol::new(env, "retirement_batch_processed").into_val(env)
+        );
+        assert_eq!(topics.get(2).unwrap(), buyer.into_val(env));
+        let matching = events
+            .iter()
+            .filter(|(id, t, _)| id == contract_id && *t == event.topics(env))
+            .count();
+        assert_eq!(matching, 1, "exactly one summary per batch");
+        batch_id
+    }
 
     /// Returns (retirement_contract_id, registry, credit_id, retirement_admin, credit_owner)
     fn setup(env: &Env) -> (Address, RegistryHelper, BytesN<32>, Address, Address) {
@@ -1239,6 +1288,7 @@ mod tests {
 
         assert_eq!(result.succeeded.len(), 5);
         assert_eq!(result.failed.len(), 0);
+        assert_batch_event(&env, &contract_id, &buyer, 5_000_000, 5);
     }
 
     #[test]
@@ -1357,9 +1407,9 @@ mod tests {
         let mut credit_ids: Vec<BytesN<32>> = Vec::new(&env);
         let mut tonnes_vec: Vec<i128> = Vec::new(&env);
         credit_ids.push_back(credit_id.clone());
-        tonnes_vec.push_back(1_000_000);
+        tonnes_vec.push_back(500_000);
         credit_ids.push_back(cid2.clone());
-        tonnes_vec.push_back(1_000_000);
+        tonnes_vec.push_back(900_000);
         credit_ids.push_back(cid3.clone()); // invalid: buyer doesn't own this
         tonnes_vec.push_back(1_000_000);
 
@@ -1376,6 +1426,7 @@ mod tests {
         // Two valid credits should succeed; one invalid should be in failed list
         assert_eq!(result.succeeded.len(), 2);
         assert_eq!(result.failed.len(), 1);
+        assert_batch_event(&env, &contract_id, &buyer, 1_400_000, 2);
         assert_eq!(result.failed.get(0).unwrap().credit_id, cid3);
         assert_eq!(
             result.failed.get(0).unwrap().error_code,
@@ -1418,6 +1469,12 @@ mod tests {
 
         // All credits failed → treated as InvalidInput
         assert_eq!(err, RetirementError::InvalidInput);
+        let topic = Symbol::new(&env, "retirement_batch_processed").into_val(&env);
+        assert!(!env
+            .events()
+            .all()
+            .iter()
+            .any(|(id, topics, _)| { id == contract_id && topics.get(0) == Some(topic) }));
     }
 
     // ── Issue #233: get_total_retired_by_account ──────────────────────────────
@@ -1977,6 +2034,7 @@ mod tests {
             &registry.id,
             &n1,
         );
+        let batch1 = assert_batch_event(&env, &contract_id, &buyer, 1_000_000, 1);
 
         let n2 = client.get_nonce(&buyer);
         let mut ids2: Vec<BytesN<32>> = Vec::new(&env);
@@ -1990,6 +2048,11 @@ mod tests {
             &String::from_str(&env, "same reason"),
             &registry.id,
             &n2,
+        );
+        let batch2 = assert_batch_event(&env, &contract_id, &buyer, 1_000_000, 1);
+        assert_ne!(
+            batch1, batch2,
+            "batches in the same ledger need distinct IDs"
         );
 
         assert_ne!(

@@ -71,6 +71,27 @@ use crate::types::{
 #[cfg_attr(not(feature = "library"), contract)]
 pub struct CreditRegistry;
 
+/// Gregorian calendar year for a Unix timestamp, accounting for leap years.
+/// Uses 400-year eras to keep the calculation bounded even for large timestamps.
+fn calendar_year(timestamp: u64) -> u64 {
+    let days = timestamp / 86_400 + 719_468;
+    let era = days / 146_097;
+    let day_of_era = days % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month = (5 * day_of_year + 2) / 153;
+    era * 400 + year_of_era + u64::from(month >= 10)
+}
+
+fn validate_vintage_age(env: &Env, vintage_year: u32) -> Result<(), CarbonChainError> {
+    let age = calendar_year(env.ledger().timestamp()).saturating_sub(u64::from(vintage_year));
+    if age > u64::from(crate::storage::get_max_vintage_age(env)) {
+        return Err(CarbonChainError::VintageExpired);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "library"), contractimpl)]
 impl CreditRegistry {
@@ -100,6 +121,7 @@ impl CreditRegistry {
         set_admin(&env, &admin);
         set_retirement_contract(&env, &retirement_contract);
         set_required_approvals(&env, required_approvals);
+        crate::storage::set_max_vintage_age(&env, crate::storage::DEFAULT_MAX_VINTAGE_AGE);
         let _ = run_migrations(&env, CURRENT_VERSION);
         crate::storage::set_version(&env, crate::migrations::CURRENT_VERSION);
         ContractInitialized {
@@ -109,6 +131,38 @@ impl CreditRegistry {
         }
         .publish(&env);
         Ok(())
+    }
+
+    /// Update the maximum vintage age in calendar years (default: 15).
+    /// Zero permits only current and otherwise-valid future vintages.
+    /// Requires admin authorization and a fresh nonce. Takes effect immediately
+    /// for submissions and transfers, including credits already held in escrow.
+    ///
+    /// # Errors
+    /// - [`CarbonChainError::NotInitialized`] — registry has not been initialized.
+    /// - [`CarbonChainError::Unauthorized`] — caller is not the stored admin.
+    /// - [`CarbonChainError::InvalidNonce`] — nonce has already been consumed or is outside its window.
+    pub fn update_max_vintage_age(
+        env: Env,
+        admin: Address,
+        max_vintage_age: u32,
+        nonce: u64,
+    ) -> Result<(), CarbonChainError> {
+        let stored_admin = get_admin(&env).ok_or(CarbonChainError::NotInitialized)?;
+        admin.require_auth();
+        if admin != stored_admin {
+            return Err(CarbonChainError::Unauthorized);
+        }
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(CarbonChainError::InvalidNonce);
+        }
+        crate::storage::set_max_vintage_age(&env, max_vintage_age);
+        Ok(())
+    }
+
+    /// Return the configured maximum vintage age in calendar years.
+    pub fn get_max_vintage_age(env: Env) -> u32 {
+        crate::storage::get_max_vintage_age(&env)
     }
 
     // ── Pause / Unpause ──────────────────────────────────────────────────────
@@ -655,6 +709,7 @@ impl CreditRegistry {
     /// - [`CarbonChainError::InvalidNonce`] — `nonce` does not match the current issuer nonce.
     /// - [`CarbonChainError::InvalidMetadata`] — `methodology` is not registered, `vintage_year` is outside valid range, or `geography` is not a valid ISO 3166-1 alpha-2 code.
     /// - [`CarbonChainError::InvalidTonnes`] — `tonnes` is zero, negative, or exceeds the upper bound.
+    /// - [`CarbonChainError::VintageExpired`] — vintage exceeds the configured maximum calendar-year age.
     pub fn submit_credit(
         env: Env,
         issuer: Address,
@@ -702,10 +757,11 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidTonnes);
         }
         // Validate vintage_year: 1990 to current_year + 1
-        let current_year = (env.ledger().timestamp() / 31_536_000) as u32 + 1970;
-        if vintage_year < 1990 || vintage_year > current_year + 1 {
+        let current_year = calendar_year(env.ledger().timestamp());
+        if vintage_year < 1990 || u64::from(vintage_year) > current_year + 1 {
             return Err(CarbonChainError::InvalidMetadata);
         }
+        validate_vintage_age(&env, vintage_year)?;
         // Validate geography: must be a valid ISO 3166-1 alpha-2 country code
         if !VALID_ISO_COUNTRY_CODES
             .iter()
@@ -1054,6 +1110,9 @@ impl CreditRegistry {
 
     // ── Issue #85: Credit Transfer ───────────────────────────────────────────
 
+    /// Transfer an active credit owned by `from`.
+    /// Returns [`CarbonChainError::VintageExpired`] when its calendar-year age
+    /// exceeds the configured limit, without changing ownership or the nonce.
     pub fn transfer_credit(
         env: Env,
         from: Address,
@@ -1078,6 +1137,7 @@ impl CreditRegistry {
         if credit.status != CreditStatus::Active {
             return Err(CarbonChainError::InvalidStatusTransition);
         }
+        validate_vintage_age(&env, credit.vintage_year)?;
         // Issue #470: Remove from the old owner's index BEFORE updating ownership.
         remove_credit_from_owner(&env, &from, &credit_id);
         credit.owner = to.clone();
@@ -2119,6 +2179,154 @@ mod tests {
             &vnonce3,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vintage_age_configuration_requires_admin_auth_and_fresh_nonce() {
+        let (env, client, admin, _) = setup();
+        assert_eq!(client.get_max_vintage_age(), 15);
+        let nonce = client.get_nonce(&admin);
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_update_max_vintage_age(&stranger, &10, &0),
+            Err(Ok(CarbonChainError::Unauthorized))
+        );
+        client.update_max_vintage_age(&admin, &10, &nonce);
+        assert_eq!(env.auths()[0].0, admin);
+        assert_eq!(client.get_max_vintage_age(), 10);
+        assert_eq!(
+            client.try_update_max_vintage_age(&admin, &20, &nonce),
+            Err(Ok(CarbonChainError::InvalidNonce))
+        );
+        assert_eq!(client.get_max_vintage_age(), 10);
+        env.mock_auths(&[]);
+        assert!(client
+            .try_update_max_vintage_age(&admin, &20, &client.get_nonce(&admin))
+            .is_err());
+    }
+
+    #[test]
+    fn test_submit_credit_checks_vintage_age_and_boundary() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        submit_test_credit(&env, &client, &admin, &issuer);
+        for (vintage, valid) in [
+            (2009u32, false),
+            (2010, true),
+            (2011, true),
+            (2025, true),
+            (2026, true),
+        ] {
+            let nonce = client.get_nonce(&issuer);
+            let count = client.get_credit_count();
+            let result = client.try_submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &vintage,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "vintage-test"),
+                &nonce,
+            );
+            if valid {
+                assert!(result.is_ok());
+            } else {
+                assert_eq!(result, Err(Ok(CarbonChainError::VintageExpired)));
+                assert_eq!(client.get_nonce(&issuer), nonce);
+                assert_eq!(client.get_credit_count(), count);
+            }
+        }
+        client.update_max_vintage_age(&admin, &0, &client.get_nonce(&admin));
+        assert_eq!(
+            client.try_submit_credit(
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &2023,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "vintage-test"),
+                &client.get_nonce(&issuer)
+            ),
+            Err(Ok(CarbonChainError::VintageExpired))
+        );
+    }
+
+    #[test]
+    fn test_transfer_credit_expires_at_calendar_year_boundary() {
+        let (env, client, admin, verifier) = setup();
+        client.register_verifier(&admin, &verifier, &client.get_nonce(&admin));
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        client.approve_and_mint(&verifier, &id, &client.get_nonce(&verifier));
+        client.update_max_vintage_age(&admin, &1, &client.get_nonce(&admin));
+        let recipient = Address::generate(&env);
+        env.ledger().set_timestamp(1_767_225_599); // December 31, 2025, 23:59:59 UTC.
+        client.transfer_credit(&issuer, &recipient, &id, &client.get_nonce(&issuer));
+        env.ledger().set_timestamp(1_767_225_600); // January 1, 2026, 00:00:00 UTC.
+        let nonce = client.get_nonce(&recipient);
+        assert_eq!(
+            client.try_transfer_credit(&recipient, &issuer, &id, &nonce),
+            Err(Ok(CarbonChainError::VintageExpired))
+        );
+        assert_eq!(client.get_nonce(&recipient), nonce);
+        assert_eq!(client.get_credit(&id).owner, recipient);
+        assert!(client.list_credits_by_owner(&recipient).contains(&id));
+        assert!(!client.list_credits_by_owner(&issuer).contains(&id));
+        client.update_max_vintage_age(&admin, &2, &client.get_nonce(&admin));
+        client.transfer_credit(&recipient, &issuer, &id, &nonce);
+        assert_eq!(client.get_credit(&id).owner, issuer);
+    }
+
+    #[test]
+    fn test_calendar_year_handles_leap_years_and_year_end() {
+        for (timestamp, expected) in [
+            (0, 1970),
+            (951_782_400, 2000),
+            (1_735_689_599, 2024),
+            (1_735_689_600, 2025),
+            (4_102_444_799, 2099),
+            (4_102_444_800, 2100),
+        ] {
+            assert_eq!(calendar_year(timestamp), expected);
+        }
+    }
+
+    #[test]
+    fn test_vintage_setting_defaults_for_existing_registry() {
+        let (env, client, admin, _) = setup();
+        env.as_contract(&client.address, || {
+            env.storage().instance().remove(&DataKey::MaxVintageAge);
+        });
+        assert_eq!(client.get_max_vintage_age(), 15);
+        client.update_max_vintage_age(&admin, &10, &client.get_nonce(&admin));
+        assert_eq!(client.get_max_vintage_age(), 10);
+    }
+
+    #[test]
+    fn test_session_submission_rejects_expired_vintage_without_audit_changes() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        submit_test_credit(&env, &client, &admin, &issuer);
+        let session_id = client.create_session(&issuer);
+        let nonce = client.get_nonce(&issuer);
+        assert_eq!(
+            client.try_submit_credit_with_session(
+                &session_id,
+                &issuer,
+                &String::from_str(&env, "PROJ-001"),
+                &2009,
+                &String::from_str(&env, "VCS"),
+                &String::from_str(&env, "NG"),
+                &1_000_000,
+                &String::from_str(&env, "expired"),
+                &nonce,
+            ),
+            Err(Ok(CarbonChainError::VintageExpired))
+        );
+        assert_eq!(client.get_nonce(&issuer), nonce);
+        assert_eq!(client.get_session_operation_count(&session_id), 0);
     }
 
     // ── Issue #550: resolve_flag tests ───────────────────────────────────────
@@ -4112,6 +4320,9 @@ mod tests {
             &String::from_str(&env, "Desc"),
             &String::from_str(&env, "NG"),
         );
+        // This index stress test needs more distinct vintages than the default
+        // age window allows; explicitly configure its fixture policy.
+        client.update_max_vintage_age(&admin, &25, &client.get_nonce(&admin));
         let mut ids = Vec::new(&env);
         for i in 0..25u32 {
             let nonce = client.get_nonce(&issuer);
