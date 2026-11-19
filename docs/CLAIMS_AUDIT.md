@@ -75,7 +75,7 @@ cross-contract calls.
 To re-verify this audit at any time:
 
 ```bash
-# 1. Check fee collection is absent from marketplace
+# 1. Confirm fee collection is present in marketplace
 grep -r 'fee_bps\|fee_recipient\|fee_collection' contracts/marketplace/
 
 # 2. Confirm get_mrv_aggregate exists
@@ -101,3 +101,14 @@ grep -n '✅' IMPLEMENTATION_SUMMARY.md | grep -v '(see ' \
 - `FEATURES_IMPLEMENTED.md` — summary of issues #84–87 (not audited here; see separate review)
 - `.github/workflows/ci.yml` — contains `docs-drift` job that enforces citation rules
 - `README.md` — Roadmap section for aspirational claims
+
+## Fee collection follow-up (#1265)
+
+The historical #96 finding above is resolved by `contracts/marketplace/src/lib.rs`.
+`update_fee` authenticates the admin, consumes its nonce, and stores `FeeBps` and
+`FeeRecipient` in instance storage. `get_fee_bps` defaults to zero and
+`get_fee_recipient` returns the optional treasury. Rates above 1000 bps return
+`InvalidFee` (318). `buy_offer` pays floor(price × bps / 10000) to the treasury in
+the offer asset and pays the remainder to the seller. Zero or rounded-down fees
+retain one payment transfer. Tests cover authorization, replay, the fee cap,
+rounding, large prices, native and SAC payments, and the default zero fee.
