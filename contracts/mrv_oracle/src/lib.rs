@@ -3,7 +3,7 @@ mod history_ring_buffer;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
-    IntoVal, String, Symbol, Val, Vec,
+    FromVal, IntoVal, Map, String, Symbol, TryFromVal, Val, Vec,
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -16,7 +16,7 @@ pub struct MrvDataPoint {
     /// Carbon sequestration in scaled units. 1 tonne = 1_000_000 units.
     pub tonnes: i128,
     pub recorded_at: u64,
-    /// Flagged when the reading deviates >20% from the previous reading.
+    /// Flagged when the reading exceeds the project's effective anomaly threshold.
     pub anomaly: bool,
 }
 
@@ -49,6 +49,8 @@ pub enum DataKey {
     HistorySlots(String),
     /// Ring buffer metadata (head pointer, count) for per-project MRV history.
     HistoryMeta(String),
+    /// Per-methodology anomaly threshold in basis points.
+    MethodologyThreshold(Symbol),
 }
 
 #[contracterror]
@@ -288,8 +290,8 @@ impl MrvOracle {
     }
 
     /// Set a per-project anomaly threshold override in basis points.
-    /// When set, this value is used instead of the global threshold for the given project.
-    /// Pass 0 to clear the per-project override and revert to the global threshold.
+    /// When set, this value overrides both methodology and global thresholds.
+    /// Pass 0 to clear the override and use the methodology or global threshold.
     /// Only the admin may call this.
     ///
     /// # Errors
@@ -320,8 +322,38 @@ impl MrvOracle {
         Ok(())
     }
 
+    /// Set a methodology threshold (1..=10000 bps). Project overrides retain priority.
+    /// Requires the admin's authentication and consumes a replay-protected nonce.
+    /// The shorter entrypoint name fits Soroban's 32-character function name limit.
+    pub fn set_methodology_threshold(
+        env: Env,
+        admin: Address,
+        methodology: Symbol,
+        threshold_bps: u32,
+        nonce: u64,
+    ) -> Result<(), OracleError> {
+        Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(OracleError::InvalidNonce);
+        }
+        if threshold_bps == 0 || threshold_bps > 10_000 {
+            return Err(OracleError::InvalidThreshold);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::MethodologyThreshold(methodology), &threshold_bps);
+        Ok(())
+    }
+
+    /// Returns a methodology override, if configured.
+    pub fn get_methodology_threshold(env: Env, methodology: Symbol) -> Option<u32> {
+        env.storage()
+            .instance()
+            .get(&DataKey::MethodologyThreshold(methodology))
+    }
+
     /// Returns the per-project anomaly threshold override for `project_id`, if set.
-    /// Returns `None` if no per-project override is configured (falls back to global).
+    /// Returns `None` if no override is configured (uses methodology, then global).
     pub fn get_project_anomaly_threshold(env: Env, project_id: String) -> Option<u32> {
         env.storage()
             .instance()
@@ -373,7 +405,8 @@ impl MrvOracle {
 
     /// Submit a new MRV reading for a project. Returns `true` if an anomaly was detected.
     ///
-    /// An anomaly is flagged when the new reading deviates more than 20% from the previous one.
+    /// An anomaly is flagged when the new reading exceeds the effective threshold:
+    /// project override, then methodology override, then global (default 20%).
     /// The reading is stored as the latest value and appended to the project's history
     /// (capped at 100 entries; oldest entry is evicted when the cap is reached).
     ///
@@ -431,8 +464,9 @@ impl MrvOracle {
             return Err(OracleError::InvalidProject);
         }
 
-        // Use per-project threshold if set, otherwise fall back to global threshold
-        let threshold = Self::resolve_threshold(&env, &project_id);
+        // Project overrides take priority, then methodology, then the global default.
+        let threshold =
+            Self::resolve_threshold(&env, &project_id, &registry_id, &credits.get(0).unwrap())?;
         let (anomaly, prev_tonnes) = Self::detect_anomaly(&env, &project_id, tonnes, threshold)?;
 
         let point = MrvDataPoint {
@@ -753,17 +787,46 @@ impl MrvOracle {
             .unwrap_or(false)
     }
 
-    /// Resolve the effective anomaly threshold for a project.
-    /// Returns the per-project threshold if set, otherwise the global threshold.
-    fn resolve_threshold(env: &Env, project_id: &String) -> u32 {
-        let project_threshold: Option<u32> = env
+    /// Resolve a project's threshold using its first registered credit's methodology.
+    /// Registry methodology codes that cannot be represented as a Symbol fall back
+    /// to the global default, preserving support for existing arbitrary String codes.
+    fn resolve_threshold(
+        env: &Env,
+        project_id: &String,
+        registry_id: &Address,
+        credit_id: &BytesN<32>,
+    ) -> Result<u32, OracleError> {
+        if let Some(threshold) = env
             .storage()
             .instance()
-            .get(&DataKey::ProjectAnomalyThreshold(project_id.clone()));
-        match project_threshold {
-            Some(t) => t,
-            None => Self::get_anomaly_threshold(env.clone()),
+            .get(&DataKey::ProjectAnomalyThreshold(project_id.clone()))
+        {
+            return Ok(threshold);
         }
+        let metadata: Map<Symbol, Val> = env
+            .try_invoke_contract::<Map<Symbol, Val>, soroban_sdk::Error>(
+                registry_id,
+                &Symbol::new(env, "get_credit"),
+                (credit_id.clone(),).into_val(env),
+            )
+            .map_err(|_| OracleError::InvalidProject)?
+            .map_err(|_| OracleError::InvalidProject)?;
+        let methodology = metadata
+            .get(Symbol::new(env, "methodology"))
+            .ok_or(OracleError::InvalidProject)?;
+        let code = String::from_val(env, &methodology);
+        if code.len() <= 32 {
+            let mut bytes = [0u8; 32];
+            code.copy_into_slice(&mut bytes[..code.len() as usize]);
+            if let Ok(text) = core::str::from_utf8(&bytes[..code.len() as usize]) {
+                if let Ok(symbol) = Symbol::try_from_val(env, &text) {
+                    if let Some(threshold) = Self::get_methodology_threshold(env.clone(), symbol) {
+                        return Ok(threshold);
+                    }
+                }
+            }
+        }
+        Ok(Self::get_anomaly_threshold(env.clone()))
     }
 
     /// Returns `(is_anomaly, prev_tonnes)` for the latest reading of `project_id`.
@@ -1810,5 +1873,154 @@ mod tests {
             &n2,
         );
         assert!(anomaly, "expected anomaly after zero baseline");
+    }
+    #[test]
+    fn test_methodology_threshold_authentication_range_and_replay() {
+        let (env, client, _, _, admin) = setup();
+        let methodology = Symbol::new(&env, "forestry");
+        assert_eq!(client.get_methodology_threshold(&methodology), None);
+        let nonce = client.get_nonce(&admin);
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_set_methodology_threshold(&stranger, &methodology, &100, &0),
+            Err(Ok(OracleError::Unauthorized))
+        );
+        for threshold in [0, 10001] {
+            assert_eq!(
+                client.try_set_methodology_threshold(&admin, &methodology, &threshold, &nonce),
+                Err(Ok(OracleError::InvalidThreshold))
+            );
+            assert_eq!(client.get_nonce(&admin), nonce);
+        }
+        assert_eq!(
+            client.try_set_methodology_threshold(&admin, &methodology, &100, &(nonce + 16)),
+            Err(Ok(OracleError::InvalidNonce))
+        );
+        client.set_methodology_threshold(&admin, &methodology, &1, &nonce);
+        assert_eq!(client.get_methodology_threshold(&methodology), Some(1));
+        assert_eq!(env.auths()[0].0, admin);
+        assert_eq!(client.get_nonce(&admin), nonce + 1);
+        assert_eq!(
+            client.try_set_methodology_threshold(&admin, &methodology, &10000, &nonce),
+            Err(Ok(OracleError::InvalidNonce))
+        );
+        client.set_methodology_threshold(&admin, &methodology, &10000, &(nonce + 1));
+        assert_eq!(client.get_methodology_threshold(&methodology), Some(10000));
+        env.mock_auths(&[]);
+        assert!(client
+            .try_set_methodology_threshold(&admin, &methodology, &100, &(nonce + 2))
+            .is_err());
+        assert_eq!(client.get_methodology_threshold(&methodology), Some(10000));
+    }
+
+    #[test]
+    fn test_forestry_and_dac_methodology_thresholds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1735689600);
+        let registry = carbonchain_credit_registry::test_helpers::RegistryHelper::deploy(&env);
+        let registry_id = registry.id.clone();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let id = env.register(MrvOracle, ());
+        let client = MrvOracleClient::new(&env, &id);
+        registry.initialize(&admin, &Address::generate(&env), 1);
+        client.initialize(&admin);
+        client.set_trusted_registry(&admin, &registry_id, &0);
+        client.register_oracle(&admin, &oracle, &1);
+        registry.register_issuer(&admin, &issuer, registry.get_nonce(&admin));
+        for (name, threshold, anomaly) in [
+            ("forestry", Some(5000), false),
+            ("DAC", Some(100), true),
+            ("global", None, true),
+            ("long_methodology_code_more_than_32_chars", None, true),
+            ("methodology with spaces", None, true),
+        ] {
+            let project = String::from_str(&env, name);
+            registry.register_methodology(&admin, &project, &project, registry.get_nonce(&admin));
+            registry.register_project(
+                &admin,
+                &project,
+                &project,
+                &project,
+                &String::from_str(&env, "NG"),
+            );
+            registry.submit_credit(
+                &issuer,
+                &project,
+                2024,
+                &project,
+                &String::from_str(&env, "NG"),
+                1_000_000,
+                &String::from_str(&env, "bafytest"),
+                registry.get_nonce(&issuer),
+            );
+            if let Some(threshold) = threshold {
+                client.set_methodology_threshold(
+                    &admin,
+                    &Symbol::new(&env, name),
+                    &threshold,
+                    &client.get_nonce(&admin),
+                );
+            }
+            client.update_mrv_data(
+                &oracle,
+                &project,
+                &1_000_000,
+                &env.ledger().timestamp(),
+                &registry_id,
+                &client.get_nonce(&oracle),
+            );
+            client.update_mrv_data(
+                &oracle,
+                &project,
+                &1_300_000,
+                &env.ledger().timestamp(),
+                &registry_id,
+                &client.get_nonce(&oracle),
+            );
+            assert_eq!(client.get_latest(&project).unwrap().anomaly, anomaly);
+        }
+    }
+
+    #[test]
+    fn test_project_threshold_priority_over_methodology() {
+        let (env, client, oracle, registry, admin) = setup();
+        let project = String::from_str(&env, "PROJ-001");
+        client.set_methodology_threshold(
+            &admin,
+            &Symbol::new(&env, "VCS"),
+            &100,
+            &client.get_nonce(&admin),
+        );
+        client.set_project_anomaly_threshold(&admin, &project, &5000, &client.get_nonce(&admin));
+        client.update_mrv_data(
+            &oracle,
+            &project,
+            &1_000_000,
+            &env.ledger().timestamp(),
+            &registry,
+            &client.get_nonce(&oracle),
+        );
+        client.update_mrv_data(
+            &oracle,
+            &project,
+            &1_300_000,
+            &env.ledger().timestamp(),
+            &registry,
+            &client.get_nonce(&oracle),
+        );
+        assert!(!client.get_latest(&project).unwrap().anomaly);
+        client.set_project_anomaly_threshold(&admin, &project, &0, &client.get_nonce(&admin));
+        client.update_mrv_data(
+            &oracle,
+            &project,
+            &1_500_000,
+            &env.ledger().timestamp(),
+            &registry,
+            &client.get_nonce(&oracle),
+        );
+        assert!(client.get_latest(&project).unwrap().anomaly);
     }
 }

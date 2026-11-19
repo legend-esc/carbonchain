@@ -13,6 +13,8 @@ use crate::types::{
 /// Maximum number of credits allowed in a single `batch_retire` call.
 /// Exceeding this limit causes the Soroban instruction budget to be exhausted.
 const MAX_BATCH_SIZE: u32 = 20;
+/// Maximum Unicode characters in a retirement beneficiary declaration.
+pub const MAX_BENEFICIARY_LENGTH: usize = 128;
 
 // ── Unit convention (mirrors credit_registry) ────────────────────────────────
 //
@@ -23,7 +25,8 @@ const MAX_BATCH_SIZE: u32 = 20;
 const MIN_CREDIT_UNIT: i128 = 100_000;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractevent, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
+    contract, contractevent, contractimpl, Address, BytesN, Env, FromVal, IntoVal, Map, String,
+    Symbol, Val, Vec,
 };
 
 fn get_version(env: &Env) -> u32 {
@@ -125,6 +128,17 @@ pub struct Retire {
     pub buyer: Address,
     pub credit_id: BytesN<32>,
     pub retirement_id: BytesN<32>,
+}
+
+/// Beneficiary declaration for each successfully created retirement.
+/// The original `Retire` event is also emitted for existing indexers.
+#[contractevent]
+#[derive(Clone)]
+pub struct RetirementCreated {
+    pub buyer: Address,
+    pub credit_id: BytesN<32>,
+    pub retirement_id: BytesN<32>,
+    pub beneficiary: Option<String>,
 }
 
 #[contractevent]
@@ -229,6 +243,7 @@ impl Retirement {
     /// - [`RetirementError::ContractPaused`] — contract is paused.
     /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current buyer nonce.
     /// - [`RetirementError::InvalidRegistry`] — `registry_id` does not match the trusted registry.
+    /// - [`RetirementError::InvalidInput`] — beneficiary exceeds 128 Unicode characters.
     ///
     /// Panics if `tonnes` is zero or negative.
     pub fn retire(
@@ -237,6 +252,7 @@ impl Retirement {
         credit_id: BytesN<32>,
         tonnes: i128,
         reason: String,
+        beneficiary: Option<String>,
         registry_id: Address,
         nonce: u64,
     ) -> Result<BytesN<32>, RetirementError> {
@@ -244,6 +260,7 @@ impl Retirement {
             return Err(RetirementError::ContractPaused);
         }
         buyer.require_auth();
+        Self::validate_beneficiary(&beneficiary)?;
         if !consume_nonce(&env, &buyer, nonce) {
             return Err(RetirementError::InvalidNonce);
         }
@@ -322,6 +339,7 @@ impl Retirement {
             buyer: buyer.clone(),
             tonnes_retired: tonnes,
             reason,
+            beneficiary: beneficiary.clone(),
             retired_at: env.ledger().timestamp(),
             certificate_ipfs_hash: String::from_str(&env, ""),
             // Issue #589 — capture vintage year from credit metadata so the
@@ -360,6 +378,14 @@ impl Retirement {
         all.push_back(retirement_id.clone());
         env.storage().instance().set(&DataKey::AllRetirements, &all);
 
+        RetirementCreated {
+            buyer: buyer.clone(),
+            credit_id: record.credit_id.clone(),
+            retirement_id: retirement_id.clone(),
+            beneficiary,
+        }
+        .publish(&env);
+
         // Emit retirement event
         Retire {
             buyer,
@@ -382,12 +408,15 @@ impl Retirement {
     /// (the caller must supply at least one valid credit per batch).
     ///
     /// `registry_id` — the deployed credit_registry contract address.
+    /// `beneficiary` — an optional declaration shared by all successful retirements,
+    /// limited to 128 Unicode characters; oversized declarations reject the batch.
     pub fn batch_retire(
         env: Env,
         buyer: Address,
         credit_ids: Vec<BytesN<32>>,
         tonnes: Vec<i128>,
         reason: String,
+        beneficiary: Option<String>,
         registry_id: Address,
         nonce: u64,
     ) -> Result<BatchRetireResult, RetirementError> {
@@ -395,6 +424,7 @@ impl Retirement {
             return Err(RetirementError::ContractPaused);
         }
         buyer.require_auth();
+        Self::validate_beneficiary(&beneficiary)?;
         if !consume_nonce(&env, &buyer, nonce) {
             return Err(RetirementError::InvalidNonce);
         }
@@ -491,6 +521,7 @@ impl Retirement {
                 buyer: buyer.clone(),
                 tonnes_retired: tonne_amount,
                 reason: reason.clone(),
+                beneficiary: beneficiary.clone(),
                 retired_at: env.ledger().timestamp(),
                 certificate_ipfs_hash: String::from_str(&env, ""),
                 // Issue #589 — capture vintage year from credit metadata.
@@ -532,6 +563,14 @@ impl Retirement {
             list.push_back(retirement_id.clone());
             succeeded.push_back(retirement_id.clone());
             total_tonnes += tonne_amount;
+
+            RetirementCreated {
+                buyer: buyer.clone(),
+                credit_id: credit_id.clone(),
+                retirement_id: retirement_id.clone(),
+                beneficiary: beneficiary.clone(),
+            }
+            .publish(&env);
 
             // Emit individual retirement event for each successful credit
             Retire {
@@ -597,11 +636,7 @@ impl Retirement {
             .unwrap_or_else(|| Vec::new(&env));
         let mut total: i128 = 0;
         for id in ids.iter() {
-            if let Some(record) = env
-                .storage()
-                .persistent()
-                .get::<_, RetirementRecord>(&DataKey::Retirement(id))
-            {
+            if let Some(record) = Self::get_retirement(env.clone(), id) {
                 total += record.tonnes_retired;
             }
         }
@@ -705,9 +740,17 @@ impl Retirement {
 
     /// Fetch a retirement record by its ID. Returns `None` if not found.
     pub fn get_retirement(env: Env, retirement_id: BytesN<32>) -> Option<RetirementRecord> {
-        env.storage()
+        // Soroban struct maps require every field even when a field is optional.
+        // Normalize old records on read; certificate updates persist the new schema.
+        let mut fields: Map<Symbol, Val> = env
+            .storage()
             .persistent()
-            .get(&DataKey::Retirement(retirement_id))
+            .get(&DataKey::Retirement(retirement_id))?;
+        let key = Symbol::new(&env, "beneficiary");
+        if !fields.contains_key(key.clone()) {
+            fields.set(key, Val::VOID.into());
+        }
+        Some(RetirementRecord::from_val(&env, &fields.into_val(&env)))
     }
 
     /// Issue #544 — Commit the IPFS hash of the off-chain retirement certificate PDF.
@@ -817,10 +860,7 @@ impl Retirement {
     ) -> Result<(), RetirementError> {
         Self::require_admin(&env, &admin)?;
         // #689: use RecordNotFound when the retirement record does not exist
-        let mut record: RetirementRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Retirement(retirement_id.clone()))
+        let mut record = Self::get_retirement(env.clone(), retirement_id.clone())
             .ok_or(RetirementError::RecordNotFound)?;
 
         // Update the certificate hash on the record so get_retirement returns it
@@ -862,6 +902,24 @@ impl Retirement {
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
+
+    fn validate_beneficiary(beneficiary: &Option<String>) -> Result<(), RetirementError> {
+        if let Some(value) = beneficiary {
+            // Four bytes per Unicode scalar bounds the buffer and execution cost.
+            let mut bytes = [0u8; MAX_BENEFICIARY_LENGTH * 4];
+            let len = value.len() as usize;
+            if len > bytes.len() {
+                return Err(RetirementError::InvalidInput);
+            }
+            value.copy_into_slice(&mut bytes[..len]);
+            let text =
+                core::str::from_utf8(&bytes[..len]).map_err(|_| RetirementError::InvalidInput)?;
+            if text.chars().count() > MAX_BENEFICIARY_LENGTH {
+                return Err(RetirementError::InvalidInput);
+            }
+        }
+        Ok(())
+    }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), RetirementError> {
         let admin: Address = env
@@ -1029,6 +1087,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "2024 Scope 3 offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1056,6 +1115,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "2024 Scope 3 offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1081,6 +1141,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1104,6 +1165,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1124,6 +1186,7 @@ mod tests {
                 &credit_id,
                 &0,
                 &String::from_str(&env, "offset"),
+                &None,
                 &registry.id,
                 &nonce,
             )
@@ -1152,6 +1215,7 @@ mod tests {
                 &credit_ids,
                 &tonnes,
                 &String::from_str(&env, "offset"),
+                &None,
                 &registry.id,
                 &nonce,
             )
@@ -1178,6 +1242,7 @@ mod tests {
                 &credit_id,
                 &1_000_000,
                 &String::from_str(&env, "offset"),
+                &None,
                 &registry.id,
                 &nonce,
             )
@@ -1202,6 +1267,7 @@ mod tests {
                 &credit_id,
                 &1_000_000,
                 &String::from_str(&env, "offset"),
+                &None,
                 &registry.id,
                 &nonce,
             )
@@ -1282,6 +1348,7 @@ mod tests {
             &credit_ids,
             &tonnes,
             &String::from_str(&env, "batch offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1324,6 +1391,7 @@ mod tests {
             &credit_ids,
             &tonnes,
             &String::from_str(&env, "batch offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1359,6 +1427,7 @@ mod tests {
                 &credit_ids,
                 &tonnes_vec,
                 &String::from_str(&env, "oversized"),
+                &None,
                 &registry.id,
                 &nonce,
             )
@@ -1419,6 +1488,7 @@ mod tests {
             &credit_ids,
             &tonnes_vec,
             &String::from_str(&env, "batch offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1461,6 +1531,7 @@ mod tests {
                 &credit_ids,
                 &tonnes_vec,
                 &String::from_str(&env, "offset"),
+                &None,
                 &registry.id,
                 &nonce,
             )
@@ -1496,6 +1567,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset 1"),
+            &None,
             &registry.id,
             &n1,
         );
@@ -1506,6 +1578,7 @@ mod tests {
             &cid2,
             &1_000_000,
             &String::from_str(&env, "offset 2"),
+            &None,
             &registry.id,
             &n2,
         );
@@ -1544,6 +1617,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "same reason"),
+            &None,
             &registry.id,
             &n1,
         );
@@ -1555,6 +1629,7 @@ mod tests {
             &cid2,
             &1_000_000,
             &String::from_str(&env, "same reason"),
+            &None,
             &registry.id,
             &n2,
         );
@@ -1584,6 +1659,7 @@ mod tests {
             &fake_id,
             &1_000_000,
             &String::from_str(&env, "test"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1608,6 +1684,7 @@ mod tests {
             &credit_id,
             &1_000_001,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1630,6 +1707,7 @@ mod tests {
             &credit_id,
             &2_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1651,6 +1729,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1688,6 +1767,7 @@ mod tests {
             &small_credit_id,
             &100_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1726,6 +1806,7 @@ mod tests {
             &credit_ids,
             &tonnes_vec,
             &String::from_str(&env, "batch offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1770,6 +1851,7 @@ mod tests {
             &credit_ids,
             &tonnes_vec,
             &String::from_str(&env, "batch offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1797,6 +1879,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "2024 Scope 3 offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1840,6 +1923,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1896,6 +1980,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -1955,6 +2040,7 @@ mod tests {
                 &credit_id,
                 &1_000_000,
                 &String::from_str(&env, "offset"),
+                &None,
                 &fake_registry,
                 &nonce,
             )
@@ -1993,6 +2079,7 @@ mod tests {
                 &credit_ids,
                 &tonnes,
                 &String::from_str(&env, "batch"),
+                &None,
                 &fake_registry,
                 &nonce,
             )
@@ -2031,6 +2118,7 @@ mod tests {
             &ids1,
             &t1,
             &String::from_str(&env, "same reason"),
+            &None,
             &registry.id,
             &n1,
         );
@@ -2046,6 +2134,7 @@ mod tests {
             &ids2,
             &t2,
             &String::from_str(&env, "same reason"),
+            &None,
             &registry.id,
             &n2,
         );
@@ -2150,6 +2239,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "single"),
+            &None,
             &registry.id,
             &n,
         );
@@ -2174,6 +2264,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "first"),
+            &None,
             &registry.id,
             &n1,
         );
@@ -2199,6 +2290,7 @@ mod tests {
             &cid2,
             &500_000,
             &String::from_str(&env, "second"),
+            &None,
             &registry.id,
             &n2,
         );
@@ -2224,6 +2316,7 @@ mod tests {
             &cid3,
             &300_000,
             &String::from_str(&env, "third"),
+            &None,
             &registry.id,
             &n3,
         );
@@ -2270,6 +2363,7 @@ mod tests {
             &cid,
             &500_000,
             &String::from_str(&env, "half tonne retirement"),
+            &None,
             &registry.id,
             &n,
         );
@@ -2333,6 +2427,7 @@ mod tests {
                 &cid,
                 &1_000_000,
                 &String::from_str(env, "offset"),
+                &None,
                 &registry.id,
                 &nonce,
             );
@@ -2470,6 +2565,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "scope3"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -2508,6 +2604,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -2539,6 +2636,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -2572,6 +2670,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -2612,6 +2711,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &nonce,
         );
@@ -2646,6 +2746,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &n,
         );
@@ -2670,6 +2771,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "offset"),
+            &None,
             &registry.id,
             &n,
         );
@@ -2741,6 +2843,7 @@ mod tests {
             &credit_id,
             &1_000_000,
             &String::from_str(&env, "issuer offset"),
+            &None,
             &registry.id,
             &n1,
         );
@@ -2769,6 +2872,7 @@ mod tests {
             &cid2,
             &1_000_000,
             &String::from_str(&env, "buyer offset"),
+            &None,
             &registry.id,
             &n2,
         );
@@ -2778,5 +2882,159 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all.get(0).unwrap(), ret1);
         assert_eq!(all.get(1).unwrap(), ret2);
+    }
+    #[test]
+    fn test_beneficiary_storage_events_and_character_boundary() {
+        extern crate alloc;
+        use soroban_sdk::testutils::Events;
+        for text in [
+            "Example Ltd | Tax ID 12345",
+            &alloc::string::String::from("é").repeat(128),
+        ] {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (id, registry, credit, _, owner) = setup(&env);
+            let client = RetirementClient::new(&env, &id);
+            let beneficiary = Some(String::from_str(&env, text));
+            let retirement = client.retire(
+                &owner,
+                &credit,
+                &1_000_000,
+                &String::from_str(&env, "Scope 3"),
+                &beneficiary,
+                &registry.id,
+                &0,
+            );
+            let record = client.get_retirement(&retirement).unwrap();
+            assert_eq!(record.beneficiary, beneficiary);
+            use soroban_sdk::events::Event;
+            let events = env.events().all();
+            assert!(events.events().contains(
+                &RetirementCreated {
+                    buyer: owner.clone(),
+                    credit_id: credit.clone(),
+                    retirement_id: retirement.clone(),
+                    beneficiary,
+                }
+                .to_xdr(&env, &id)
+            ));
+            assert!(events.events().contains(
+                &Retire {
+                    buyer: owner,
+                    credit_id: credit,
+                    retirement_id: retirement,
+                }
+                .to_xdr(&env, &id)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_oversized_beneficiary_rejected_by_both_entry_points() {
+        extern crate alloc;
+        for text in [
+            alloc::string::String::from("x").repeat(129),
+            alloc::string::String::from("é").repeat(129),
+        ] {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (id, registry, credit, _, owner) = setup(&env);
+            let client = RetirementClient::new(&env, &id);
+            let beneficiary = Some(String::from_str(&env, &text));
+            let reason = String::from_str(&env, "offset");
+            assert_eq!(
+                client.try_retire(
+                    &owner,
+                    &credit,
+                    &1_000_000,
+                    &reason,
+                    &beneficiary,
+                    &registry.id,
+                    &0
+                ),
+                Err(Ok(RetirementError::InvalidInput))
+            );
+            assert_eq!(
+                client.try_batch_retire(
+                    &owner,
+                    &soroban_sdk::vec![&env, credit.clone()],
+                    &soroban_sdk::vec![&env, 1_000_000i128],
+                    &reason,
+                    &beneficiary,
+                    &registry.id,
+                    &0
+                ),
+                Err(Ok(RetirementError::InvalidInput))
+            );
+            assert_eq!(client.get_nonce(&owner), 0);
+            assert_eq!(
+                registry.get_credit(&credit).status,
+                carbonchain_credit_registry::types::CreditStatus::Active
+            );
+            assert!(client.get_retirements_by_account(&owner).is_empty());
+        }
+    }
+
+    #[test]
+    fn test_batch_retire_stores_beneficiary_for_successful_entries() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (id, registry, credit, _, owner) = setup(&env);
+        let client = RetirementClient::new(&env, &id);
+        let beneficiary = Some(String::from_str(&env, "Corporate ESG initiative"));
+        let result = client.batch_retire(
+            &owner,
+            &soroban_sdk::vec![&env, credit, BytesN::from_array(&env, &[255; 32])],
+            &soroban_sdk::vec![&env, 1_000_000i128, 1_000_000i128],
+            &String::from_str(&env, "offset"),
+            &beneficiary,
+            &registry.id,
+            &0,
+        );
+        assert_eq!(result.succeeded.len(), 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(
+            client
+                .get_retirement(&result.succeeded.get(0).unwrap())
+                .unwrap()
+                .beneficiary,
+            beneficiary
+        );
+    }
+
+    #[test]
+    fn test_legacy_record_read_and_certificate_update() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (id, registry, credit, admin, owner) = setup(&env);
+        let client = RetirementClient::new(&env, &id);
+        let retirement = client.retire(
+            &owner,
+            &credit,
+            &1_000_000,
+            &String::from_str(&env, "offset"),
+            &None,
+            &registry.id,
+            &0,
+        );
+        let original = client.get_retirement(&retirement).unwrap();
+        env.as_contract(&id, || {
+            let mut fields: Map<Symbol, Val> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Retirement(retirement.clone()))
+                .unwrap();
+            fields.remove(Symbol::new(&env, "beneficiary"));
+            env.storage()
+                .persistent()
+                .set(&DataKey::Retirement(retirement.clone()), &fields);
+        });
+        assert_eq!(client.get_retirement(&retirement), Some(original));
+        assert_eq!(client.get_total_retired_by_account(&owner), 1_000_000);
+        let hash = String::from_str(&env, "bafycertificate");
+        client.set_certificate_hash(&admin, &retirement, &hash);
+        let updated = client.get_retirement(&retirement).unwrap();
+        assert_eq!(updated.beneficiary, None);
+        assert_eq!(updated.certificate_ipfs_hash, hash);
     }
 }

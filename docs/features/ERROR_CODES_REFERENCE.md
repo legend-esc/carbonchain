@@ -39,7 +39,7 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 130 | `UnbondingNotReady` | Withdrawing stake before the 30-day unbonding period has elapsed | `withdraw_stake` |
 | 131 | `InvalidStakeToken` | Supplied `token_id` does not match the approved/deposited token | `deposit_stake`, `withdraw_stake` |
 | 132 | `StakeTransferFailed` | Token transfer failed during `deposit_stake` or `withdraw_stake` | `deposit_stake`, `withdraw_stake` |
-| 133 | `VintageExpired` | Vintage age in UTC calendar years exceeds the configured maximum (default: 15 years) | `submit_credit`, `submit_credit_with_session`, `transfer_credit` |
+| 133 | `InvalidInput` | Batch query contains more than 50 credit IDs | `get_credits_batch` |
 
 ## Retirement (200–210)
 
@@ -53,7 +53,7 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 205 | `InvalidNonce` | Replay-protection nonce does not match expected value | `retire`, `batch_retire`, `upgrade`, `set_certificate_hash` |
 | 206 | `NoPendingAdmin` | No admin transfer is currently pending | `accept_admin` |
 | 207 | `InvalidTonnes` | `tonnes` is zero, negative, or not a multiple of 100,000 | `retire`, `batch_retire` |
-| 208 | `InvalidInput` | Input vectors have mismatched lengths, or batch exceeds `MAX_BATCH_SIZE` (20) | `batch_retire` |
+| 208 | `InvalidInput` | Beneficiary exceeds 128 Unicode characters, vectors have mismatched lengths, or batch exceeds 20 | `retire`, `batch_retire` |
 | 209 | `InvalidRegistry` | `registry_id` does not match the trusted credit registry | `retire`, `batch_retire` |
 | 210 | `RecordNotFound` | A retirement record with the given ID does not exist in storage | `set_certificate_hash` |
 
@@ -62,14 +62,14 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | Code | Name | Description | Triggering Functions |
 |------|------|-------------|---------------------|
 | 300 | `OfferNotFound` | Offer ID does not exist | `get_offer`, `cancel_offer` |
-| 301 | `Unauthorized` | Caller is not the offer owner or admin | `pause`, `unpause`, `create_offer`, `cancel_offer`, `upgrade`, `update_min_price` |
+| 301 | `Unauthorized` | Caller is not the offer owner or admin | `pause`, `unpause`, `create_offer`, `cancel_offer`, `upgrade`, `update_min_price`, `update_fee` |
 | 302 | `InvalidPrice` | Offer price is zero, negative, or below the minimum | `create_offer`, `update_offer_price` |
 | 303 | `InvalidTonnes` | Volume is zero, negative, not a multiple of 100,000, or exceeds the offer or backing credit; offer minimum is invalid | `create_offer`, `create_offer_with_minimum`, `buy_offer`, `buy_offer_quantity` |
 | 304 | `AlreadyClosed` | Offer has already been closed or filled | `cancel_offer`, `update_offer_price`, `buy_offer` |
 | 305 | `CreditNotActive` | Credit linked to the offer is not active | `create_offer` |
-| 306 | `NotInitialized` | Contract has not been initialized | `pause`, `unpause`, `add_allowed_token`, `remove_allowed_token`, `upgrade`, `update_min_price` |
+| 306 | `NotInitialized` | Contract has not been initialized | `pause`, `unpause`, `add_allowed_token`, `remove_allowed_token`, `upgrade`, `update_min_price`, `update_fee` |
 | 307 | `ContractPaused` | Contract is paused | `create_offer`, `cancel_offer`, `buy_offer`, `update_offer_price` |
-| 308 | `InvalidNonce` | Replay-protection nonce mismatch | `create_offer`, `add_allowed_token`, `remove_allowed_token`, `cancel_offer`, `buy_offer`, `update_offer_price`, `upgrade` |
+| 308 | `InvalidNonce` | Replay-protection nonce mismatch | `create_offer`, `add_allowed_token`, `remove_allowed_token`, `cancel_offer`, `buy_offer`, `update_offer_price`, `upgrade`, `update_fee` |
 | 309 | `OfferExpired` | Offer has passed its expiry timestamp | `get_offer`, `update_offer_price`, `buy_offer` |
 | 310 | `Overflow` | Arithmetic overflow detected | `create_offer` (via `next_id`), `buy_offer` |
 | 311 | `AlreadyInitialized` | Contract has already been initialized | `initialize` |
@@ -78,25 +78,25 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 | 314 | `CreditNotFound` | No credit exists for the given credit ID in the registry | `create_offer`, `cancel_offer` |
 | 315 | `InvalidRegistry` | The `registry_id` does not match the trusted credit registry | `create_offer`, `cancel_offer`, `buy_offer` |
 | 316 | `InvalidToken` | The `token_id` does not match the allowed payment token | `create_offer_with_asset`, `buy_offer` |
-| 317 | `InvalidExpiry` | Expiry must be strictly later than the current ledger timestamp | `create_offer`, `create_offer_with_asset`, `create_offer_with_minimum` |
-| 318 | `BelowMinimumQuantity` | Purchase quantity or a nonzero remainder is below the seller's minimum | `buy_offer`, `buy_offer_quantity` |
+| 317 | `InvalidExpiry` | Offer expiry is not strictly in the future | `create_offer`, `create_offer_with_asset` |
+| 318 | `InvalidFee` | Fee exceeds 1000 basis points, or a positive fee has no recipient | `update_fee`, `buy_offer` |
 
 ## MRV Oracle (400–412)
 
 | Code | Name | Description | Triggering Functions |
 |------|------|-------------|---------------------|
-| 400 | `NotInitialized` | Contract has not been initialised | `pause`, `unpause`, `register_oracle`, `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_trusted_registry`, `upgrade`, `propose_admin` |
-| 401 | `Unauthorized` | Caller is not the admin or a registered oracle | `pause`, `unpause`, `register_oracle`, `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_trusted_registry`, `upgrade`, `propose_admin`, `update_mrv_data`, `accept_admin` |
+| 400 | `NotInitialized` | Contract has not been initialised | `pause`, `unpause`, `register_oracle`, `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_methodology_threshold`, `set_trusted_registry`, `upgrade`, `propose_admin` |
+| 401 | `Unauthorized` | Caller is not the admin or a registered oracle | `pause`, `unpause`, `register_oracle`, `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_methodology_threshold`, `set_trusted_registry`, `upgrade`, `propose_admin`, `update_mrv_data`, `accept_admin` |
 | 402 | `AlreadyInitialized` | Contract has already been initialised | `initialize` |
 | 403 | `Overflow` | Arithmetic overflow in tonnage/anomaly calculation | `update_mrv_data` (via `detect_anomaly`) |
 | 404 | `ContractPaused` | Contract is paused | `update_mrv_data` |
 | 405 | `ProjectNotFound` | Project ID has no MRV history | `get_latest` |
-| 406 | `InvalidNonce` | Replay-protection nonce mismatch | `register_oracle`, `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_trusted_registry`, `upgrade`, `update_mrv_data` |
+| 406 | `InvalidNonce` | Replay-protection nonce mismatch | `register_oracle`, `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_methodology_threshold`, `set_trusted_registry`, `upgrade`, `update_mrv_data` |
 | 407 | `InvalidProject` | Project ID has no credits in the registry | `update_mrv_data` |
 | 408 | `InvalidTimestamp` | Timestamp is in the future or outside the allowed skew window | `update_mrv_data` |
 | 409 | `NoPendingAdmin` | No pending admin transfer | `accept_admin` |
 | 410 | `InvalidReading` | MRV reading value is zero or negative | `update_mrv_data` |
-| 411 | `InvalidThreshold` | Threshold basis points are not in the valid range (1–10000) | `set_anomaly_threshold`, `set_project_anomaly_threshold` |
+| 411 | `InvalidThreshold` | Threshold basis points are not in the valid range (1–10000) | `set_anomaly_threshold`, `set_project_anomaly_threshold`, `set_methodology_threshold` |
 | 412 | `InvalidRegistry` | `registry_id` does not match the trusted credit registry | `update_mrv_data` |
 
 ## Notes
@@ -105,5 +105,4 @@ All CarbonChain smart contracts use stable numeric error codes. These codes are 
 - All `tonnes` values use scaled units: **1 tonne = 1,000,000 units**, minimum unit = 100,000 (0.1 tonne).
 - `InvalidInput` (retirement code 208) is also returned when a `batch_retire` call exceeds `MAX_BATCH_SIZE = 20`.
 - Code ranges are non-overlapping: credit_registry (100–133), retirement (200–210), marketplace (300–318), mrv_oracle (400–412). This prevents collisions when the NestJS API surfaces contract errors to clients.
-- `update_max_vintage_age` requires admin authorization and a fresh nonce. A vintage exactly at the age limit remains valid. Zero permits only the current year and the future year already allowed by submission validation. Existing escrowed credits are also checked on transfer; expired escrow stays reclaimable until the registry permits its return.
 - Each contract's error enum is the source of truth: `contracts/credit_registry/src/errors.rs`, `contracts/retirement/src/errors.rs`, `contracts/marketplace/src/lib.rs`, `contracts/mrv_oracle/src/lib.rs`.

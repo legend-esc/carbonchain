@@ -10,6 +10,8 @@ use soroban_sdk::{
 const MIN_TTL: u32 = 6_307_200;
 /// Threshold below which TTL is extended.
 const TTL_THRESHOLD: u32 = MIN_TTL / 2;
+/// Maximum platform fee: 10 percent.
+pub const MAX_FEE_BPS: u32 = 1_000;
 
 /// Cross-contract type stubs for the credit registry's types.
 /// Must match `carbonchain_credit_registry::types` for invoke_contract deserialization.
@@ -130,15 +132,15 @@ pub enum DataKey {
     TotalVolumeTokens,
     /// Count of currently active offers (#1091).
     ActiveOffersCount,
-    /// Next position to inspect in a bounded expiration sweep.
-    SweepCursor,
-    /// Escrow remains held for the seller when the registry rejects a refund.
-    ReclaimableEscrow(u64),
+    /// Platform fee in basis points, defaulting to zero.
+    FeeBps,
+    /// Treasury receiving fees in the offer payment asset.
+    FeeRecipient,
 }
 
 /// Stable error codes for the CarbonChain marketplace contract.
 ///
-/// All codes are in the 300–309 range — reserved exclusively for the
+/// All codes are in the 300–318 range — reserved exclusively for the
 /// marketplace. Codes 100–130 belong to `credit_registry`; 200–209 to
 /// `retirement`; 400–409 to `mrv_oracle`.
 ///
@@ -184,8 +186,8 @@ pub enum MarketplaceError {
     InvalidToken = 316,
     /// The offer's `expires_at` is not strictly in the future.
     InvalidExpiry = 317,
-    /// Purchase or the remaining order would be below the seller's minimum.
-    BelowMinimumQuantity = 318,
+    /// Fee exceeds the 1000 basis point cap or its recipient is missing.
+    InvalidFee = 318,
 }
 
 #[contractevent]
@@ -412,6 +414,39 @@ impl Marketplace {
                 .set(&DataKey::AllowedTokens, &tokens);
         }
         Ok(())
+    }
+
+    /// Configure the platform fee and treasury. Only the authenticated admin may update it.
+    /// Returns `InvalidFee` above 1000 bps and `InvalidNonce` for a replayed nonce.
+    pub fn update_fee(
+        env: Env,
+        admin: Address,
+        fee_bps: u32,
+        fee_recipient: Address,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+        if fee_bps > MAX_FEE_BPS {
+            return Err(MarketplaceError::InvalidFee);
+        }
+        env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeRecipient, &fee_recipient);
+        Ok(())
+    }
+
+    /// Returns the fee rate in basis points; unconfigured contracts charge no fee.
+    pub fn get_fee_bps(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+    }
+
+    /// Returns the configured treasury, if any.
+    pub fn get_fee_recipient(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::FeeRecipient)
     }
 
     // ── Offers ───────────────────────────────────────────────────────────────
@@ -1328,7 +1363,7 @@ impl Marketplace {
     /// 1. Validate offer exists, is active, and not expired.
     /// 2. Determine payment asset and amount from offer fields.
     /// 3. Pre-check buyer balance ≥ `price_amount` (returns `InsufficientFunds` early).
-    /// 4. **Token transfer first** — transfer `price_amount` from buyer → seller.
+    /// 4. **Token transfers first** — pay the treasury fee and the remaining price to seller.
     /// 5. **Credit transfer second** — transfer escrowed credit from marketplace → buyer.
     /// 6. Mark offer inactive, remove from active index.
     ///
@@ -1342,6 +1377,7 @@ impl Marketplace {
     /// - [`MarketplaceError::OfferExpired`] — offer has expired.
     /// - [`MarketplaceError::InsufficientFunds`] — buyer balance is less than `price_amount`.
     /// - [`MarketplaceError::InvalidToken`] — SAC token is not in the allowed list.
+    /// - [`MarketplaceError::InvalidFee`] — fee configuration is invalid.
     /// - [`MarketplaceError::Overflow`] — price is zero or negative (corrupt state).
     pub fn buy_offer(
         env: Env,
@@ -1470,11 +1506,27 @@ impl Marketplace {
 
         let escrow_account: Address = env.current_contract_address();
 
-        // ── Step 1 (token transfer FIRST) ─────────────────────────────────────────
+        // Split before the credit transfer; any transfer failure rolls back the purchase.
+        let fee_bps = Self::get_fee_bps(env.clone());
+        if fee_bps > MAX_FEE_BPS {
+            return Err(MarketplaceError::InvalidFee);
+        }
+        // floor(price * bps / 10000), without overflowing on large i128 prices.
+        let fee = (price / 10_000) * i128::from(fee_bps)
+            + (price % 10_000) * i128::from(fee_bps) / 10_000;
+        if fee > 0 {
+            let recipient =
+                Self::get_fee_recipient(env.clone()).ok_or(MarketplaceError::InvalidFee)?;
+            let _: () = env.invoke_contract(
+                &payment_contract,
+                &Symbol::new(&env, "transfer"),
+                (buyer.clone(), recipient, fee).into_val(&env),
+            );
+        }
         let _: () = env.invoke_contract(
             &payment_contract,
             &Symbol::new(&env, "transfer"),
-            (buyer.clone(), offer.seller.clone(), price).into_val(&env),
+            (buyer.clone(), offer.seller.clone(), price - fee).into_val(&env),
         );
 
         let mut purchased_credit = offer.credit_id.clone();
@@ -3369,7 +3421,7 @@ mod tests {
     /// Mock token contract that records calls and supports `balance` + `transfer`.
     /// Used exclusively in buy_offer tests.
     mod token_mock {
-        use soroban_sdk::{contract, contractimpl, Address, Env};
+        use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
 
         #[contract]
         pub struct MockToken;
@@ -3381,6 +3433,13 @@ mod tests {
                 env.storage().persistent().set(&addr, &amount);
             }
 
+            pub fn transfers(env: Env) -> u32 {
+                env.storage()
+                    .instance()
+                    .get(&symbol_short!("transfers"))
+                    .unwrap_or(0)
+            }
+
             /// Native token `balance` interface.
             pub fn balance(env: Env, addr: Address) -> i128 {
                 env.storage().persistent().get(&addr).unwrap_or(0i128)
@@ -3389,6 +3448,10 @@ mod tests {
             /// Native token `transfer` interface.
             /// Subtracts from sender, adds to recipient.  Panics if sender has insufficient funds.
             pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+                let count = Self::transfers(env.clone());
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("transfers"), &(count + 1));
                 let from_bal: i128 = env.storage().persistent().get(&from).unwrap_or(0);
                 if from_bal < amount {
                     panic!("insufficient balance");
@@ -4585,5 +4648,110 @@ mod tests {
         let nobody = Address::generate(&env);
         let pruned = client.cleanup_seller_offers(&nobody);
         assert_eq!(pruned, 0);
+    }
+    #[test]
+    fn test_fee_configuration_authentication_and_replay() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, admin, _, _, _) = setup_with_token(&env);
+        let treasury = Address::generate(&env);
+        assert_eq!(client.get_fee_bps(), 0);
+        assert_eq!(client.get_fee_recipient(), None);
+        let nonce = client.get_nonce(&admin);
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_update_fee(&stranger, &100, &treasury, &0),
+            Err(Ok(MarketplaceError::Unauthorized))
+        );
+        assert_eq!(
+            client.try_update_fee(&admin, &1001, &treasury, &nonce),
+            Err(Ok(MarketplaceError::InvalidFee))
+        );
+        assert_eq!(client.get_nonce(&admin), nonce);
+        assert_eq!(
+            client.try_update_fee(&admin, &100, &treasury, &(nonce + NONCE_WINDOW)),
+            Err(Ok(MarketplaceError::InvalidNonce))
+        );
+        client.update_fee(&admin, &1000, &treasury, &nonce);
+        assert_eq!(env.auths()[0].0, admin);
+        assert_eq!(client.get_fee_bps(), 1000);
+        assert_eq!(client.get_fee_recipient(), Some(treasury.clone()));
+        assert_eq!(client.get_nonce(&admin), nonce + 1);
+        assert_eq!(
+            client.try_update_fee(&admin, &0, &treasury, &nonce),
+            Err(Ok(MarketplaceError::InvalidNonce))
+        );
+        client.update_fee(&admin, &0, &treasury, &(nonce + 1));
+        assert_eq!(client.get_fee_bps(), 0);
+    }
+
+    #[test]
+    fn test_fee_update_requires_signature() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, admin, _, _, _) = setup_with_token(&env);
+        let treasury = Address::generate(&env);
+        env.mock_auths(&[]);
+        assert!(client.try_update_fee(&admin, &100, &treasury, &0).is_err());
+        assert_eq!(client.get_fee_bps(), 0);
+    }
+
+    #[test]
+    fn test_buy_offer_fee_splits_and_zero_fee_transfer_count() {
+        for (bps, price, expected_fee, asset) in [
+            (None, 10_001, 0, false),
+            (Some(0), 10_001, 0, false),
+            (Some(1), 1, 0, false),
+            (Some(250), 10_001, 250, false),
+            (Some(1000), 10_001, 1000, true),
+            (Some(1000), i128::MAX, i128::MAX / 10, false),
+        ] {
+            let env = Env::default();
+            env.cost_estimate().budget().reset_unlimited();
+            env.mock_all_auths();
+            let (client, seller, admin, registry, credit_id, token) = setup_with_token(&env);
+            let buyer = Address::generate(&env);
+            let treasury = Address::generate(&env);
+            if let Some(bps) = bps {
+                client.update_fee(&admin, &bps, &treasury, &client.get_nonce(&admin));
+            }
+            let offer_id = if asset {
+                client.add_allowed_token(&admin, &token.address, &client.get_nonce(&admin));
+                client.create_offer_with_asset(
+                    &seller,
+                    &credit_id,
+                    &price,
+                    &AssetType::Asset(token.address.clone()),
+                    &1_000_000,
+                    &registry.id,
+                    &None,
+                    &client.get_nonce(&seller),
+                )
+            } else {
+                client.create_offer(
+                    &seller,
+                    &credit_id,
+                    &price,
+                    &1_000_000,
+                    &registry.id,
+                    &None,
+                    &client.get_nonce(&seller),
+                )
+            };
+            token.set_balance(&buyer, &price);
+            client.buy_offer(
+                &buyer,
+                &offer_id,
+                &registry.id,
+                &token.address,
+                &client.get_nonce(&buyer),
+            );
+            assert_eq!(token.balance(&buyer), 0);
+            assert_eq!(token.balance(&seller), price - expected_fee);
+            assert_eq!(token.balance(&treasury), expected_fee);
+            assert_eq!(token.transfers(), if expected_fee > 0 { 2 } else { 1 });
+            assert_eq!(registry.get_credit(&credit_id).owner, buyer);
+            assert!(!client.get_offer(&offer_id).active);
+        }
     }
 }
