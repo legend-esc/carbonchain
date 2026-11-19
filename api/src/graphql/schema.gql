@@ -1,0 +1,67 @@
+type Credit {
+  id: ID!
+  projectId: String!
+  issuer: String!
+  owner: String!
+  vintageYear: Int!
+  methodology: String!
+  geography: String!
+  tonnes: String!
+  ipfsHash: String!
+  status: String!
+  issuedAt: String!
+  project: Project
+  retirements: [Retirement]
+}
+
+type Project {
+  id: ID!
+  name: String!
+  developer: String
+  description: String
+  location: String
+  methodology: String
+  documentsCid: String
+}
+
+type Retirement {
+  id: ID!
+  creditId: String!
+  buyer: String!
+  tonnesRetired: String!
+  reason: String!
+  retiredAt: String!
+  txHash: String
+  vintageYear: Int
+}
+
+type Verifier {
+  address: ID!
+  name: String
+  capabilities: [String]
+  reputation: VerifierReputation
+}
+
+type VerifierReputation {
+  approvalCount: Int
+  disputeCount: Int
+}
+
+input CreditFilter {
+  methodology: String
+  geography: String
+  status: String
+  owner: String
+  projectId: String
+  vintageYear: Int
+}
+
+type Query {
+  credit(id: ID!): Credit
+  credits(filter: CreditFilter): [Credit]
+  project(id: ID!): Project
+  projects(filter: CreditFilter): [Project]
+  verifier(address: ID!): Verifier
+  verifiers: [Verifier]
+  retirement(id: ID!): Retirement
+}
