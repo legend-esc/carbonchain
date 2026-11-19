@@ -25,6 +25,7 @@ import { OracleModule } from './oracle/oracle.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { CacheWarmingService } from './common/cache-warming.service';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
   controllers: [AppController],
   providers: [
     AppService,
+    CacheWarmingService,
     { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
     // Issue #551: globally handle QueryTimeoutError → 503 and standardise all
     // error responses so clients receive consistent JSON error bodies.

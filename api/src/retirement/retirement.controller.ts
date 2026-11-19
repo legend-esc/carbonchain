@@ -23,6 +23,7 @@ import {
 } from './retirement.service';
 import { RetirementRequestDto } from './dto/retire.dto';
 import { BatchRetireDto } from './dto/batch-retire.dto';
+import { BatchRetireBuildDto } from './dto/batch-retire-build.dto';
 import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
@@ -32,6 +33,7 @@ import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { CertificateResponseDto } from './dto/certificate-response.dto';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
 import { Idempotent } from '../common/idempotency.interceptor';
+import { RetireTxService, BatchRetireBuildResult } from './retire-tx.service';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -40,6 +42,7 @@ export class RetirementController {
     private readonly retirementService: RetirementService,
     private readonly certificateService: CertificateService,
     private readonly certHashReconciler: CertHashReconciler,
+    private readonly retireTxService: RetireTxService,
   ) {}
 
   @ApiOperation({ summary: 'Retire a carbon credit' })
@@ -72,6 +75,24 @@ export class RetirementController {
   @Post('batch')
   batchRetire(@Body() dto: BatchRetireDto): Promise<BatchRetireResult> {
     return this.retirementService.batchRetire(dto);
+  }
+
+  @ApiOperation({ summary: 'Build unsigned XDR for batch credit retirement (up to 20 credits)' })
+  @ApiResponse({ status: 201, description: 'Unsigned XDR built successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid request or too many credits' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtAuthGuard)
+  @Idempotent()
+  @Post('batch-build')
+  buildBatchRetire(
+    @Body() dto: BatchRetireBuildDto,
+    @Request() req: { user: { account: string } },
+  ): Promise<BatchRetireBuildResult> {
+    return this.retireTxService.buildBatchRetireXdr(
+      req.user.account,
+      dto.creditIds,
+      dto.reason,
+    );
   }
 
   @ApiOperation({ summary: 'List retirements (paginated)' })
