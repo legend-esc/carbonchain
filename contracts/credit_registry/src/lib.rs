@@ -64,7 +64,7 @@ use crate::storage::{
 };
 use crate::types::{
     AuditLogEntry, CreditMetadata, CreditStatus, DataKey, DisputeResolution, Methodology,
-    ProjectMetadata, ServiceType, Session, UnbondingRequest, VerifierReputation,
+    ProjectMetadata, ServiceType, Session, UnbondingRequest, VerifierReputation, MAX_QUERY_BATCH,
     VALID_ISO_COUNTRY_CODES,
 };
 
@@ -1202,6 +1202,22 @@ impl CreditRegistry {
     /// - [`CarbonChainError::CreditNotFound`] — no credit exists for `credit_id`.
     pub fn get_credit(env: Env, credit_id: BytesN<32>) -> Result<CreditMetadata, CarbonChainError> {
         get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)
+    }
+
+    /// Fetch up to 50 credits in input order, preserving duplicates and missing entries.
+    /// Returns `InvalidInput` before reading storage if the batch is too large.
+    pub fn get_credits_batch(
+        env: Env,
+        credit_ids: Vec<BytesN<32>>,
+    ) -> Result<Vec<Option<CreditMetadata>>, CarbonChainError> {
+        if credit_ids.len() > MAX_QUERY_BATCH {
+            return Err(CarbonChainError::InvalidInput);
+        }
+        let mut credits = Vec::new(&env);
+        for id in credit_ids.iter() {
+            credits.push_back(get_credit(&env, &id));
+        }
+        Ok(credits)
     }
 
     /// Returns all credit IDs registered under `project_id`.
@@ -5102,6 +5118,42 @@ mod tests {
         assert!(
             !after.contains(&id2),
             "source credit must be removed from owner index"
+        );
+    }
+    #[test]
+    fn test_get_credits_batch_preserves_order_and_missing_entries() {
+        let (env, client, admin, _) = setup();
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let missing = BytesN::from_array(&env, &[255; 32]);
+        let ids = soroban_sdk::vec![&env, missing.clone(), id.clone(), missing, id.clone()];
+        let credits = client.get_credits_batch(&ids);
+        assert_eq!(credits.len(), 4);
+        assert_eq!(credits.get(0), Some(None));
+        assert_eq!(credits.get(1), Some(Some(client.get_credit(&id))));
+        assert_eq!(credits.get(2), Some(None));
+        assert_eq!(credits.get(3), credits.get(1));
+    }
+
+    #[test]
+    fn test_get_credits_batch_length_boundaries() {
+        let (env, client, admin, _) = setup();
+        assert!(client.get_credits_batch(&Vec::new(&env)).is_empty());
+        let issuer = Address::generate(&env);
+        let id = submit_test_credit(&env, &client, &admin, &issuer);
+        let mut ids = Vec::new(&env);
+        for _ in 0..MAX_QUERY_BATCH {
+            ids.push_back(id.clone());
+        }
+        let credits = client.get_credits_batch(&ids);
+        assert_eq!(credits.len(), MAX_QUERY_BATCH);
+        for credit in credits.iter() {
+            assert_eq!(credit, Some(client.get_credit(&id)));
+        }
+        ids.push_back(id);
+        assert_eq!(
+            client.try_get_credits_batch(&ids),
+            Err(Ok(CarbonChainError::InvalidInput))
         );
     }
 } // end mod tests

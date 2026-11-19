@@ -3,6 +3,8 @@ use soroban_sdk::{contracttype, Address, BytesN, String};
 /// Unit convention: all `tonnes` fields are stored as fixed-point integers
 /// where 1 tonne = 1_000_000 units (0.1 tonne resolution = 100_000 units).
 pub const TONNES_SCALE: i128 = 1_000_000;
+/// Maximum credit IDs accepted by a single batch query.
+pub const MAX_QUERY_BATCH: u32 = 50;
 
 /// Complete ISO 3166-1 alpha-2 country code list.
 ///
