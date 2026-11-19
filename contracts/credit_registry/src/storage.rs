@@ -791,3 +791,18 @@ pub fn remove_from_pending_credits(env: &Env, credit_id: &BytesN<32>) {
         .set(&DataKey::PendingCredits, &updated);
     env.storage().instance().extend_ttl(TTL_THRESHOLD, MIN_TTL);
 }
+/// Default age limit for new registries and existing registries without a setting.
+pub const DEFAULT_MAX_VINTAGE_AGE: u32 = 15;
+
+pub fn get_max_vintage_age(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MaxVintageAge)
+        .unwrap_or(DEFAULT_MAX_VINTAGE_AGE)
+}
+
+pub fn set_max_vintage_age(env: &Env, years: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxVintageAge, &years);
+}

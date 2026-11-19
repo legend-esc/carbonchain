@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
-    Error as SorobanError, IntoVal, Map, String, Symbol, Vec,
+    Error as SorobanError, IntoVal, Map, String, Symbol, TryFromVal, Val, Vec,
 };
 
 // ── TTL constants ─────────────────────────────────────────────────────────────
@@ -84,6 +84,8 @@ pub struct Offer {
     pub active: bool,
     pub created_at: u64,
     pub expires_at: Option<u64>,
+    /// Minimum order volume in scaled units. None permits any valid quantity.
+    pub min_purchase_tonnes: Option<i128>,
 }
 
 /// Aggregate marketplace statistics returned by `get_marketplace_stats`.
@@ -213,6 +215,15 @@ pub struct OfferCxl {
     pub seller: Address,
     pub offer_id: u64,
     pub escrowed: i128,
+}
+
+#[contractevent]
+#[derive(Clone)]
+pub struct OfferExpired {
+    pub caller: Address,
+    pub offer_id: u64,
+    pub seller: Address,
+    pub reclaimable: bool,
 }
 
 #[contractevent]
@@ -475,6 +486,7 @@ impl Marketplace {
             tonnes,
             registry_id,
             expires_at,
+            None,
             nonce,
         )
     }
@@ -517,6 +529,41 @@ impl Marketplace {
             tonnes,
             registry_id,
             expires_at,
+            None,
+            nonce,
+        )
+    }
+
+    /// Create an XLM or SAC offer with an optional minimum order size.
+    /// The minimum must be positive, a multiple of 100_000 and no greater than
+    /// `tonnes`. Existing creation entry points default to no minimum.
+    pub fn create_offer_with_minimum(
+        env: Env,
+        seller: Address,
+        credit_id: BytesN<32>,
+        price_amount: i128,
+        price_asset: AssetType,
+        tonnes: i128,
+        registry_id: Address,
+        expires_at: Option<u64>,
+        min_purchase_tonnes: Option<i128>,
+        nonce: u64,
+    ) -> Result<u64, MarketplaceError> {
+        if let AssetType::Asset(ref sac) = price_asset {
+            if !Self::is_token_allowed(&env, sac) {
+                return Err(MarketplaceError::InvalidToken);
+            }
+        }
+        Self::create_offer_internal(
+            env,
+            seller,
+            credit_id,
+            price_amount,
+            price_asset,
+            tonnes,
+            registry_id,
+            expires_at,
+            min_purchase_tonnes,
             nonce,
         )
     }
@@ -532,6 +579,7 @@ impl Marketplace {
         tonnes: i128,
         registry_id: Address,
         expires_at: Option<u64>,
+        min_purchase_tonnes: Option<i128>,
         nonce: u64,
     ) -> Result<u64, MarketplaceError> {
         if Self::is_paused(&env) {
@@ -546,6 +594,11 @@ impl Marketplace {
         }
         if tonnes <= 0 || tonnes % 100_000 != 0 {
             return Err(MarketplaceError::InvalidTonnes);
+        }
+        if let Some(minimum) = min_purchase_tonnes {
+            if minimum <= 0 || minimum % 100_000 != 0 || minimum > tonnes {
+                return Err(MarketplaceError::InvalidTonnes);
+            }
         }
 
         let min_price: i128 = env
@@ -621,6 +674,7 @@ impl Marketplace {
             active: true,
             created_at: env.ledger().timestamp(),
             expires_at,
+            min_purchase_tonnes,
         };
 
         env.storage()
@@ -663,11 +717,7 @@ impl Marketplace {
         if ids.len() >= 50 {
             let mut pruned = Vec::new(&env);
             for id in ids.iter() {
-                if let Some(o) = env
-                    .storage()
-                    .persistent()
-                    .get::<_, Offer>(&DataKey::Offer(id))
-                {
+                if let Some(o) = Self::load_offer(&env, id) {
                     if o.active {
                         pruned.push_back(id);
                     }
@@ -696,7 +746,7 @@ impl Marketplace {
             .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
 
         // Atomic-escrow guard
-        let stored: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(offer_id));
+        let stored: Option<Offer> = Self::load_offer(&env, offer_id);
         if stored.is_none() {
             let seller_nonce: u64 = env.invoke_contract(
                 &registry_id,
@@ -749,11 +799,8 @@ impl Marketplace {
         // #692: reject any registry_id that does not match the one stored at init
         Self::validate_registry(&env, &registry_id)?;
 
-        let mut offer: Offer = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Offer(offer_id))
-            .ok_or(MarketplaceError::OfferNotFound)?;
+        let mut offer: Offer =
+            Self::load_offer(&env, offer_id).ok_or(MarketplaceError::OfferNotFound)?;
 
         if offer.seller != seller {
             return Err(MarketplaceError::Unauthorized);
@@ -852,13 +899,10 @@ impl Marketplace {
     ///
     /// # Errors
     /// - [`MarketplaceError::OfferNotFound`] — no offer exists for `offer_id`.
-    /// - [`MarketplaceError::OfferExpired`] — offer has expired (also marks it inactive and prunes index).
+    /// - [`MarketplaceError::OfferExpired`] — offer has expired; sweep to close it and return escrow.
     pub fn get_offer(env: Env, offer_id: u64) -> Result<Offer, MarketplaceError> {
-        let offer: Offer = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Offer(offer_id))
-            .ok_or(MarketplaceError::OfferNotFound)?;
+        let offer: Offer =
+            Self::load_offer(&env, offer_id).ok_or(MarketplaceError::OfferNotFound)?;
 
         if let Some(expires_at) = offer.expires_at {
             if env.ledger().timestamp() > expires_at && offer.active {
@@ -891,7 +935,7 @@ impl Marketplace {
         let mut active: Vec<u64> = Vec::new(&env);
         let now = env.ledger().timestamp();
         for id in all_ids.iter() {
-            let offer: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(id));
+            let offer: Option<Offer> = Self::load_offer(&env, id);
             if let Some(o) = offer {
                 if o.active {
                     let expired = o.expires_at.is_some_and(|e| now > e);
@@ -927,7 +971,7 @@ impl Marketplace {
         let now = env.ledger().timestamp();
 
         for id in ids.iter() {
-            let offer: Option<Offer> = env.storage().persistent().get(&DataKey::Offer(id));
+            let offer: Option<Offer> = Self::load_offer(&env, id);
             match offer {
                 Some(o) if o.active => {
                     let expired = o.expires_at.is_some_and(|e| now > e);
@@ -955,6 +999,185 @@ impl Marketplace {
         pruned
     }
 
+    /// Purge expired offers from the active index and return the number closed.
+    /// Anyone may sweep. At most `min(max_count, 25)` entries are inspected,
+    /// including live entries, so repeated calls use a cursor to reach the entire
+    /// index without an unbounded scan. Expiry is strictly `now > expires_at`.
+    /// A rejected escrow return is recorded for a later seller reclamation.
+    pub fn sweep_expired_offers(env: Env, caller: Address, max_count: u32) -> u32 {
+        caller.require_auth();
+        let limit = max_count.min(25);
+        if limit == 0 {
+            return 0;
+        }
+        let registry: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TrustedRegistry)
+            .unwrap_or_else(|| {
+                soroban_sdk::panic_with_error!(&env, MarketplaceError::NotInitialized)
+            });
+        let mut ids: Vec<u64> = Self::get_active_offers(env.clone());
+        let mut cursor: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SweepCursor)
+            .unwrap_or(0);
+        let inspections = limit.min(ids.len());
+        let mut swept = 0;
+        for _ in 0..inspections {
+            if cursor >= ids.len() {
+                cursor = 0;
+            }
+            let id = ids.get(cursor).unwrap();
+            let offer: Option<Offer> = Self::load_offer(&env, id);
+            if let Some(mut offer) = offer {
+                if offer.active
+                    && offer
+                        .expires_at
+                        .is_some_and(|e| env.ledger().timestamp() > e)
+                {
+                    Self::close_expired_offer(&env, id, &mut offer, &registry, &caller);
+                    ids.remove(cursor);
+                    swept += 1;
+                    continue;
+                }
+            }
+            cursor += 1;
+        }
+        if swept > 0 {
+            env.storage().persistent().set(&DataKey::ActiveOffers, &ids);
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
+        }
+        env.storage().instance().set(
+            &DataKey::SweepCursor,
+            &if cursor < ids.len() { cursor } else { 0 },
+        );
+        swept
+    }
+
+    /// Whether a swept offer still holds escrow on behalf of its seller.
+    pub fn is_escrow_reclaimable(env: Env, offer_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ReclaimableEscrow(offer_id))
+            .unwrap_or(false)
+    }
+
+    /// Retry a swept offer's escrow return after registry restrictions are lifted.
+    /// Requires the original seller's authorization and a fresh marketplace nonce.
+    /// A failed retry preserves the reclaimable marker and escrow record.
+    pub fn reclaim_expired_offer(
+        env: Env,
+        seller: Address,
+        offer_id: u64,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        seller.require_auth();
+        if !Self::consume_nonce(&env, &seller, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+        let offer: Offer =
+            Self::load_offer(&env, offer_id).ok_or(MarketplaceError::OfferNotFound)?;
+        if offer.seller != seller {
+            return Err(MarketplaceError::Unauthorized);
+        }
+        if !Self::is_escrow_reclaimable(env.clone(), offer_id) {
+            return Err(MarketplaceError::AlreadyClosed);
+        }
+        let registry = env
+            .storage()
+            .instance()
+            .get(&DataKey::TrustedRegistry)
+            .ok_or(MarketplaceError::NotInitialized)?;
+        if !Self::return_escrow(&env, &registry, &offer) {
+            return Err(MarketplaceError::EscrowFailed);
+        }
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ReclaimableEscrow(offer_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::EscrowedAmount(offer_id));
+        Ok(())
+    }
+
+    fn close_expired_offer(
+        env: &Env,
+        offer_id: u64,
+        offer: &mut Offer,
+        registry: &Address,
+        caller: &Address,
+    ) {
+        let returned = Self::return_escrow(env, registry, offer);
+        if returned {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::EscrowedAmount(offer_id));
+        } else {
+            env.storage()
+                .persistent()
+                .set(&DataKey::ReclaimableEscrow(offer_id), &true);
+            env.storage().persistent().extend_ttl(
+                &DataKey::ReclaimableEscrow(offer_id),
+                TTL_THRESHOLD,
+                MIN_TTL,
+            );
+            // Keep the escrow metadata alive for the same reclamation period.
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::EscrowedAmount(offer_id))
+            {
+                env.storage().persistent().extend_ttl(
+                    &DataKey::EscrowedAmount(offer_id),
+                    TTL_THRESHOLD,
+                    MIN_TTL,
+                );
+            }
+        }
+        offer.active = false;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Offer(offer_id), offer);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Offer(offer_id), TTL_THRESHOLD, MIN_TTL);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::CreditOffer(offer.credit_id.clone()));
+        Self::decrement_active_count(env);
+        OfferExpired {
+            caller: caller.clone(),
+            offer_id,
+            seller: offer.seller.clone(),
+            reclaimable: !returned,
+        }
+        .publish(env);
+    }
+
+    fn return_escrow(env: &Env, registry: &Address, offer: &Offer) -> bool {
+        let escrow = env.current_contract_address();
+        let nonce = match env.try_invoke_contract::<u64, SorobanError>(
+            registry,
+            &Symbol::new(env, "get_nonce"),
+            (escrow.clone(),).into_val(env),
+        ) {
+            Ok(Ok(nonce)) => nonce,
+            _ => return false,
+        };
+        matches!(
+            env.try_invoke_contract::<(), SorobanError>(
+                registry,
+                &Symbol::new(env, "transfer_credit"),
+                (escrow, offer.seller.clone(), offer.credit_id.clone(), nonce).into_val(env),
+            ),
+            Ok(Ok(()))
+        )
+    }
+
     /// Clean up expired offers starting from `start_id`, processing at most `limit` offers (capped at 100).
     ///
     /// Marks expired offers inactive **and** removes them from the `ActiveOffers` index
@@ -969,6 +1192,11 @@ impl Marketplace {
         limit: u32,
     ) -> Result<(), MarketplaceError> {
         Self::require_admin(&env, &admin)?;
+        let registry: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TrustedRegistry)
+            .ok_or(MarketplaceError::NotInitialized)?;
         let count = Self::offer_count(env.clone());
         let now = env.ledger().timestamp();
         let effective_limit = if limit > 100 { 100 } else { limit };
@@ -983,15 +1211,10 @@ impl Marketplace {
         let mut index_changed = false;
 
         for i in start_id..end {
-            if let Some(mut offer) = env
-                .storage()
-                .persistent()
-                .get::<_, Offer>(&DataKey::Offer(i))
-            {
+            if let Some(mut offer) = Self::load_offer(&env, i) {
                 if let Some(expires_at) = offer.expires_at {
                     if now > expires_at && offer.active {
-                        offer.active = false;
-                        env.storage().persistent().set(&DataKey::Offer(i), &offer);
+                        Self::close_expired_offer(&env, i, &mut offer, &registry, &admin);
 
                         // #695: Compact ActiveOffers — remove the expired ID from the index
                         if let Some(pos) = active_ids.iter().position(|id| id == i) {
@@ -1081,11 +1304,8 @@ impl Marketplace {
         if !Self::consume_nonce(&env, &seller, nonce) {
             return Err(MarketplaceError::InvalidNonce);
         }
-        let mut offer: Offer = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Offer(offer_id))
-            .ok_or(MarketplaceError::OfferNotFound)?;
+        let mut offer: Offer =
+            Self::load_offer(&env, offer_id).ok_or(MarketplaceError::OfferNotFound)?;
         if offer.seller != seller {
             return Err(MarketplaceError::Unauthorized);
         }
@@ -1167,6 +1387,43 @@ impl Marketplace {
         token_id: Address,
         nonce: u64,
     ) -> Result<(), MarketplaceError> {
+        Self::buy_offer_internal(env, buyer, offer_id, registry_id, token_id, None, nonce)
+    }
+
+    /// Buy a specified volume from an offer, enforcing its optional minimum.
+    /// Partial orders must leave at least the minimum available for the next
+    /// buyer. Payment is proportional to the remaining offer price, rounded up
+    /// to the payment asset's smallest unit. A zero-price remainder is rejected.
+    /// Registry splitting keeps unsold credits in escrow until filled or cancelled.
+    pub fn buy_offer_quantity(
+        env: Env,
+        buyer: Address,
+        offer_id: u64,
+        registry_id: Address,
+        token_id: Address,
+        purchase_tonnes: i128,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        Self::buy_offer_internal(
+            env,
+            buyer,
+            offer_id,
+            registry_id,
+            token_id,
+            Some(purchase_tonnes),
+            nonce,
+        )
+    }
+
+    fn buy_offer_internal(
+        env: Env,
+        buyer: Address,
+        offer_id: u64,
+        registry_id: Address,
+        token_id: Address,
+        purchase_tonnes: Option<i128>,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
         if Self::is_paused(&env) {
             return Err(MarketplaceError::ContractPaused);
         }
@@ -1179,11 +1436,8 @@ impl Marketplace {
         Self::validate_registry(&env, &registry_id)?;
 
         // Load and validate the offer — all checks before any state mutation.
-        let mut offer: Offer = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Offer(offer_id))
-            .ok_or(MarketplaceError::OfferNotFound)?;
+        let mut offer: Offer =
+            Self::load_offer(&env, offer_id).ok_or(MarketplaceError::OfferNotFound)?;
 
         if !offer.active {
             return Err(MarketplaceError::AlreadyClosed);
@@ -1194,16 +1448,40 @@ impl Marketplace {
             }
         }
 
+        let quantity = purchase_tonnes.unwrap_or(offer.tonnes);
+        if quantity <= 0 || quantity % 100_000 != 0 || quantity > offer.tonnes {
+            return Err(MarketplaceError::InvalidTonnes);
+        }
+        let remaining = offer.tonnes - quantity;
+        if let Some(minimum) = offer.min_purchase_tonnes {
+            if quantity < minimum || (remaining > 0 && remaining < minimum) {
+                return Err(MarketplaceError::BelowMinimumQuantity);
+            }
+        }
+
         // Resolve the payment asset contract address and amount.
         // For backward-compat Native offers, fall back to price_xlm if price_amount is 0.
-        let price: i128 = if offer.price_amount > 0 {
+        let offer_price: i128 = if offer.price_amount > 0 {
             offer.price_amount
         } else {
             offer.price_xlm
         };
-        if price <= 0 {
+        if offer_price <= 0 {
             return Err(MarketplaceError::Overflow);
         }
+
+        let price = if remaining == 0 {
+            offer_price
+        } else {
+            let numerator = offer_price
+                .checked_mul(quantity)
+                .ok_or(MarketplaceError::Overflow)?;
+            let price = numerator / offer.tonnes + i128::from(numerator % offer.tonnes != 0);
+            if price >= offer_price {
+                return Err(MarketplaceError::InvalidPrice);
+            }
+            price
+        };
 
         // Resolve which contract to call for balance/transfer.
         // For Native offers, validate that token_id matches the allowed payment token.
@@ -1251,6 +1529,48 @@ impl Marketplace {
             (buyer.clone(), offer.seller.clone(), price - fee).into_val(&env),
         );
 
+        let mut purchased_credit = offer.credit_id.clone();
+        let mut unsold_credit: Option<BytesN<32>> = None;
+        {
+            let credit: CreditMetadata = env
+                .try_invoke_contract::<CreditMetadata, SorobanError>(
+                    &registry_id,
+                    &Symbol::new(&env, "get_credit"),
+                    (offer.credit_id.clone(),).into_val(&env),
+                )
+                .map_err(|_| MarketplaceError::CreditNotFound)?
+                .map_err(|_| MarketplaceError::CreditNotFound)?;
+            if credit.owner != escrow_account {
+                return Err(MarketplaceError::Unauthorized);
+            }
+            if credit.status != CreditStatus::Active {
+                return Err(MarketplaceError::CreditNotActive);
+            }
+            if credit.tonnes < offer.tonnes {
+                return Err(MarketplaceError::InvalidTonnes);
+            }
+            if quantity < credit.tonnes {
+                let split_nonce: u64 = env.invoke_contract(
+                    &registry_id,
+                    &Symbol::new(&env, "get_nonce"),
+                    (escrow_account.clone(),).into_val(&env),
+                );
+                let (sold, unsold): (BytesN<32>, BytesN<32>) = env.invoke_contract(
+                    &registry_id,
+                    &Symbol::new(&env, "split_credit"),
+                    (
+                        escrow_account.clone(),
+                        offer.credit_id.clone(),
+                        quantity,
+                        split_nonce,
+                    )
+                        .into_val(&env),
+                );
+                purchased_credit = sold;
+                unsold_credit = Some(unsold);
+            }
+        }
+
         // ── Step 2 (credit transfer SECOND) ──────────────────────────────────────
         let registry_nonce: u64 = env.invoke_contract(
             &registry_id,
@@ -1263,14 +1583,67 @@ impl Marketplace {
             (
                 escrow_account.clone(),
                 buyer.clone(),
-                offer.credit_id.clone(),
+                purchased_credit,
                 registry_nonce,
             )
                 .into_val(&env),
         );
 
-        // ── Mark offer inactive and remove from indexes ───────────────────────────
-        offer.active = false;
+        // Replace the reverse index when a partial fill splits the escrowed credit.
+        env.storage()
+            .persistent()
+            .remove(&DataKey::CreditOffer(offer.credit_id.clone()));
+        if remaining > 0 {
+            offer.credit_id = unsold_credit.ok_or(MarketplaceError::EscrowFailed)?;
+            offer.tonnes = remaining;
+            offer.price_amount = offer_price - price;
+            if offer.price_asset == AssetType::Native {
+                offer.price_xlm = offer.price_amount;
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKey::CreditOffer(offer.credit_id.clone()), &offer_id);
+            env.storage().persistent().extend_ttl(
+                &DataKey::CreditOffer(offer.credit_id.clone()),
+                TTL_THRESHOLD,
+                MIN_TTL,
+            );
+            env.storage()
+                .persistent()
+                .set(&DataKey::EscrowedAmount(offer_id), &offer.price_amount);
+            env.storage().persistent().extend_ttl(
+                &DataKey::EscrowedAmount(offer_id),
+                TTL_THRESHOLD,
+                MIN_TTL,
+            );
+        } else {
+            // A full purchase of a listing smaller than its backing credit
+            // returns the unlisted excess to the seller atomically.
+            if let Some(unsold) = unsold_credit {
+                let mut refund = offer.clone();
+                refund.credit_id = unsold;
+                if !Self::return_escrow(&env, &registry_id, &refund) {
+                    return Err(MarketplaceError::EscrowFailed);
+                }
+            }
+            offer.active = false;
+            env.storage()
+                .persistent()
+                .remove(&DataKey::EscrowedAmount(offer_id));
+            let mut active_ids = Self::get_active_offers(env.clone());
+            if let Some(pos) = active_ids.iter().position(|id| id == offer_id) {
+                active_ids.remove(pos as u32);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::ActiveOffers, &active_ids);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::ActiveOffers,
+                    TTL_THRESHOLD,
+                    MIN_TTL,
+                );
+            }
+            Self::decrement_active_count(&env);
+        }
         env.storage()
             .persistent()
             .set(&DataKey::Offer(offer_id), &offer);
@@ -1278,34 +1651,6 @@ impl Marketplace {
             .persistent()
             .extend_ttl(&DataKey::Offer(offer_id), TTL_THRESHOLD, MIN_TTL);
 
-        // Clear escrowed-amount record
-        env.storage()
-            .persistent()
-            .remove(&DataKey::EscrowedAmount(offer_id));
-
-        // #1089: remove credit_id reverse index now that the offer is filled
-        env.storage()
-            .persistent()
-            .remove(&DataKey::CreditOffer(offer.credit_id.clone()));
-
-        // Remove from global active index
-        let mut active_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ActiveOffers)
-            .unwrap_or_else(|| Vec::new(&env));
-        if let Some(pos) = active_ids.iter().position(|id| id == offer_id) {
-            active_ids.remove(pos as u32);
-            env.storage()
-                .persistent()
-                .set(&DataKey::ActiveOffers, &active_ids);
-            env.storage()
-                .persistent()
-                .extend_ttl(&DataKey::ActiveOffers, TTL_THRESHOLD, MIN_TTL);
-        }
-
-        // #1091: decrement active offers counter and accumulate volume
-        Self::decrement_active_count(&env);
         // All marketplace offers are priced in native XLM (price_xlm in stroops).
         // Accumulate into TotalVolumeXLM; TotalVolumeTokens tracks SAC-token-based
         // volume if token_id differs from the native XLM contract in future extensions.
@@ -1358,11 +1703,7 @@ impl Marketplace {
 
         // Filter out expired offers
         for id in all.iter() {
-            if let Some(offer) = env
-                .storage()
-                .persistent()
-                .get::<_, Offer>(&DataKey::Offer(id))
-            {
+            if let Some(offer) = Self::load_offer(&env, id) {
                 if offer.active {
                     let expired = offer.expires_at.is_some_and(|e| now > e);
                     if !expired {
@@ -1465,6 +1806,19 @@ impl Marketplace {
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
+
+    /// Decode pre-upgrade offer records with an absent minimum as None.
+    /// Soroban's derived struct decoder otherwise requires every map key, even
+    /// for Option fields. All offer reads go through this compatibility path.
+    fn load_offer(env: &Env, offer_id: u64) -> Option<Offer> {
+        let mut fields: Map<Symbol, Val> =
+            env.storage().persistent().get(&DataKey::Offer(offer_id))?;
+        let key = Symbol::new(env, "min_purchase_tonnes");
+        if !fields.contains_key(key.clone()) {
+            fields.set(key, Option::<i128>::None.into_val(env));
+        }
+        Some(Offer::try_from_val(env, &fields.into_val(env)).unwrap())
+    }
 
     /// Increment `ActiveOffersCount` by one. Called when a new active offer is created.
     fn increment_active_count(env: &Env) {
@@ -1659,8 +2013,17 @@ impl Marketplace {
 mod tests {
     use super::*;
     use carbonchain_credit_registry::test_helpers::RegistryHelper;
-    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::testutils::{Address as _, Events, Ledger};
     use soroban_sdk::{BytesN, Env, String};
+
+    fn active_offer_count(env: &Env, client: &MarketplaceClient) -> u64 {
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .get(&DataKey::ActiveOffersCount)
+                .unwrap_or(0)
+        })
+    }
 
     fn setup_with_registry(
         env: &Env,
@@ -1748,6 +2111,548 @@ mod tests {
         let offer = client.get_offer(&offer_id);
         assert!(offer.active);
         assert_eq!(offer.price_xlm, 10_000_000);
+        assert_eq!(offer.min_purchase_tonnes, None);
+    }
+
+    #[test]
+    fn test_minimum_offer_rejects_invalid_bounds_before_escrow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id) = setup_with_registry(&env);
+        let nonce = client.get_nonce(&seller);
+        for minimum in [0, -100_000, 100_001, 1_100_000] {
+            assert_eq!(
+                client.try_create_offer_with_minimum(
+                    &seller,
+                    &credit_id,
+                    &10_000_000,
+                    &AssetType::Native,
+                    &1_000_000,
+                    &registry.id,
+                    &None,
+                    &Some(minimum),
+                    &nonce,
+                ),
+                Err(Ok(MarketplaceError::InvalidTonnes))
+            );
+            assert_eq!(client.get_nonce(&seller), nonce);
+            assert_eq!(registry.get_credit(&credit_id).owner, seller);
+            assert_eq!(client.offer_count(), 0);
+        }
+        let id = client.create_offer_with_minimum(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &AssetType::Native,
+            &1_000_000,
+            &registry.id,
+            &None,
+            &Some(1_000_000),
+            &nonce,
+        );
+        assert_eq!(client.get_offer(&id).min_purchase_tonnes, Some(1_000_000));
+    }
+
+    #[test]
+    fn test_minimum_purchases_reject_below_and_fill_at_or_above_minimum() {
+        for (quantity, minimum) in [(300_000, 300_000), (600_000, 200_000)] {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (client, seller, _, registry, credit_id, token) = setup_with_token(&env);
+            let buyer = Address::generate(&env);
+            token.set_balance(&buyer, &20_000_000);
+            let id = client.create_offer_with_minimum(
+                &seller,
+                &credit_id,
+                &10_000_000,
+                &AssetType::Native,
+                &1_000_000,
+                &registry.id,
+                &None,
+                &Some(minimum),
+                &client.get_nonce(&seller),
+            );
+            let offer = client.get_offer(&id);
+            let nonce = client.get_nonce(&buyer);
+            assert_eq!(
+                client.try_buy_offer_quantity(
+                    &buyer,
+                    &id,
+                    &registry.id,
+                    &token.address,
+                    &(minimum - 100_000),
+                    &nonce,
+                ),
+                Err(Ok(MarketplaceError::BelowMinimumQuantity))
+            );
+            assert_eq!(client.get_nonce(&buyer), nonce);
+            assert_eq!(client.get_offer(&id), offer);
+            assert_eq!(token.balance(&buyer), 20_000_000);
+            assert_eq!(token.balance(&seller), 0);
+            // A fill that strands less than the minimum is rejected too.
+            assert_eq!(
+                client.try_buy_offer_quantity(
+                    &buyer,
+                    &id,
+                    &registry.id,
+                    &token.address,
+                    &900_000,
+                    &nonce,
+                ),
+                Err(Ok(MarketplaceError::BelowMinimumQuantity))
+            );
+
+            client.buy_offer_quantity(&buyer, &id, &registry.id, &token.address, &quantity, &nonce);
+            let remaining = client.get_offer(&id);
+            assert!(remaining.active);
+            assert_eq!(remaining.tonnes, 1_000_000 - quantity);
+            assert_eq!(remaining.price_amount, 10_000_000 - quantity * 10);
+            assert_eq!(remaining.price_xlm, remaining.price_amount);
+            assert_eq!(remaining.min_purchase_tonnes, Some(minimum));
+            assert_ne!(remaining.credit_id, credit_id);
+            assert_eq!(
+                registry.get_credit(&remaining.credit_id).owner,
+                client.address
+            );
+            assert_eq!(
+                registry.get_credit(&remaining.credit_id).tonnes,
+                remaining.tonnes
+            );
+            let owned: Vec<BytesN<32>> = env.invoke_contract(
+                &registry.id,
+                &Symbol::new(&env, "list_credits_by_owner"),
+                (buyer.clone(),).into_val(&env),
+            );
+            assert_eq!(owned.len(), 1);
+            assert_eq!(registry.get_credit(&owned.get(0).unwrap()).tonnes, quantity);
+            assert_eq!(token.balance(&seller), quantity * 10);
+            assert_eq!(active_offer_count(&env, &client), 1);
+            assert_eq!(client.get_offer_by_credit_id(&credit_id), None);
+            assert_eq!(
+                client.get_offer_by_credit_id(&remaining.credit_id),
+                Some(id)
+            );
+            // The original whole-offer entry point also enforces the minimum.
+            client.buy_offer(
+                &buyer,
+                &id,
+                &registry.id,
+                &token.address,
+                &client.get_nonce(&buyer),
+            );
+            assert!(!client.get_offer(&id).active);
+            assert!(client.get_active_offers().is_empty());
+            assert_eq!(active_offer_count(&env, &client), 0);
+            assert_eq!(token.balance(&seller), 10_000_000);
+            assert_eq!(token.balance(&buyer), 10_000_000);
+        }
+    }
+
+    #[test]
+    fn test_partial_fill_rounds_payment_and_cancellation_returns_remainder() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id, token) = setup_with_token(&env);
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &101);
+        let id = client.create_offer_with_minimum(
+            &seller,
+            &credit_id,
+            &101,
+            &AssetType::Native,
+            &1_000_000,
+            &registry.id,
+            &None,
+            &None,
+            &client.get_nonce(&seller),
+        );
+        client.buy_offer_quantity(&buyer, &id, &registry.id, &token.address, &300_000, &0);
+        assert_eq!(token.balance(&seller), 31);
+        let remaining = client.get_offer(&id);
+        assert_eq!(remaining.price_amount, 70);
+        assert_eq!(remaining.tonnes, 700_000);
+        client.cancel_offer(&seller, &id, &registry.id, &client.get_nonce(&seller));
+        assert_eq!(registry.get_credit(&remaining.credit_id).owner, seller);
+        assert_eq!(registry.get_credit(&remaining.credit_id).tonnes, 700_000);
+        assert_eq!(active_offer_count(&env, &client), 0);
+    }
+
+    #[test]
+    fn test_minimum_equal_to_offer_requires_full_purchase() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id, token) = setup_with_token(&env);
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &10_000_000);
+        let id = client.create_offer_with_minimum(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &AssetType::Native,
+            &1_000_000,
+            &registry.id,
+            &None,
+            &Some(1_000_000),
+            &client.get_nonce(&seller),
+        );
+        assert_eq!(
+            client.try_buy_offer_quantity(&buyer, &id, &registry.id, &token.address, &900_000, &0,),
+            Err(Ok(MarketplaceError::BelowMinimumQuantity))
+        );
+        client.buy_offer_quantity(&buyer, &id, &registry.id, &token.address, &1_000_000, &0);
+        assert_eq!(registry.get_credit(&credit_id).owner, buyer);
+        assert!(!client.get_offer(&id).active);
+    }
+
+    #[test]
+    fn test_partial_fill_rejects_invalid_quantity_and_rolls_back_registry_failure() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id, token) = setup_with_token(&env);
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &10_000_000);
+        let id = client.create_offer_with_minimum(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &AssetType::Native,
+            &1_000_000,
+            &registry.id,
+            &None,
+            &Some(200_000),
+            &client.get_nonce(&seller),
+        );
+        let offer = client.get_offer(&id);
+        for quantity in [0, -100_000, 200_001, 1_100_000] {
+            assert_eq!(
+                client.try_buy_offer_quantity(
+                    &buyer,
+                    &id,
+                    &registry.id,
+                    &token.address,
+                    &quantity,
+                    &0,
+                ),
+                Err(Ok(MarketplaceError::InvalidTonnes))
+            );
+        }
+        // A failed vintage check occurs after the payment and split. The entire
+        // invocation must roll back, including those cross-contract changes.
+        let admin: Address = env.as_contract(&registry.id, || {
+            env.storage()
+                .instance()
+                .get(&carbonchain_credit_registry::types::DataKey::Admin)
+                .unwrap()
+        });
+        let _: () = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "update_max_vintage_age"),
+            (admin.clone(), 0u32, registry.get_nonce(&admin)).into_val(&env),
+        );
+        let total_before: u64 = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "get_credit_count"),
+            Vec::new(&env),
+        );
+        assert!(client
+            .try_buy_offer_quantity(&buyer, &id, &registry.id, &token.address, &300_000, &0,)
+            .is_err());
+        assert_eq!(client.get_offer(&id), offer);
+        assert_eq!(client.get_nonce(&buyer), 0);
+        assert_eq!(registry.get_credit(&credit_id).owner, client.address);
+        assert_eq!(
+            registry.get_credit(&credit_id).status,
+            carbonchain_credit_registry::types::CreditStatus::Active
+        );
+        let total_after: u64 = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "get_credit_count"),
+            Vec::new(&env),
+        );
+        assert_eq!(total_after, total_before);
+        assert_eq!(token.balance(&buyer), 10_000_000);
+        assert_eq!(token.balance(&seller), 0);
+        assert_eq!(active_offer_count(&env, &client), 1);
+    }
+
+    #[test]
+    fn test_partial_fill_expiry_sweep_returns_unsold_credit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id, token) = setup_with_token(&env);
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &10_000_000);
+        let expiry = env.ledger().timestamp() + 10;
+        let id = client.create_offer_with_minimum(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &AssetType::Native,
+            &1_000_000,
+            &registry.id,
+            &Some(expiry),
+            &Some(200_000),
+            &client.get_nonce(&seller),
+        );
+        client.buy_offer_quantity(&buyer, &id, &registry.id, &token.address, &300_000, &0);
+        let remainder = client.get_offer(&id);
+        env.ledger().set_timestamp(expiry + 1);
+        assert_eq!(client.sweep_expired_offers(&buyer, &25), 1);
+        assert_eq!(registry.get_credit(&remainder.credit_id).owner, seller);
+        assert_eq!(registry.get_credit(&remainder.credit_id).tonnes, 700_000);
+        assert_eq!(token.balance(&seller), 3_000_000);
+        assert_eq!(client.get_offer_by_credit_id(&remainder.credit_id), None);
+        assert_eq!(active_offer_count(&env, &client), 0);
+    }
+
+    #[test]
+    fn test_legacy_offer_without_minimum_remains_readable_and_buyable() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id, token) = setup_with_token(&env);
+        let buyer = Address::generate(&env);
+        token.set_balance(&buyer, &10_000_000);
+        let id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &1_000_000,
+            &registry.id,
+            &None,
+            &client.get_nonce(&seller),
+        );
+        env.as_contract(&client.address, || {
+            let mut fields: Map<Symbol, Val> =
+                env.storage().persistent().get(&DataKey::Offer(id)).unwrap();
+            fields.remove(Symbol::new(&env, "min_purchase_tonnes"));
+            env.storage().persistent().set(&DataKey::Offer(id), &fields);
+        });
+        assert_eq!(client.get_offer(&id).min_purchase_tonnes, None);
+        assert!(client.list_active_offers(&0, &25).contains(&id));
+        client.buy_offer(&buyer, &id, &registry.id, &token.address, &0);
+        assert_eq!(registry.get_credit(&credit_id).owner, buyer);
+        assert!(!client.get_offer(&id).active);
+    }
+
+    #[test]
+    fn test_sweep_expired_offers_returns_escrow_and_compacts_indexes() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id) = setup_with_registry(&env);
+        let expires_at = env.ledger().timestamp() + 10;
+        let id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &1_000_000,
+            &registry.id,
+            &Some(expires_at),
+            &client.get_nonce(&seller),
+        );
+        let caller = Address::generate(&env);
+        env.ledger().set_timestamp(expires_at);
+        assert_eq!(client.sweep_expired_offers(&caller, &25), 0);
+        assert!(client.get_offer(&id).active);
+        env.ledger().set_timestamp(expires_at + 1);
+        assert_eq!(client.sweep_expired_offers(&caller, &0), 0);
+        assert_eq!(client.sweep_expired_offers(&caller, &1), 1);
+        assert!(client.get_active_offers().is_empty());
+        assert!(!client.get_offer(&id).active);
+        assert_eq!(registry.get_credit(&credit_id).owner, seller);
+        assert_eq!(client.get_offer_by_credit_id(&credit_id), None);
+        assert!(!client.is_escrow_reclaimable(&id));
+        assert_eq!(active_offer_count(&env, &client), 0);
+        assert_eq!(client.sweep_expired_offers(&caller, &25), 0);
+        let event = OfferExpired {
+            caller,
+            offer_id: id,
+            seller,
+            reclaimable: false,
+        };
+        let events = env.events().all();
+        assert!(events
+            .iter()
+            .any(|(address, topics, data)| address == client.address
+                && topics == event.topics(&env)
+                && data == event.data(&env)));
+        env.as_contract(&client.address, || {
+            assert!(!env.storage().persistent().has(&DataKey::EscrowedAmount(id)));
+        });
+    }
+
+    #[test]
+    fn test_sweep_bounds_inspections_and_reaches_expired_offers() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, _, credit_id) = setup_with_registry(&env);
+        let now = env.ledger().timestamp();
+        // Seed a large index without paying for unrelated credit issuance.
+        env.as_contract(&client.address, || {
+            let mut ids = Vec::new(&env);
+            for id in 0..60u64 {
+                let offer = Offer {
+                    seller: seller.clone(),
+                    credit_id: credit_id.clone(),
+                    price_xlm: 1,
+                    price_amount: 1,
+                    price_asset: AssetType::Native,
+                    tonnes: 1_000_000,
+                    active: true,
+                    created_at: now,
+                    expires_at: if id < 15 {
+                        None
+                    } else if id < 30 {
+                        Some(now + 1)
+                    } else {
+                        Some(now - 1)
+                    },
+                    min_purchase_tonnes: None,
+                };
+                env.storage().persistent().set(&DataKey::Offer(id), &offer);
+                ids.push_back(id);
+            }
+            env.storage().persistent().set(&DataKey::ActiveOffers, &ids);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ActiveOffersCount, &60u64);
+        });
+        let caller = Address::generate(&env);
+        assert_eq!(client.sweep_expired_offers(&caller, &u32::MAX), 0);
+        assert_eq!(client.sweep_expired_offers(&caller, &u32::MAX), 20);
+        assert_eq!(client.sweep_expired_offers(&caller, &u32::MAX), 10);
+        assert_eq!(client.get_active_offers().len(), 30);
+        for id in 0..30u64 {
+            assert!(client.get_offer(&id).active);
+        }
+        for id in 30..60u64 {
+            assert!(client.is_escrow_reclaimable(&id));
+        }
+        assert_eq!(active_offer_count(&env, &client), 30);
+    }
+
+    #[test]
+    fn test_sweep_preserves_rejected_escrow_and_seller_can_retry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id) = setup_with_registry(&env);
+        let expires_at = env.ledger().timestamp() + 10;
+        let id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &1_000_000,
+            &registry.id,
+            &Some(expires_at),
+            &client.get_nonce(&seller),
+        );
+        // Pause the registry to force an escrow refund failure.
+        let registry_admin: Address = env.as_contract(&registry.id, || {
+            env.storage()
+                .instance()
+                .get(&carbonchain_credit_registry::types::DataKey::Admin)
+                .unwrap()
+        });
+        let _: () = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "pause"),
+            (registry_admin.clone(),).into_val(&env),
+        );
+        env.ledger().set_timestamp(expires_at + 1);
+        let caller = Address::generate(&env);
+        assert_eq!(client.sweep_expired_offers(&caller, &25), 1);
+        assert!(client.is_escrow_reclaimable(&id));
+        assert_eq!(registry.get_credit(&credit_id).owner, client.address);
+        assert_eq!(
+            client.try_reclaim_expired_offer(&caller, &id, &client.get_nonce(&caller)),
+            Err(Ok(MarketplaceError::Unauthorized))
+        );
+        assert_eq!(
+            client.try_reclaim_expired_offer(&seller, &id, &client.get_nonce(&seller)),
+            Err(Ok(MarketplaceError::EscrowFailed))
+        );
+        assert!(client.is_escrow_reclaimable(&id));
+        let _: () = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "unpause"),
+            (registry_admin,).into_val(&env),
+        );
+        client.reclaim_expired_offer(&seller, &id, &client.get_nonce(&seller));
+        assert_eq!(registry.get_credit(&credit_id).owner, seller);
+        assert!(!client.is_escrow_reclaimable(&id));
+    }
+
+    #[test]
+    fn test_sweep_flags_vintage_expired_escrow_for_reclamation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id) = setup_with_registry(&env);
+        let expiry = env.ledger().timestamp() + 10;
+        let id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &1_000_000,
+            &registry.id,
+            &Some(expiry),
+            &client.get_nonce(&seller),
+        );
+        let admin: Address = env.as_contract(&registry.id, || {
+            env.storage()
+                .instance()
+                .get(&carbonchain_credit_registry::types::DataKey::Admin)
+                .unwrap()
+        });
+        let _: () = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "update_max_vintage_age"),
+            (admin.clone(), 0u32, registry.get_nonce(&admin)).into_val(&env),
+        );
+        env.ledger().set_timestamp(expiry + 1);
+        assert_eq!(
+            client.sweep_expired_offers(&Address::generate(&env), &25),
+            1
+        );
+        assert!(client.get_active_offers().is_empty());
+        assert!(client.is_escrow_reclaimable(&id));
+        assert_eq!(registry.get_credit(&credit_id).owner, client.address);
+        let _: () = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "update_max_vintage_age"),
+            (admin.clone(), 1u32, registry.get_nonce(&admin)).into_val(&env),
+        );
+        client.reclaim_expired_offer(&seller, &id, &client.get_nonce(&seller));
+        assert_eq!(registry.get_credit(&credit_id).owner, seller);
+        assert!(!client.is_escrow_reclaimable(&id));
+    }
+
+    #[test]
+    fn test_sweep_flags_escrow_when_registry_nonce_lookup_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, seller, _, registry, credit_id) = setup_with_registry(&env);
+        let expiry = env.ledger().timestamp() + 10;
+        let id = client.create_offer(
+            &seller,
+            &credit_id,
+            &10_000_000,
+            &1_000_000,
+            &registry.id,
+            &Some(expiry),
+            &client.get_nonce(&seller),
+        );
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::TrustedRegistry, &Address::generate(&env));
+        });
+        env.ledger().set_timestamp(expiry + 1);
+        assert_eq!(
+            client.sweep_expired_offers(&Address::generate(&env), &25),
+            1
+        );
+        assert!(client.is_escrow_reclaimable(&id));
+        assert!(!client.get_offer(&id).active);
+        assert_eq!(registry.get_credit(&credit_id).owner, client.address);
     }
 
     #[test]
@@ -2706,9 +3611,27 @@ mod tests {
         // Offer should now be inactive (filled)
         assert!(!client.get_offer(&offer_id).active);
 
-        // Credit should now be owned by buyer
-        let credit = registry.get_credit(&credit_id);
-        assert_eq!(credit.owner, buyer);
+        // Only the listed volume belongs to the buyer; excess returns to the seller.
+        let buyer_credits: Vec<BytesN<32>> = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "list_credits_by_owner"),
+            (buyer.clone(),).into_val(&env),
+        );
+        let seller_credits: Vec<BytesN<32>> = env.invoke_contract(
+            &registry.id,
+            &Symbol::new(&env, "list_credits_by_owner"),
+            (seller.clone(),).into_val(&env),
+        );
+        assert_eq!(buyer_credits.len(), 1);
+        assert_eq!(seller_credits.len(), 1);
+        assert_eq!(
+            registry.get_credit(&buyer_credits.get(0).unwrap()).tonnes,
+            500_000
+        );
+        assert_eq!(
+            registry.get_credit(&seller_credits.get(0).unwrap()).tonnes,
+            500_000
+        );
 
         // Token should have moved: buyer -price, seller +price
         assert_eq!(token.balance(&buyer), 0);
@@ -3432,6 +4355,9 @@ mod tests {
 
         // Active index must be empty
         assert_eq!(client.get_active_offers().len(), 0);
+        assert_eq!(registry.get_credit(&credit_id).owner, seller);
+        assert_eq!(active_offer_count(&env, &client), 0);
+        assert_eq!(client.get_offer_by_credit_id(&credit_id), None);
     }
 
     /// Expired offers are removed from the SellerOffers index by cleanup_expired_offers.

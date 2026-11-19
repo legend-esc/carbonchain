@@ -5,6 +5,7 @@
 
 ## Features
 - [Error Codes](features/ERROR_CODES_REFERENCE.md)
+- [Contract Maintenance and Batch Events](features/CONTRACT_MAINTENANCE.md)
 - [SEP-10 Auth](features/SEP10_AUTH.md)
 
 ## Guides

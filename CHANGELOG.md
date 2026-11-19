@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Anyone can sweep up to 25 active offer entries per call, with expired escrow returned or marked for seller reclamation (#1268).
+- Credit submission and transfer enforce a configurable vintage age limit, defaulting to 15 UTC calendar years (#1270).
+- Batch retirements publish `RetirementBatchProcessed` with a unique batch ID, successful volume, credit count, and retiree (#1271).
+- Marketplace offers support optional minimum quantities and proportional partial purchases; whole purchases deliver the listed volume and return excess escrow to the seller (#1272).
+
 ### Open for contributors
 - Retirement certificate viewer (`/certificates/:id`)
 - `docker-compose.yml` for local PostgreSQL

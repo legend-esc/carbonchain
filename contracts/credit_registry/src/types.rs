@@ -211,4 +211,6 @@ pub enum DataKey {
     /// Admin-configured token contract address that is the only accepted stake token.
     /// deposit_stake validates the caller-supplied token_id against this value.
     ApprovedStakeToken,
+    /// Maximum permitted credit vintage age in calendar years.
+    MaxVintageAge,
 }
