@@ -42,6 +42,8 @@ pub struct RetirementRecord {
     /// Carbon volume retired in scaled units. 1 tonne = 1_000_000 units.
     pub tonnes_retired: i128,
     pub reason: String,
+    /// Optional legal beneficiary, up to 128 Unicode characters.
+    pub beneficiary: Option<String>,
     pub retired_at: u64,
     /// Issue #544 — IPFS hash of the off-chain retirement certificate PDF.
     /// Empty string for legacy retirements that pre-date this field.

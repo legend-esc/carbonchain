@@ -126,6 +126,50 @@ describe('RetirementService — event ordering (issue #162)', () => {
     jest.clearAllMocks();
   });
 
+  it('passes an absent beneficiary in the single retirement contract call', async () => {
+    const dto = makeDto({ nonce: 4 });
+    await service.retire(dto);
+    expect(mockStellarService.invokeContract).toHaveBeenCalledWith(
+      VALID_CONTRACT_ID,
+      'retire',
+      [
+        nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
+        nativeToScVal(Buffer.from(dto.creditId, 'hex'), { type: 'bytes' }),
+        nativeToScVal(BigInt(dto.tonnes), { type: 'i128' }),
+        nativeToScVal(dto.reason, { type: 'string' }),
+        nativeToScVal(null),
+        nativeToScVal(VALID_CONTRACT_ID, { type: 'address' }),
+        nativeToScVal(4n, { type: 'u64' }),
+      ],
+      expect.anything(),
+    );
+  });
+
+  it('passes an absent beneficiary in the batch retirement contract call', async () => {
+    const dto = makeDto();
+    await service.batchRetire({
+      buyerPublicKey: dto.buyerPublicKey,
+      creditIds: [dto.creditId],
+      tonnes: [dto.tonnes],
+      reason: dto.reason,
+      nonce: 5,
+    });
+    expect(mockStellarService.invokeContract).toHaveBeenCalledWith(
+      VALID_CONTRACT_ID,
+      'batch_retire',
+      [
+        nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
+        nativeToScVal([Buffer.from(dto.creditId, 'hex')]),
+        nativeToScVal([BigInt(dto.tonnes)]),
+        nativeToScVal(dto.reason, { type: 'string' }),
+        nativeToScVal(null),
+        nativeToScVal(VALID_CONTRACT_ID, { type: 'address' }),
+        nativeToScVal(5n, { type: 'u64' }),
+      ],
+      expect.anything(),
+    );
+  });
+
   it('persists the retirement record before emitting CreditRetired', async () => {
     const order: string[] = [];
 

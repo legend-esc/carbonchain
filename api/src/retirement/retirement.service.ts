@@ -306,6 +306,7 @@ export class RetirementService {
       nativeToScVal(Buffer.from(dto.creditId, 'hex'), { type: 'bytes' }),
       nativeToScVal(BigInt(dto.tonnes), { type: 'i128' }),
       nativeToScVal(dto.reason, { type: 'string' }),
+      nativeToScVal(null), // Optional on-chain beneficiary; preserve existing API requests.
       nativeToScVal(this.registryContractId, { type: 'address' }),
       nativeToScVal(BigInt(dto.nonce ?? 0), { type: 'u64' }),
     ];
@@ -551,6 +552,7 @@ export class RetirementService {
       creditIdsVal,
       tonnesVal,
       nativeToScVal(dto.reason, { type: 'string' }),
+      nativeToScVal(null), // Optional on-chain beneficiary; preserve existing API requests.
       nativeToScVal(this.registryContractId, { type: 'address' }),
       nativeToScVal(BigInt(dto.nonce), { type: 'u64' }),
     ];
