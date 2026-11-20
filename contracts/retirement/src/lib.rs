@@ -901,6 +901,45 @@ impl Retirement {
             .get(&DataKey::CertificateHash(retirement_id))
     }
 
+    /// Compute SHA256 fingerprint for retirement certificate verification
+    pub fn compute_certificate_fingerprint(
+        env: Env,
+        retirement_id: BytesN<32>,
+    ) -> Result<BytesN<32>, RetirementError> {
+        let key = DataKey::Retirement(retirement_id);
+        let mut record: RetirementRecord = env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RetirementError::NotFound)?;
+
+        let mut hasher_input = Vec::new();
+        hasher_input.push_back(record.buyer.to_xdr(&env).into());
+        hasher_input.push_back(record.tonnes_retired.to_xdr(&env).into());
+        hasher_input.push_back(record.credit_id.to_xdr(&env).into());
+        hasher_input.push_back(record.retired_at.to_xdr(&env).into());
+
+        let fingerprint = env.crypto().sha256(&hasher_input);
+        record.certificate_fingerprint = Some(fingerprint);
+        env.storage().persistent().set(&key, &record);
+
+        Ok(fingerprint)
+    }
+
+    /// Verify retirement certificate fingerprint
+    pub fn verify_certificate_fingerprint(
+        env: Env,
+        retirement_id: BytesN<32>,
+        fingerprint: BytesN<32>,
+    ) -> Result<bool, RetirementError> {
+        let key = DataKey::Retirement(retirement_id);
+        let record: RetirementRecord = env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RetirementError::NotFound)?;
+
+        Ok(record.certificate_fingerprint.map(|fp| fp == fingerprint).unwrap_or(false))
+    }
+
     // ── Internal ─────────────────────────────────────────────────────────────
 
     fn validate_beneficiary(beneficiary: &Option<String>) -> Result<(), RetirementError> {
