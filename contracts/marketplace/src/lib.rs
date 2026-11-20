@@ -339,6 +339,47 @@ impl Marketplace {
             .unwrap_or(false)
     }
 
+    /// Issue #1283: Batch add/remove allowed tokens for multi-asset escrow
+    /// Admin can enable multiple Stellar stablecoins (USDC, EURC, etc.) in one call.
+    pub fn batch_set_allowed_tokens(
+        env: Env,
+        admin: Address,
+        tokens: Vec<Address>,
+        status: bool,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        Self::require_admin(&env, &admin)?;
+        if !consume_nonce(&env, &admin, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+
+        let mut allowed: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedTokens)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for token in tokens.iter() {
+            if status {
+                // Add token if not already present
+                if !allowed.iter().any(|t| t == token) {
+                    allowed.push_back(token.clone());
+                }
+            } else {
+                // Remove token
+                allowed.retain(&env, |t| t != token);
+            }
+        }
+
+        env.storage().instance().set(&DataKey::AllowedTokens, &allowed);
+        Ok(())
+    }
+
+    /// Issue #1283: Query whether a token is allowed for marketplace escrow
+    pub fn is_token_allowed_query(env: Env, token: Address) -> bool {
+        Self::is_token_allowed(&env, &token)
+    }
+
     // ── #1095 — Version / Migration ─────────────────────────────────────────
 
     /// Returns the current schema version of the contract.

@@ -397,6 +397,41 @@ impl Retirement {
         Ok(retirement_id)
     }
 
+    /// Issue #1282: Retire a partial amount of a credit (with auto-split)
+    /// Automatically splits the credit if necessary, retires the requested portion,
+    /// and leaves the remainder in the caller's possession.
+    pub fn retire_partial(
+        env: Env,
+        buyer: Address,
+        credit_id: BytesN<32>,
+        tonnes_to_retire: i128,
+        reason: String,
+        nonce: u64,
+    ) -> Result<BytesN<32>, RetirementError> {
+        let registry_id = Self::get_registry(&env);
+
+        // Call split_credit to split if needed
+        let _split_result: (BytesN<32>, BytesN<32>) = env
+            .try_invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "split_credit"),
+                (credit_id.clone(), tonnes_to_retire).into_val(&env),
+            )
+            .map_err(|_| RetirementError::InvalidRegistry)?;
+
+        // Now retire the split portion
+        Self::retire(
+            env,
+            buyer,
+            credit_id,
+            tonnes_to_retire,
+            reason,
+            None,
+            registry_id,
+            nonce,
+        )
+    }
+
     /// Retire multiple carbon credits in a single transaction with partial-success mode.
     ///
     /// Unlike the all-or-nothing approach, this function processes every credit
