@@ -6,6 +6,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MetricsService } from '../metrics/metrics.service';
 import { withRetry, rpcBreaker, CircuitState } from './rpc-resilience';
 import {
   Account,
@@ -109,6 +110,10 @@ export class StellarService implements OnModuleInit {
     @Optional()
     @Inject(METRICS_EVENT_EMITTER)
     private readonly metricsEmitter?: EventEmitter,
+    /**
+     * Issue #1293 — Metrics service for tracking Soroban RPC latency and errors.
+     */
+    @Optional() private metricsService?: MetricsService,
   ) {
     const rawMultiplier = configService.get<string>('FEE_BUFFER_MULTIPLIER');
     const parsed =
@@ -130,6 +135,43 @@ export class StellarService implements OnModuleInit {
     return Promise.race([operation, timeout]).finally(() =>
       clearTimeout(timer),
     );
+  }
+
+  /**
+   * Issue #1293 — Wrapper to track Soroban RPC call latency and errors.
+   * Records metrics for method name, latency, and error type.
+   */
+  private async trackSorobanRpcCall<T>(
+    methodName: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const startMs = Date.now();
+    try {
+      const result = await fn();
+      const durationSeconds = (Date.now() - startMs) / 1000;
+      this.metricsService?.sorobanRpcDurationSeconds?.labels(
+        methodName,
+        'success',
+      ).observe(durationSeconds);
+      return result;
+    } catch (error) {
+      const durationSeconds = (Date.now() - startMs) / 1000;
+      this.metricsService?.sorobanRpcDurationSeconds?.labels(
+        methodName,
+        'error',
+      ).observe(durationSeconds);
+
+      let errorType = 'other';
+      if (error instanceof Error) {
+        if (error.message.includes('rate')) errorType = 'rate_limit';
+        else if (error.message.includes('timed out')) errorType = 'timeout';
+      }
+      this.metricsService?.sorobanRpcErrorsTotal?.labels(
+        methodName,
+        errorType,
+      ).inc();
+      throw error;
+    }
   }
 
   onModuleInit() {
@@ -789,9 +831,11 @@ export class StellarService implements OnModuleInit {
 
     for (let attempt = 0; attempt <= BAD_SEQ_MAX_RETRIES; attempt++) {
       try {
-        const response = await this.withTimeout(
-          this.sorobanRpcServer.sendTransaction(tx),
-          'sendTransaction',
+        const response = await this.trackSorobanRpcCall('sendTransaction', () =>
+          this.withTimeout(
+            this.sorobanRpcServer.sendTransaction(tx),
+            'sendTransaction',
+          ),
         );
 
         // Invalidate the cached account info — the sequence has advanced.
@@ -876,9 +920,11 @@ export class StellarService implements OnModuleInit {
       }),
     );
 
-    const response = await this.withTimeout(
-      this.sorobanRpcServer.getLedgerEntries(ledgerKey),
-      'getLedgerEntries',
+    const response = await this.trackSorobanRpcCall('getLedgerEntries', () =>
+      this.withTimeout(
+        this.sorobanRpcServer.getLedgerEntries(ledgerKey),
+        'getLedgerEntries',
+      ),
     );
     if (response.entries && response.entries.length > 0) {
       const entry = response.entries[0];
@@ -914,9 +960,11 @@ export class StellarService implements OnModuleInit {
   async simulateTransaction(
     tx: Transaction,
   ): Promise<rpc.Api.SimulateTransactionResponse> {
-    return this.withTimeout(
-      this.sorobanRpcServer.simulateTransaction(tx),
-      'simulateTransaction',
+    return this.trackSorobanRpcCall('simulateTransaction', () =>
+      this.withTimeout(
+        this.sorobanRpcServer.simulateTransaction(tx),
+        'simulateTransaction',
+      ),
     );
   }
 
@@ -926,9 +974,11 @@ export class StellarService implements OnModuleInit {
     delayMs = 2000,
   ): Promise<rpc.Api.GetTransactionResponse> {
     for (let i = 0; i < maxRetries; i++) {
-      const response = await this.withTimeout(
-        this.sorobanRpcServer.getTransaction(hash),
-        'getTransaction',
+      const response = await this.trackSorobanRpcCall('getTransaction', () =>
+        this.withTimeout(
+          this.sorobanRpcServer.getTransaction(hash),
+          'getTransaction',
+        ),
       );
       if (
         String(response.status) !== 'NOT_FOUND' &&

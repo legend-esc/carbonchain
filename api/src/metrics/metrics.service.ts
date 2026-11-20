@@ -53,6 +53,18 @@ export class MetricsService implements OnModuleInit {
    */
   stellarContractOpsTotal: client.Counter<string>;
 
+  /**
+   * Issue #1293 — Histogram: Soroban RPC call latency in seconds, labelled
+   * by method name and outcome. Provides visibility into RPC node response times.
+   */
+  sorobanRpcDurationSeconds: client.Histogram<string>;
+
+  /**
+   * Issue #1293 — Counter: total Soroban RPC errors, labelled by method and error type.
+   * Includes rate-limiting errors and transaction confirmation latencies.
+   */
+  sorobanRpcErrorsTotal: client.Counter<string>;
+
   // ── Issue #1184: Webhook delivery metrics ─────────────────────────────────
 
   /**
@@ -174,6 +186,22 @@ export class MetricsService implements OnModuleInit {
       help: 'Webhook delivery latency in seconds by event type',
       labelNames: ['event_type'],
       buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+      registers: [this.register],
+    });
+
+    // Issue #1293 — Soroban RPC latency and error metrics.
+    this.sorobanRpcDurationSeconds = new client.Histogram({
+      name: 'soroban_rpc_duration_seconds',
+      help: 'Soroban RPC call latency in seconds by method and outcome',
+      labelNames: ['method', 'outcome'],
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+      registers: [this.register],
+    });
+
+    this.sorobanRpcErrorsTotal = new client.Counter({
+      name: 'soroban_rpc_errors_total',
+      help: 'Total Soroban RPC errors by method and error type (rate_limit/timeout/other)',
+      labelNames: ['method', 'error_type'],
       registers: [this.register],
     });
   }
