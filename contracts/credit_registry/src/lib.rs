@@ -1264,6 +1264,22 @@ impl CreditRegistry {
         get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)
     }
 
+    /// Issue #1287: Query developer royalty information for secondary market trades
+    /// Returns (developer_address, royalty_bps) if configured, None otherwise
+    /// Used by marketplace to route creator royalties to indigenous communities/local developers
+    pub fn get_developer_royalty(
+        env: Env,
+        credit_id: BytesN<32>,
+    ) -> Result<Option<(Address, u32)>, CarbonChainError> {
+        let credit = get_credit(&env, &credit_id).ok_or(CarbonChainError::CreditNotFound)?;
+
+        if let Some(dev_addr) = credit.developer_address {
+            Ok(Some((dev_addr, credit.developer_royalty_bps)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Fetch up to 50 credits in input order, preserving duplicates and missing entries.
     /// Returns `InvalidInput` before reading storage if the batch is too large.
     pub fn get_credits_batch(

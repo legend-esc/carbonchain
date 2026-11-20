@@ -71,6 +71,9 @@ pub enum DataKey {
     /// IPFS hash of the off-chain retirement certificate PDF.
     /// Set after retirement via `set_certificate_hash`.
     CertificateHash(BytesN<32>),
+    /// Issue #1288: Soulbound Token (SBT) badges - non-transferable proof of retirement
+    /// Maps Address -> Vec<BytesN<32>> (retirement IDs for which badges were minted)
+    SBTBadges(Address),
     /// Global index of all retirement IDs across all accounts (issue #1079).
     /// Stored in instance storage. Used by `list_all_retirements` for admin auditing.
     AllRetirements,

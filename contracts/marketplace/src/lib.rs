@@ -86,6 +86,9 @@ pub struct Offer {
     pub expires_at: Option<u64>,
     /// Minimum order volume in scaled units. None permits any valid quantity.
     pub min_purchase_tonnes: Option<i128>,
+    /// Issue #1286: Lockup timestamp (in ledgers) during which cancellation is blocked
+    /// Prevents front-running cancellations during grace period
+    pub lockup_until: Option<u64>,
 }
 
 /// Aggregate marketplace statistics returned by `get_marketplace_stats`.
@@ -188,6 +191,8 @@ pub enum MarketplaceError {
     InvalidExpiry = 317,
     /// Fee exceeds the 1000 basis point cap or its recipient is missing.
     InvalidFee = 318,
+    /// Issue #1286: Offer is locked during grace period - cancellation blocked
+    OfferLocked = 319,
 }
 
 #[contractevent]
@@ -805,6 +810,15 @@ impl Marketplace {
         if offer.seller != seller {
             return Err(MarketplaceError::Unauthorized);
         }
+
+        // Issue #1286: Check lockup period - prevent front-running cancellations
+        if let Some(lockup_until) = offer.lockup_until {
+            let current_ledger = env.ledger().sequence();
+            if current_ledger < lockup_until {
+                return Err(MarketplaceError::OfferLocked);
+            }
+        }
+
         if !offer.active {
             return Err(MarketplaceError::AlreadyClosed);
         }

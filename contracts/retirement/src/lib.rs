@@ -394,7 +394,44 @@ impl Retirement {
         }
         .publish(&env);
 
+        // Issue #1288: Mint SBT badge for retirement proof (non-transferable)
+        Self::mint_sbt_badge(&env, &buyer, &retirement_id)?;
+
         Ok(retirement_id)
+    }
+
+    /// Issue #1288: Mint a Soulbound Token (SBT) badge for retirement
+    /// SBT is non-transferable and proves the holder retired carbon credits
+    /// Stored as a list of retirement IDs per address in persistent storage
+    fn mint_sbt_badge(env: &Env, owner: &Address, retirement_id: &BytesN<32>) -> Result<(), RetirementError> {
+        let mut badges: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SBTBadges(owner.clone()))
+            .unwrap_or_else(|| Vec::new(env));
+
+        // Add retirement ID to owner's badge collection
+        badges.push_back(retirement_id.clone());
+
+        // Store updated badges (non-transferable by design - can only read by owner)
+        env.storage()
+            .persistent()
+            .set(&DataKey::SBTBadges(owner.clone()), &badges);
+
+        // Extend TTL to ensure SBT badge persists
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::SBTBadges(owner.clone()), MIN_TTL, MIN_TTL);
+
+        Ok(())
+    }
+
+    /// Issue #1288: Query SBT badges for an address (read-only, proves ownership)
+    pub fn get_sbt_badges(env: Env, owner: Address) -> Vec<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SBTBadges(&owner))
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     /// Retire multiple carbon credits in a single transaction with partial-success mode.
