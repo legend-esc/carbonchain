@@ -28,6 +28,8 @@ const ACCESS_BLOCKLIST_PREFIX = 'auth:blocklist:jti:';
 const REFRESH_FAMILY_PREFIX = 'auth:refresh:family:';
 /** Per-token key: `auth:refresh:token:<refreshId>` → { account, familyId, exp } */
 const REFRESH_TOKEN_PREFIX = 'auth:refresh:token:';
+/** Issue #1290 — Consumed token marker: `auth:consumed:<tokenId>` → true (marks token as used) */
+const CONSUMED_TOKEN_PREFIX = 'auth:consumed:';
 /** Issue #1173 — Session metadata: `auth:session:<familyId>` → SessionRecord */
 const SESSION_PREFIX = 'auth:session:';
 /** Issue #1174 — Failed auth attempt counter: `auth:failed:<account>` → number */
@@ -379,15 +381,22 @@ export class AuthService {
     );
 
     if (currentRefreshId !== refreshToken) {
-      // Compromise detected — revoke the entire family.
+      // Issue #1290 — Compromise detected — revoke the entire family.
       this.logger.warn(
         `Refresh token replay detected for account ${account} — revoking family ${familyId}`,
       );
-      await this.revokeFamily(familyId);
+      await this.revokeFamily(familyId, account);
       throw new UnauthorizedException(
         'Refresh token has already been used — possible token theft. Please re-authenticate.',
       );
     }
+
+    // Issue #1290 — Mark the current token as consumed before issuing a new one.
+    await this.cache.set(
+      `${CONSUMED_TOKEN_PREFIX}${refreshToken}`,
+      true,
+      REFRESH_TOKEN_TTL_SECONDS,
+    );
 
     // Invalidate the old refresh token before issuing a new one.
     await this.cache.del(tokenKey);
@@ -410,10 +419,41 @@ export class AuthService {
     return this.issueTokenPair(account, familyId, metadata);
   }
 
-  /** Revoke all tokens in a refresh family (used on logout or compromise). */
-  private async revokeFamily(familyId: string): Promise<void> {
+  /**
+   * Issue #1290 — Revoke all tokens in a refresh family (used on logout or compromise).
+   * Optionally triggers security alert if account is provided (for compromise scenarios).
+   */
+  private async revokeFamily(
+    familyId: string,
+    accountForAlert?: string,
+  ): Promise<void> {
     await this.cache.del(`${REFRESH_FAMILY_PREFIX}${familyId}`);
-    this.logger.log(`Revoked refresh token family ${familyId}`);
+
+    // If account is provided, this is a compromise scenario — emit security alert
+    if (accountForAlert) {
+      this.logger.warn(
+        `SECURITY: Refresh token family ${familyId} revoked for account ${accountForAlert} due to replay/compromise detection`,
+      );
+      // Emit security event for user notification (can integrate with email/SMS service)
+      this.metricsEmitter?.emit('security:token_family_revoked', {
+        account: accountForAlert,
+        familyId,
+        timestamp: Date.now(),
+      });
+    } else {
+      this.logger.log(`Revoked refresh token family ${familyId}`);
+    }
+  }
+
+  /**
+   * Issue #1290 — Check if a refresh token has already been consumed/rotated.
+   * Returns true if the token was used to generate a new pair.
+   */
+  async isTokenConsumed(refreshToken: string): Promise<boolean> {
+    const consumed = await this.cache.get<boolean>(
+      `${CONSUMED_TOKEN_PREFIX}${refreshToken}`,
+    );
+    return consumed === true;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
