@@ -29,12 +29,43 @@
   ],
   "dataGroups": [
     {
-      "name": "certificate-and-credit-pages",
-      "urls": ["/credits/**", "/certificates/**", "/retirement/**"],
+      "name": "credits-api",
+      "urls": ["/api/v1/credits", "/api/v1/credits/**"],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 100,
+        "maxAge": "5m",
+        "timeout": "10s"
+      }
+    },
+    {
+      "name": "portfolio-holdings",
+      "urls": ["/api/v1/credits", "/api/v1/credits/**", "/api/v1/portfolio/**"],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 50,
+        "maxAge": "5m",
+        "timeout": "5s"
+      }
+    },
+    {
+      "name": "marketplace-listings",
+      "urls": ["/api/v1/marketplace/**", "/api/v1/projects", "/api/v1/projects/**"],
+      "cacheConfig": {
+        "strategy": "freshness",
+        "maxSize": 50,
+        "maxAge": "5m",
+        "timeout": "5s"
+      }
+    },
+    {
+      "name": "api-performance",
+      "urls": ["/api/v1/**"],
       "cacheConfig": {
         "strategy": "performance",
         "maxSize": 100,
-        "maxAge": "7d"
+        "maxAge": "1h",
+        "timeout": "10s"
       }
     }
   ]

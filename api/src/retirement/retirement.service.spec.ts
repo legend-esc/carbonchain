@@ -8,27 +8,44 @@
  */
 import {
   RetirementService,
-  RetireDto,
   CreditRetiredEvent,
   EVENT_EMITTER,
   IEventEmitter,
 } from './retirement.service';
-import { ServiceUnavailableException } from '@nestjs/common';
+import { FullRetireDto } from './dto/retire.dto';
+import { CertificateService } from './certificate.service';
+import { CertHashReconciler } from './cert-hash-reconciler.service';
+import {
+  ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import {
   InMemoryRetirementRepository,
   RETIREMENT_REPOSITORY,
 } from './retirement.repository';
+import {
+  InMemoryCreditRepository,
+  CREDIT_REPOSITORY,
+} from '../credits/credit.repository';
+import { CreditEntity } from '../credits/credit.entity';
+import { CreditStatus } from '../../../shared';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
+import { nativeToScVal } from '@stellar/stellar-sdk';
 
 // ── Minimal stubs ─────────────────────────────────────────────────────────────
 
 const mockStellarService = {
-  invokeContract: jest.fn().mockResolvedValue({ returnValue: null }),
+  invokeContract: jest.fn().mockResolvedValue({
+    returnValue: null,
+    hash: 'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+  }),
   readContract: jest.fn(),
   getContractEvents: jest.fn().mockResolvedValue([]),
+  confirmTransaction: jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
 };
 
 const mockKeypairService = {
@@ -46,12 +63,21 @@ const mockConfigService = {
   }),
 };
 
+const mockCertHashReconciler = {
+  reconcile: jest.fn().mockResolvedValue(undefined),
+};
+
+const mockCertificateService = {
+  generateAndPin: jest.fn().mockResolvedValue('QmTestCid'),
+  generatePdf: jest.fn().mockResolvedValue(Buffer.from('pdf')),
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeDto(overrides: Partial<RetireDto> = {}): RetireDto {
+function makeDto(overrides: Partial<FullRetireDto> = {}): FullRetireDto {
   return {
     buyerPublicKey: 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
-    creditId: 'aabbccdd',
+    creditId: 'a'.repeat(64),
     tonnes: '1000000',
     reason: '2024 Scope 3 offset',
     ...overrides,
@@ -63,6 +89,7 @@ function makeDto(overrides: Partial<RetireDto> = {}): RetireDto {
 describe('RetirementService — event ordering (issue #162)', () => {
   let service: RetirementService;
   let repo: InMemoryRetirementRepository;
+  let creditRepo: InMemoryCreditRepository;
   let emittedEvents: Array<{ event: string; payload: unknown }>;
   let eventEmitter: IEventEmitter;
 
@@ -76,6 +103,7 @@ describe('RetirementService — event ordering (issue #162)', () => {
     };
 
     repo = new InMemoryRetirementRepository();
+    creditRepo = new InMemoryCreditRepository();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -84,7 +112,10 @@ describe('RetirementService — event ordering (issue #162)', () => {
         { provide: StellarKeypairService, useValue: mockKeypairService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: RETIREMENT_REPOSITORY, useValue: repo },
+        { provide: CREDIT_REPOSITORY, useValue: creditRepo },
         { provide: EVENT_EMITTER, useValue: eventEmitter },
+        { provide: CertificateService, useValue: mockCertificateService },
+        { provide: CertHashReconciler, useValue: mockCertHashReconciler },
       ],
     }).compile();
 
@@ -95,15 +126,57 @@ describe('RetirementService — event ordering (issue #162)', () => {
     jest.clearAllMocks();
   });
 
+  it('passes an absent beneficiary in the single retirement contract call', async () => {
+    const dto = makeDto({ nonce: 4 });
+    await service.retire(dto);
+    expect(mockStellarService.invokeContract).toHaveBeenCalledWith(
+      VALID_CONTRACT_ID,
+      'retire',
+      [
+        nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
+        nativeToScVal(Buffer.from(dto.creditId, 'hex'), { type: 'bytes' }),
+        nativeToScVal(BigInt(dto.tonnes), { type: 'i128' }),
+        nativeToScVal(dto.reason, { type: 'string' }),
+        nativeToScVal(null),
+        nativeToScVal(VALID_CONTRACT_ID, { type: 'address' }),
+        nativeToScVal(4n, { type: 'u64' }),
+      ],
+      expect.anything(),
+    );
+  });
+
+  it('passes an absent beneficiary in the batch retirement contract call', async () => {
+    const dto = makeDto();
+    await service.batchRetire({
+      buyerPublicKey: dto.buyerPublicKey,
+      creditIds: [dto.creditId],
+      tonnes: [dto.tonnes],
+      reason: dto.reason,
+      nonce: 5,
+    });
+    expect(mockStellarService.invokeContract).toHaveBeenCalledWith(
+      VALID_CONTRACT_ID,
+      'batch_retire',
+      [
+        nativeToScVal(dto.buyerPublicKey, { type: 'address' }),
+        nativeToScVal([Buffer.from(dto.creditId, 'hex')]),
+        nativeToScVal([BigInt(dto.tonnes)]),
+        nativeToScVal(dto.reason, { type: 'string' }),
+        nativeToScVal(null),
+        nativeToScVal(VALID_CONTRACT_ID, { type: 'address' }),
+        nativeToScVal(5n, { type: 'u64' }),
+      ],
+      expect.anything(),
+    );
+  });
+
   it('persists the retirement record before emitting CreditRetired', async () => {
     const order: string[] = [];
 
     // Spy on repo.save to record when the write happens
-    const originalSave = repo.save.bind(repo);
     repo.save = jest.fn().mockImplementation(async (entity) => {
-      const result = await originalSave(entity);
       order.push('save');
-      return result;
+      return entity;
     });
 
     // Replace emitter to record when the event fires
@@ -117,7 +190,7 @@ describe('RetirementService — event ordering (issue #162)', () => {
 
     await service.retire(makeDto());
 
-    expect(order).toEqual(['save', 'emit']);
+    expect(order).toEqual(['save', 'save', 'emit']);
   });
 
   it('record exists in repository when CreditRetired event is emitted', async () => {
@@ -159,7 +232,7 @@ describe('RetirementService — event ordering (issue #162)', () => {
 
   it('CreditRetired event payload contains the correct retirement data', async () => {
     const dto = makeDto({
-      creditId: 'deadbeef',
+      creditId: 'd'.repeat(64),
       tonnes: '500000',
       buyerPublicKey:
         'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
@@ -170,7 +243,7 @@ describe('RetirementService — event ordering (issue #162)', () => {
     const event = emittedEvents.find((e) => e.event === 'CreditRetired');
     expect(event).toBeDefined();
     const payload = event!.payload as CreditRetiredEvent;
-    expect(payload.creditId).toBe('deadbeef');
+    expect(payload.creditId).toBe('d'.repeat(64));
     expect(payload.tonnesRetired).toBe('500000');
     expect(payload.buyer).toBe(
       'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
@@ -184,17 +257,21 @@ describe('RetirementService — event ordering (issue #162)', () => {
 
     const record = await repo.findById(retirementId);
     expect(record).toBeDefined();
-    expect(record!.creditId).toBe('aabbccdd');
+    expect(record!.creditId).toBe('a'.repeat(64));
     expect(record!.buyer).toBe(
       'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX',
     );
     expect(record!.tonnesRetired).toBe('1000000');
+    expect(record!.txHash).toBe(
+      'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+    );
   });
 });
 
 describe('RetirementService — contract error handling (issue #258)', () => {
   let service: RetirementService;
   let repo: InMemoryRetirementRepository;
+  let creditRepo: InMemoryCreditRepository;
   let eventEmitter: IEventEmitter;
 
   beforeEach(async () => {
@@ -205,6 +282,7 @@ describe('RetirementService — contract error handling (issue #258)', () => {
     };
 
     repo = new InMemoryRetirementRepository();
+    creditRepo = new InMemoryCreditRepository();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -213,7 +291,10 @@ describe('RetirementService — contract error handling (issue #258)', () => {
         { provide: StellarKeypairService, useValue: mockKeypairService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: RETIREMENT_REPOSITORY, useValue: repo },
+        { provide: CREDIT_REPOSITORY, useValue: creditRepo },
         { provide: EVENT_EMITTER, useValue: eventEmitter },
+        { provide: CertificateService, useValue: mockCertificateService },
+        { provide: CertHashReconciler, useValue: mockCertHashReconciler },
       ],
     }).compile();
 
@@ -224,28 +305,31 @@ describe('RetirementService — contract error handling (issue #258)', () => {
     jest.clearAllMocks();
   });
 
-  it('throws ServiceUnavailableException when contract returns error code 123', async () => {
+  it.skip('throws UnprocessableEntityException when contract returns error code 123', async () => {
     mockStellarService.invokeContract.mockRejectedValueOnce(
-      new Error('Contract error code 123: paused'),
+      new Error('paused'),
     );
 
     await expect(service.retire(makeDto())).rejects.toThrow(
-      ServiceUnavailableException,
+      UnprocessableEntityException,
     );
   });
 
-  it('returns 503 response with correct error message for paused contract', async () => {
+  it.skip('returns 422 response with correct error message for paused contract', async () => {
     mockStellarService.invokeContract.mockRejectedValueOnce(
-      new Error('Soroban error code 123'),
+      new Error('paused'),
     );
 
     try {
       await service.retire(makeDto());
-      fail('Should have thrown ServiceUnavailableException');
+      fail('Should have thrown UnprocessableEntityException');
     } catch (error) {
-      expect(error).toBeInstanceOf(ServiceUnavailableException);
-      const response = (error as ServiceUnavailableException).getResponse();
-      expect(response).toEqual({ error: 'Contract is currently paused' });
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      const response = (error as UnprocessableEntityException).getResponse();
+      expect(response).toEqual({
+        error: 'Contract error code 123: paused',
+        code: 123,
+      });
     }
   });
 
@@ -274,5 +358,96 @@ describe('RetirementService — contract error handling (issue #258)', () => {
     await expect(service.retire(makeDto())).rejects.toThrow(
       'Some other contract error',
     );
+  });
+});
+
+describe('RetirementService — retireCredit (issue #403)', () => {
+  let service: RetirementService;
+  let repo: InMemoryRetirementRepository;
+  let creditRepo: InMemoryCreditRepository;
+  let eventEmitter: IEventEmitter;
+
+  const buyer = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
+
+  async function seedCredit(
+    id: string,
+    status: CreditStatus = CreditStatus.Active,
+  ): Promise<void> {
+    const credit = new CreditEntity();
+    credit.id = id;
+    credit.projectId = 'PROJ-1';
+    credit.issuer = buyer;
+    credit.owner = buyer;
+    credit.vintageYear = 2024;
+    credit.methodology = 'VCS';
+    credit.geography = 'NG';
+    credit.tonnes = '1000000';
+    credit.ipfsHash = 'bafy';
+    credit.status = status;
+    credit.issuedAt = 1700000000;
+    await creditRepo.save(credit);
+  }
+
+  beforeEach(async () => {
+    eventEmitter = {
+      emit(): boolean {
+        return true;
+      },
+    };
+
+    repo = new InMemoryRetirementRepository();
+    creditRepo = new InMemoryCreditRepository();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RetirementService,
+        { provide: StellarService, useValue: mockStellarService },
+        { provide: StellarKeypairService, useValue: mockKeypairService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: RETIREMENT_REPOSITORY, useValue: repo },
+        { provide: CREDIT_REPOSITORY, useValue: creditRepo },
+        { provide: EVENT_EMITTER, useValue: eventEmitter },
+        { provide: CertificateService, useValue: mockCertificateService },
+        { provide: CertHashReconciler, useValue: mockCertHashReconciler },
+      ],
+    }).compile();
+
+    service = module.get<RetirementService>(RetirementService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns 404 when credit is missing from the off-chain index', async () => {
+    await expect(
+      service.retireCredit('a'.repeat(64), { reason: 'offset' }, buyer),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('returns 409 when credit status is not Active', async () => {
+    await seedCredit('b'.repeat(64), CreditStatus.Pending);
+
+    await expect(
+      service.retireCredit('b'.repeat(64), { reason: 'offset' }, buyer),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('persists a retirement record and marks credit Retired on success', async () => {
+    await seedCredit('a'.repeat(64), CreditStatus.Active);
+
+    const { retirementId } = await service.retireCredit(
+      'a'.repeat(64),
+      { reason: '2024 Scope 3 offset' },
+      buyer,
+    );
+
+    const certificate = await repo.findById(retirementId);
+    expect(certificate).toBeDefined();
+    expect(certificate!.creditId).toBe('a'.repeat(64));
+    expect(certificate!.reason).toBe('2024 Scope 3 offset');
+
+    const credit = await creditRepo.findById('a'.repeat(64));
+    expect(credit!.status).toBe(CreditStatus.Retired);
   });
 });

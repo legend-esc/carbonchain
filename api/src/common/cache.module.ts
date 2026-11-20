@@ -14,6 +14,8 @@ export class CacheModule implements OnApplicationBootstrap {
   constructor(private readonly cache: CacheService) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    await this.cache.connect();
+    if (typeof this.cache.connect === 'function') {
+      await this.cache.connect();
+    }
   }
 }

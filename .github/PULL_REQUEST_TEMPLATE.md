@@ -25,5 +25,19 @@
 - [ ] Error codes follow the stable range (100–120)
 - [ ] Breaking changes documented below
 
+## Contract Upgrade Checklist
+<!-- Only applicable when changing Soroban contract code -->
+- [ ] Migration tested on testnet against realistic state
+- [ ] Storage layout verified (backward-compatible data keys)
+- [ ] Event schema compatibility confirmed
+- [ ] WASM hash verified against release manifest
+- [ ] Admin nonce freshness confirmed
+- [ ] Migration execution order documented
+- [ ] Post-upgrade event emission verified
+- [ ] Post-upgrade state consistency checks passed
+- [ ] Rollback plan documented
+- [ ] 2+ maintainer approvals obtained
+- [ ] Security review completed (logic changes)
+
 ## Breaking changes
 <!-- Leave blank if none. -->

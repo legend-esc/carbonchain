@@ -1,23 +1,86 @@
-# Dependencies
+# ── Node / JavaScript ─────────────────────────────────────────────────────────
 node_modules/
-target/
 dist/
+build/
 .angular/
 .nest/
+.npm/
+.yarn/
+yarn.lock
+pnpm-lock.yaml
+*.tgz
+*.tar.gz
 
-# Environment
-.env
-.env.*
-!.env.example
-frontend/src/environments/environment.ts
-frontend/src/environments/environment.prod.ts
+# Packed npm tarballs
+*.tgz
+*.tar.gz
 
-# OS
-.DS_Store
-Thumbs.db
-*.DS_Store
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
-# IDE
+# ── Rust / Soroban ────────────────────────────────────────────────────────────
+target/
+# Cargo.lock is excluded for general packages…
+Cargo.lock
+# …but committed for the contracts workspace so CI builds don't re-resolve
+# to incompatible versions of soroban-sdk 26 stack dependencies.
+!contracts/Cargo.lock
+
+# Compiled WASM artifacts
+*.wasm
+
+# ── Test Artifacts ────────────────────────────────────────────────────────────
+# Coverage reports
+coverage/
+.nyc_output/
+lcov.info
+*.lcov
+coverage-final.json
+jest-coverage/
+
+# Snapshot files (Jest, Vitest, Jasmine, Soroban SDK)
+__snapshots__/
+**/__snapshots__/
+*.snap
+*.test-snapshot
+test_snapshots/
+**/test_snapshots/
+testsnapshot/
+**/testsnapshot/
+test-snapshot/
+**/test-snapshot/
+
+# Test result / reporter output
+junit.xml
+test-results/
+karma-test-results.xml
+browser_test_results/
+jasmine-results/
+playwright-report/
+cypress/screenshots/
+cypress/videos/
+cypress/downloads/
+
+# Cache directories used by test runners
+.vitest-cache/
+.jest-cache/
+.jest_cache/
+.karma/
+
+# ── Build Artifacts ───────────────────────────────────────────────────────────
+build/
+*.js.map
+*.d.ts.map
+*.tsbuildinfo
+
+# shared/ package compiled output (source is index.ts)
+shared/index.js
+shared/index.d.ts
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
@@ -26,43 +89,56 @@ Thumbs.db
 *.ntvs*
 *.njsproj
 *.sln
+*.bak
+*.orig
+*.rej
+*~
+*.code-workspace
+.history/
 
-# Soroban
+# ── Soroban CLI / Deployment ──────────────────────────────────────────────────
 .soroban/
+.stellar/
 contract-ids.testnet.json
+scripts/contract-ids.testnet.json
+contract-ids.*.json
 
-# Temporary
-tmp/
-logs/
-*.log
+# ── Docker / Runtime ──────────────────────────────────────────────────────────
+docker-compose.override.yml
+pids/
+*.pid
+*.seed
+*.pid.lock
 
-# Test artifacts
-coverage/
-__snapshots__/
-*.snap
-junit.xml
-test-results/
-.nyc_output/
-lcov.info
-*.lcov
-# Soroban test snapshots (auto-generated, not source)
-test_snapshots/
+# Production Redis ACL files with real passwords (local dev placeholder is committed).
+# In production, inject config/redis/users.acl from a secrets manager.
+config/redis/*.prod.acl
 
-# Build artifacts
-*.js.map
-*.d.ts.map
-build/
-# Rust/Soroban compiled output
-*.wasm
-Cargo.lock
+# ── Profiling ─────────────────────────────────────────────────────────────────
+*.heapsnapshot
+*.cpuprofile
 
-# Package manager
-.npm/
-.yarn/
-yarn.lock
-pnpm-lock.yaml
+# ── OS artefacts ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# Debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# ── AI / Codespace tooling ────────────────────────────────────────────────────
+# Kiro AI artifacts (session state, agent configs)
+.kiro/
+# Devcontainer
+.devcontainer/
+
+# ── Local override files — not for source control ─────────────────────────────
+*.local
+*.local.*
+
+# ── PDF / generated certificate artifacts ─────────────────────────────────────
+# Retirement certificate PDFs are ephemeral; never commit generated PDFs.
+*.pdf
+
+# ── Misc generated files ──────────────────────────────────────────────────────
+# Lighthouse CI reports
+.lighthouseci/
+lhci_reports/

@@ -6,16 +6,26 @@ import {
   Body,
   UseGuards,
   Query,
+  Request,
   ParseIntPipe,
   DefaultValuePipe,
-  Response,
   NotFoundException,
+  StreamableFile,
+  Header,
+  Res,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
-import type { Response as ExpressResponse } from 'express';
-import { RetirementService, RetireDto } from './retirement.service';
-import { RetirementRecord } from '../shared';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
+import type { Response } from 'express';
+import {
+  RetirementService,
+  BatchRetireResult,
+  CertificateVerification,
+} from './retirement.service';
+import { RetirementRequestDto } from './dto/retire.dto';
+import { BatchRetireDto } from './dto/batch-retire.dto';
+import { RetirementRecord } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
 import { CalculatorService } from './calculator.service';
@@ -33,6 +43,10 @@ export interface CertificateVerification {
   verified: boolean;
   ledger_sequence?: number;
 }
+import { CertHashReconciler } from './cert-hash-reconciler.service';
+import { CertificateResponseDto } from './dto/certificate-response.dto';
+import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
+import { Idempotent } from '../common/idempotency.interceptor';
 
 @ApiTags('retirement')
 @Controller('retirement')
@@ -50,78 +64,212 @@ export class RetirementController {
   }
 
   /** POST /retirement — protected: requires JWT */
+    private readonly certHashReconciler: CertHashReconciler,
+  ) {}
+
+  @ApiOperation({ summary: 'Retire a carbon credit' })
+  @ApiResponse({ status: 201, description: 'Credit retired successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
+  @Idempotent()
   @Post()
   retire(
-    @Body() dto: RetireDto,
+    @Body() dto: RetirementRequestDto,
+    @Request() req: { user: { account: string } },
   ): Promise<{ retirementId: string; certificateIpfsHash: string }> {
-    return this.retirementService.retire(dto);
+    // Buyer is bound to the authenticated principal, never taken from the body.
+    // Delegates to retireCredit so this path runs the same off-chain status
+    // checks as POST /credits/:id/retire.
+    return this.retirementService.retireCredit(
+      dto.creditId,
+      { reason: dto.reason, nonce: dto.nonce },
+      req.user.account,
+    );
   }
 
-  /** GET /retirement — paginated list */
+  @ApiOperation({ summary: 'Batch retire multiple credits at once' })
+  @ApiResponse({ status: 201, description: 'Credits retired in batch' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 429, description: 'Too Many Requests' })
+  @Throttle({ limit: 5, ttl: 60000 })
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Idempotent()
+  @Post('batch')
+  batchRetire(@Body() dto: BatchRetireDto): Promise<BatchRetireResult> {
+    return this.retirementService.batchRetire(dto);
+  }
+
+  @ApiOperation({ summary: 'List retirements (paginated)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiQuery({ name: 'buyer', required: false, type: String })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list of retirement records',
+  })
   @Get()
   listRetirements(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.listRetirements(page, limit);
+    const clampedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.retirementService.listRetirements(page, clampedLimit);
   }
 
-  /** GET /retirement/:id — fetch a retirement record */
+  @ApiOperation({ summary: 'Get retirement record by ID' })
+  @ApiResponse({ status: 200, description: 'Retirement record' })
+  @ApiResponse({ status: 404, description: 'Retirement not found' })
   @Get(':id')
   getRetirement(@Param('id') id: string): Promise<RetirementRecord> {
     return this.retirementService.getRetirement(id);
   }
 
-  /** GET /retirement/account/:address — paginated retirements for an account */
+  @ApiOperation({ summary: 'Get retirements by account address' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated retirements for account',
+  })
   @Get('account/:address')
   getByAccount(
-    @Param('address') address: string,
+    @Param('address', StellarAddressPipe) address: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ): Promise<PageResult<RetirementRecord>> {
-    return this.retirementService.getRetirementsByAccount(address, page, limit);
+    const clampedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.retirementService.getRetirementsByAccount(
+      address,
+      page,
+      clampedLimit,
+    );
   }
 
-  /** GET /certificates/:id/download — download retirement certificate as PDF (protected: requires JWT) */
+  @ApiOperation({ summary: 'Download retirement certificate as PDF' })
+  @ApiResponse({ status: 200, description: 'PDF certificate' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
   @UseGuards(JwtAuthGuard)
+  @Throttle({ limit: 10, ttl: 60_000 })
+  @Get(':id/certificate')
   @Get('certificates/:id/download')
+  @Header('Content-Type', 'application/pdf')
   async downloadCertificate(
     @Param('id') certificateId: string,
-    @Response() res: ExpressResponse,
-  ): Promise<void> {
-    // Retrieve the retirement record to ensure it exists
-    const retirement = await this.retirementService.getRetirement(certificateId);
+  ): Promise<StreamableFile> {
+    return this.buildCertificateStream(certificateId);
+  }
+
+  @ApiOperation({ summary: 'Download retirement certificate as PDF' })
+  @ApiResponse({ status: 200, description: 'PDF certificate' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
+  @UseGuards(JwtAuthGuard)
+  @Get('certificate/:retirementId')
+  @Header('Content-Type', 'application/pdf')
+  async downloadCertificateByRetirementId(
+    @Param('retirementId') retirementId: string,
+  ): Promise<StreamableFile> {
+    return this.buildCertificateStream(retirementId);
+  }
+
+  /**
+   * GET /retirement/certificate/:retirementId/ipfs
+   *
+   * Returns the certificate IPFS hash committed on-chain via
+   * `get_certificate_hash`, or 404 when no hash has been set.
+   */
+  @ApiOperation({ summary: 'Get on-chain certificate IPFS hash' })
+  @ApiResponse({ status: 200, description: 'IPFS hash of the certificate' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 404,
+    description: 'Certificate hash not found on-chain',
+  })
+  @UseGuards(JwtAuthGuard)
+  @Get('certificate/:retirementId/ipfs')
+  async getCertificateIpfsHash(
+    @Param('retirementId') retirementId: string,
+  ): Promise<{ ipfsHash: string }> {
+    return this.retirementService.getCertificateHash(retirementId);
+  }
+
+  /**
+   * Builds a downloadable certificate PDF stream for the given retirement.
+   * Shared by the `/:id/certificate`, `/certificates/:id/download` and
+   * `/certificate/:retirementId` routes.
+   */
+  private async buildCertificateStream(
+    retirementId: string,
+  ): Promise<StreamableFile> {
+    const retirement = await this.retirementService.getRetirement(retirementId);
     if (!retirement) {
       throw new NotFoundException(
-        `Retirement record ${certificateId} not found`,
+        `Retirement record ${retirementId} not found`,
       );
     }
 
-    // Generate the PDF
     const pdfBuffer = await this.certificateService.generatePdf({
-      retirementId: certificateId,
+      retirementId,
       creditId: retirement.credit_id,
       buyer: retirement.buyer,
       tonnes: retirement.tonnes_retired,
       reason: retirement.reason,
       timestamp: retirement.retired_at,
+      ...(retirement.vintage_year
+        ? { vintageYear: retirement.vintage_year }
+        : {}),
     });
 
-    // Set response headers and stream the PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="certificate-${certificateId}.pdf"`,
-    );
-    res.send(pdfBuffer);
+    return new StreamableFile(pdfBuffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="retirement-certificate-${retirementId}.pdf"`,
+    });
   }
 
-  /** GET /certificates/:id/verify — verify retirement certificate authenticity (public) */
+  /**
+   * GET /retirement/certificates/:id/verify
+   *
+   * Returns the retirement certificate verification result, including:
+   *   - #918: txStatus — on-chain finality state (pending/success/failed/timeout)
+   *   - #921: certHashStatus — whether the IPFS hash is written on-chain
+   *             (none/pending/onchain/failure)
+   */
+  @ApiOperation({ summary: 'Verify retirement certificate authenticity' })
+  @ApiResponse({
+    status: 200,
+    description: 'Certificate verification result with on-chain status fields',
+    type: CertificateResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Certificate not found' })
   @Get('certificates/:id/verify')
   verifyCertificate(
     @Param('id') certificateId: string,
   ): Promise<CertificateVerification> {
     return this.retirementService.verifyCertificate(certificateId);
+  }
+
+  /**
+   * POST /retirement/certificates/:id/reconcile
+   *
+   * Manually trigger a cert hash reconciliation for a single retirement.
+   * Useful for support workflows when the daily reconciler hasn't run yet.
+   * #921
+   */
+  @ApiOperation({
+    summary:
+      'Trigger cert hash reconciliation for a specific retirement (#921)',
+  })
+  @ApiResponse({ status: 200, description: 'Reconciliation result' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtAuthGuard)
+  @Post('certificates/:id/reconcile')
+  async reconcileCertHash(
+    @Param('id') retirementId: string,
+  ): Promise<{ triggered: boolean; retirementId: string }> {
+    // Run the full reconciler scan — it will pick up this record if pending
+    await this.certHashReconciler.reconcile(1);
+    return { triggered: true, retirementId };
   }
 }

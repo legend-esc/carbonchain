@@ -2,8 +2,8 @@ import { CacheService } from '../common/cache.service';
 import { InMemoryCreditRepository } from './credit.repository';
 import { CreditsService } from './credits.service';
 import { CreditEntity } from './credit.entity';
-import { CreditStatus } from '../shared';
-import { NotFoundException } from '@nestjs/common';
+import { CreditStatus } from '../../../shared';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 // Minimal ConfigService mock for CacheService and CreditsService
 const mockConfig: any = { get: () => undefined };
@@ -114,103 +114,185 @@ describe('CreditsService.listCredits status filtering', () => {
   });
 });
 
-describe('CreditsService.getCreditProvenance', () => {
+describe('CreditsService.listCredits tonnes range filtering', () => {
+  let repo: InMemoryCreditRepository;
   let svc: CreditsService;
 
-  beforeEach(async () => {
-    const repo = new InMemoryCreditRepository();
+  beforeEach(() => {
+    repo = new InMemoryCreditRepository();
     const cache = new CacheService(mockConfig);
+    svc = new CreditsService({} as any, mockConfig, {} as any, repo, cache);
 
-    // Mock stellar service with contract events
-    const mockStellarService: any = {
-      getContractEvents: jest.fn().mockResolvedValue([
-        {
-          topic: ['CreditSubmitted'],
-          value: {
-            issuer: 'issuer-address',
-            credit_id: 'abc123def456',
-            project_id: 'PROJ-001',
-            tonnes: 1000000n,
-          },
-          ledger: 100,
-          id: '1',
-          txHash: 'hash1',
-          closedAt: 1000000n,
-        },
-        {
-          topic: ['CreditMinted'],
-          value: {
-            verifier: 'verifier-address',
-            id: 'abc123def456',
-          },
-          ledger: 101,
-          id: '2',
-          txHash: 'hash2',
-          closedAt: 1000010n,
-        },
-        {
-          topic: ['CreditTransferred'],
-          value: {
-            from: 'owner-address',
-            to: 'buyer-address',
-            credit_id: 'abc123def456',
-          },
-          ledger: 102,
-          id: '3',
-          txHash: 'hash3',
-          closedAt: 1000020n,
-        },
-      ]),
-    };
-
-    const mockKeypair: any = {};
-    svc = new CreditsService(
-      mockStellarService,
-      mockConfig,
-      mockKeypair,
-      repo,
-      cache,
-    );
-  });
-
-  it('should return provenance events in chronological order', async () => {
-    const provenance = await svc.getCreditProvenance('abc123def456');
-
-    expect(provenance).toHaveLength(3);
-    expect(provenance[0].action).toBe('Submitted');
-    expect(provenance[0].actor).toBe('issuer-address');
-    expect(provenance[1].action).toBe('Approved');
-    expect(provenance[1].actor).toBe('verifier-address');
-    expect(provenance[2].action).toBe('Transferred');
-    expect(provenance[2].actor).toBe('owner-address');
-  });
-
-  it('should include txHash in provenance records', async () => {
-    const provenance = await svc.getCreditProvenance('abc123def456');
-
-    expect(provenance[0].txHash).toBe('hash1');
-    expect(provenance[1].txHash).toBe('hash2');
-    expect(provenance[2].txHash).toBe('hash3');
-  });
-
-  it('should include timestamp in provenance records', async () => {
-    const provenance = await svc.getCreditProvenance('abc123def456');
-
-    provenance.forEach((event) => {
-      expect(typeof event.timestamp).toBe('number');
-      expect(event.timestamp).toBeGreaterThan(0);
+    const now = Math.floor(Date.now() / 1000);
+    // Four Active credits, tonnes 100/200/300/400, distinct issuedAt for stable order.
+    ['100', '200', '300', '400'].forEach((tonnes, i) => {
+      const c = new CreditEntity();
+      c.id = `C-${tonnes}`;
+      c.projectId = 'PROJ';
+      c.issuer = 'ISS';
+      c.owner = 'ISS';
+      c.vintageYear = 2020;
+      c.methodology = 'M';
+      c.geography = 'G';
+      c.tonnes = tonnes;
+      c.ipfsHash = 'Qm';
+      c.status = CreditStatus.Active;
+      c.issuedAt = now + i;
+      repo.save(c);
     });
   });
 
-  it('should throw NotFoundException for credit with no provenance events', async () => {
-    const svcWithNoEvents = new CreditsService(
-      { getContractEvents: jest.fn().mockResolvedValue([]) } as any,
+  it('computes total over the tonnes-filtered set, not the pre-filter set', async () => {
+    const res = await svc.listCredits({
+      page: 1,
+      limit: 10,
+      minTonnes: '200',
+      maxTonnes: '300',
+    });
+    expect(res.total).toBe(2);
+    expect(res.data.map((d) => d.id).sort()).toEqual(['C-200', 'C-300']);
+  });
+
+  it('paginates the filtered set so pages are complete', async () => {
+    const page1 = await svc.listCredits({
+      page: 1,
+      limit: 2,
+      minTonnes: '200',
+    });
+    const page2 = await svc.listCredits({
+      page: 2,
+      limit: 2,
+      minTonnes: '200',
+    });
+
+    expect(page1.total).toBe(3);
+    expect(page1.data).toHaveLength(2);
+    expect(page2.data).toHaveLength(1);
+
+    const seen = [...page1.data, ...page2.data].map((d) => d.id).sort();
+    expect(seen).toEqual(['C-200', 'C-300', 'C-400']);
+  });
+});
+
+describe('CreditsService.getBulkCredits malformed ID handling', () => {
+  let repo: InMemoryCreditRepository;
+  let svc: CreditsService;
+  const HEX_ID = 'a'.repeat(64);
+
+  beforeEach(() => {
+    repo = new InMemoryCreditRepository();
+    const cache = new CacheService(mockConfig);
+    svc = new CreditsService({} as any, mockConfig, {} as any, repo, cache);
+
+    const c = new CreditEntity();
+    c.id = HEX_ID;
+    c.projectId = 'PROJ';
+    c.issuer = 'ISS';
+    c.owner = 'ISS';
+    c.vintageYear = 2020;
+    c.methodology = 'M';
+    c.geography = 'G';
+    c.tonnes = '100';
+    c.ipfsHash = 'Qm';
+    c.status = CreditStatus.Active;
+    c.issuedAt = Math.floor(Date.now() / 1000);
+    repo.save(c);
+  });
+
+  it('rejects the whole request with 400 when any ID is not 64-char hex', async () => {
+    await expect(
+      svc.getBulkCredits([HEX_ID, 'not-a-valid-id']),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('returns metadata for well-formed IDs', async () => {
+    const res = await svc.getBulkCredits([HEX_ID]);
+    expect(res.map((c) => c.id)).toEqual([HEX_ID]);
+  });
+});
+
+describe('CreditsService.getCreditCount / listCreditsByOwner (issue #541)', () => {
+  function buildSvc(mockStellarService: any): CreditsService {
+    return new CreditsService(
+      mockStellarService,
       mockConfig,
       {} as any,
       new InMemoryCreditRepository(),
       new CacheService(mockConfig),
     );
+  }
 
-    await expect(svcWithNoEvents.getCreditProvenance('nonexistent')).rejects.toThrow();
+  it('getCreditCount() calls the contract-side get_credit_count function', async () => {
+    const readContract = jest.fn().mockResolvedValue(null);
+    const svc = buildSvc({ readContract });
+
+    await svc.getCreditCount();
+
+    expect(readContract).toHaveBeenCalledWith(
+      expect.any(String),
+      'get_credit_count',
+      [],
+    );
+  });
+
+  it('getCreditCount() returns 0 when the contract has no value yet', async () => {
+    const svc = buildSvc({ readContract: jest.fn().mockResolvedValue(null) });
+    await expect(svc.getCreditCount()).resolves.toBe(0);
+  });
+
+  it('getCreditCount() returns 0 (does not throw) when the contract call fails', async () => {
+    const svc = buildSvc({
+      readContract: jest.fn().mockRejectedValue(new Error('rpc unavailable')),
+    });
+    await expect(svc.getCreditCount()).resolves.toBe(0);
+  });
+
+  it('listCreditsByOwner() calls get_credits_by_owner_paginated with owner/offset/limit', async () => {
+    const readContract = jest.fn().mockResolvedValue(null);
+    const svc = buildSvc({ readContract });
+
+    await svc.listCreditsByOwner(
+      'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+      20,
+      10,
+    );
+
+    expect(readContract).toHaveBeenCalledWith(
+      expect.any(String),
+      'get_credits_by_owner_paginated',
+      expect.any(Array),
+    );
+  });
+
+  it('listCreditsByOwner() returns an empty page when the contract has no value', async () => {
+    const svc = buildSvc({ readContract: jest.fn().mockResolvedValue(null) });
+    await expect(
+      svc.listCreditsByOwner(
+        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        0,
+        20,
+      ),
+    ).resolves.toEqual({
+      data: [],
+      offset: 0,
+      limit: 20,
+    });
+  });
+
+  it('listCreditsByOwner() returns an empty page (does not throw) on contract error', async () => {
+    const svc = buildSvc({
+      readContract: jest.fn().mockRejectedValue(new Error('rpc unavailable')),
+    });
+    await expect(
+      svc.listCreditsByOwner(
+        'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        5,
+        15,
+      ),
+    ).resolves.toEqual({
+      data: [],
+      offset: 5,
+      limit: 15,
+    });
   });
 });

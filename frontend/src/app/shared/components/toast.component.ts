@@ -7,7 +7,7 @@ import { ToastService } from '../../core/services/toast.service';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="toast-container" aria-live="assertive" aria-atomic="true">
+    <div class="toast-container" role="alert" aria-live="polite" aria-atomic="true">
       @for (toast of toastService.toasts(); track toast.id) {
         <div class="toast" [class]="'toast toast--' + toast.type" role="alert">
           <span class="toast__message">{{ toast.message }}</span>

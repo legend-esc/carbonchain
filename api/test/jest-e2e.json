@@ -6,5 +6,9 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "transformIgnorePatterns": [
+    "^../node_modules/pg/.*",
+    "^../node_modules/(?!@stellar/|uint8array-extras/).+"
+  ],
   "setupFiles": ["<rootDir>/setup.ts"]
 }

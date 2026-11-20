@@ -263,6 +263,7 @@ describe('IssueCreditDto', () => {
         geography: 'NG',
         tonnes: '1000000',
         ipfsHash: 'bafybei123',
+        nonce: '1',
       });
 
       const errors = await validate(dto);

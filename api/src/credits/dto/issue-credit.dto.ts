@@ -9,6 +9,7 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 import { IsValidMethodology } from '../validators/methodology.validator';
 import { IsTonnesMultiple } from '../validators/tonnes.validator';
+import { IsValidGeography } from '../validators/geography.validator';
 import { VALID_METHODOLOGIES } from '../methodologies';
 
 export class IssueCreditDto {
@@ -46,9 +47,16 @@ export class IssueCreditDto {
   })
   @IsString()
   @IsNotEmpty()
+  @IsValidGeography({
+    message: 'geography must be a valid ISO 3166-1 alpha-2 country code',
+  })
   geography: string;
 
-  @ApiProperty({ example: '100000000', description: 'tonnes value must be a multiple of 100,000 (1 tonne = 1_000_000 units)' })
+  @ApiProperty({
+    example: '100000000',
+    description:
+      'tonnes value must be a multiple of 100,000 (1 tonne = 1_000_000 units)',
+  })
   @IsNumberString()
   @IsNotEmpty()
   @IsTonnesMultiple({ message: 'tonnes must be a multiple of 100,000' })
@@ -61,4 +69,20 @@ export class IssueCreditDto {
   @IsString()
   @IsNotEmpty()
   ipfsHash: string;
+
+  /**
+   * Client-supplied nonce for replay-attack protection at the API layer.
+   * The API claims this nonce in Redis with SET NX before forwarding the
+   * transaction to the Stellar contract.  Must be unique per issuerPublicKey
+   * within the Stellar ledger close window (~5 s).
+   */
+  @ApiProperty({
+    example: '1234567890',
+    description:
+      'Nonce for idempotency / replay protection. ' +
+      'Unique per issuerPublicKey within the Stellar ledger close window.',
+  })
+  @IsNumberString()
+  @IsNotEmpty()
+  nonce: string;
 }

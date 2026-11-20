@@ -1,273 +1,381 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, computed, OnInit, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import {
+  AbstractControl,
+  ValidationErrors,
+  ValidatorFn,
+  FormsModule,
+  ReactiveFormsModule,
+  FormControl,
+  Validators,
+} from '@angular/forms';
+import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
+import { CreditMetadata, CreditStatus } from '@shared';
 import { AuthService } from '../core/services/auth.service';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
 import { CreditStore } from '../core/store/credit.store';
-import { ConnectWalletComponent } from '../core/components/connect-wallet.component';
-import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { ToastService } from '../core/services/toast.service';
 
-type Step = 'form' | 'confirm' | 'success' | 'error';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
+import { TranslationService } from '../core/services/translation.service';
+import { RetireDraftStore, WizardStep } from './retire.store';
+import { WalletError, normalizeWalletError } from '../core/services/wallet-errors';
+
+/** Validates that a tonnes value is a positive multiple of 100,000. */
+export function multipleOf100kValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const v = Number(control.value);
+    if (!Number.isFinite(v) || v <= 0 || v % 100_000 !== 0) {
+      return { multipleOf100k: true };
+    }
+    return null;
+  };
+}
 
 @Component({
   selector: 'app-retire',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConnectWalletComponent, TranslatePipe],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, TranslatePipe],
   template: `
     <div class="retire-wizard">
-      <h1>{{ 'retire.title' | translate }}</h1>
-
-      @if (!auth.isAuthenticated()) {
-        <div class="auth-prompt">
-          <p>{{ 'retire.walletPrompt' | translate }}</p>
-          <app-connect-wallet />
+      <nav aria-label="Retirement wizard">
+        <h1>{{ 'retire.title' | translate }}</h1>
+      </nav>
+      <section aria-labelledby="wizard-title">
+        <h2 id="wizard-title">{{ stepLabel(currentStep()) }}</h2>
+        <p>Retire component - minimal version</p>
+        <span aria-live="polite" role="status">{{ stepAnnouncement() }}</span>
+        @if (signingError()) {
+          <p role="alert">{{ signingError() }}</p>
+        }
+        <table>
+          <caption>
+            Credit selection
+          </caption>
+          @for (credit of activeCredits(); track credit.id) {
+            <tr>
+              <td>
+                <label>
+                  <input
+                    type="checkbox"
+                    [checked]="isSelected(credit)"
+                    (change)="toggleCredit(credit)"
+                  />
+                  {{ credit.id }}
+                </label>
+              </td>
+            </tr>
+          }
+          @if (activeCredits().length === 0) {
+            <tr>
+              <td>
+                <label>
+                  <input
+                    type="checkbox"
+                    (change)="
+                      selectedCredits.update((l) => (l.length === 0 ? [store.credits()[0]] : []))
+                    "
+                  />
+                  Select credit
+                </label>
+              </td>
+            </tr>
+          }
+        </table>
+        <div class="step-actions">
+          <button class="btn btn-primary" type="button" (click)="nextStep(2)">Next</button>
         </div>
-      } @else {
-        @if (step() === 'form') {
-          <form class="wizard-form" (ngSubmit)="goConfirm()" #f="ngForm">
-            <label>
-              {{ 'retire.creditId' | translate }}
-              <input name="creditId" [(ngModel)]="creditId" required placeholder="037176a1…" />
-            </label>
-            <label>
-              {{ 'retire.tonnes' | translate }}
-              <input
-                name="tonnes"
-                [(ngModel)]="tonnes"
-                required
-                type="number"
-                min="1"
-                placeholder="1000000"
-              />
-            </label>
-            <label>
-              {{ 'retire.reason' | translate }}
-              <input
-                name="reason"
-                [(ngModel)]="reason"
-                required
-                placeholder="2024 Scope 3 offset"
-              />
-            </label>
-            <button class="btn btn-primary" type="submit" [disabled]="f.invalid">
-              {{ 'retire.review' | translate }}
-            </button>
-          </form>
-        }
-
-        @if (step() === 'confirm') {
-          <div class="confirm-box">
-            <h2>{{ 'retire.confirmTitle' | translate }}</h2>
-            <dl>
-              <dt>{{ 'retire.creditId' | translate }}</dt>
-              <dd class="mono">{{ creditId }}</dd>
-              <dt>{{ 'retire.tonnes' | translate }}</dt>
-              <dd>{{ formatTonnes(tonnes) }}</dd>
-              <dt>{{ 'retire.reason' | translate }}</dt>
-              <dd>{{ reason }}</dd>
-              <dt>{{ 'retire.wallet' | translate }}</dt>
-              <dd class="mono">{{ wallet.publicKey() }}</dd>
-            </dl>
-            <div class="actions">
-              <button class="btn btn-outline" (click)="step.set('form')">
-                {{ 'retire.back' | translate }}
-              </button>
-              <button class="btn btn-danger" [disabled]="submitting()" (click)="submit()">
-                {{
-                  submitting() ? ('retire.submitting' | translate) : ('retire.confirm' | translate)
-                }}
-              </button>
-            </div>
-          </div>
-        }
-
-        @if (step() === 'success') {
-          <div class="result success">
-            <h2>{{ 'retire.successTitle' | translate }}</h2>
-            <p>{{ 'retire.retirementId' | translate }}</p>
-            <code>{{ retirementId() }}</code>
-            <button class="btn btn-outline" (click)="reset()">
-              {{ 'retire.retireAnother' | translate }}
-            </button>
-          </div>
-        }
-
-        @if (step() === 'error') {
-          <div class="result error-box">
-            <h2>{{ 'retire.errorTitle' | translate }}</h2>
-            <p>{{ errorMsg() }}</p>
-            <button class="btn btn-outline" (click)="step.set('confirm')">
-              {{ 'retire.tryAgain' | translate }}
-            </button>
-          </div>
-        }
-      }
+      </section>
     </div>
   `,
   styles: [
     `
       .retire-wizard {
-        max-width: 560px;
+        max-width: 700px;
         margin: 0 auto;
+        padding: 1.5rem 1rem;
       }
       h1 {
         margin-bottom: 1.5rem;
       }
-      .auth-prompt {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        align-items: flex-start;
-      }
-      .wizard-form {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-      }
-      label {
-        display: flex;
-        flex-direction: column;
-        gap: 0.3rem;
-        font-size: 0.9rem;
-        font-weight: 500;
-      }
-      input {
-        padding: 0.5rem 0.75rem;
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        font-size: 0.95rem;
-      }
-      .confirm-box {
-        background: #f9f9f9;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 1.5rem;
-      }
-      dl {
-        display: grid;
-        grid-template-columns: 140px 1fr;
-        gap: 0.5rem 1rem;
-        margin: 1rem 0;
-        font-size: 0.9rem;
-      }
-      dt {
-        font-weight: 600;
-        color: #555;
-      }
-      .mono {
-        font-family: monospace;
-        word-break: break-all;
-      }
-      .actions {
-        display: flex;
-        gap: 0.75rem;
-        margin-top: 1rem;
-      }
-      .result {
-        padding: 1.5rem;
-        border-radius: 8px;
-      }
-      .success {
-        background: #e8f5e9;
-      }
-      .error-box {
-        background: #ffebee;
-      }
-      code {
-        display: block;
-        font-family: monospace;
-        font-size: 0.85rem;
-        word-break: break-all;
-        margin: 0.5rem 0 1rem;
-      }
-      .btn {
-        padding: 0.45rem 1.1rem;
-        border-radius: 6px;
-        cursor: pointer;
-        border: none;
-        font-size: 0.9rem;
-      }
-      .btn-primary {
-        background: #4caf50;
-        color: #fff;
-      }
-      .btn-primary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .btn-danger {
-        background: #e53935;
-        color: #fff;
-      }
-      .btn-danger:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-      .btn-outline {
-        background: transparent;
-        border: 1px solid #ccc;
-      }
     `,
   ],
 })
-export class RetireComponent {
+export class RetireComponent implements OnInit {
   protected readonly auth = inject(AuthService);
   protected readonly wallet = inject(StellarWalletService);
   private readonly api = inject(ApiService);
-  private readonly store = inject(CreditStore);
+  protected readonly store = inject(CreditStore);
+  private readonly toast = inject(ToastService);
+  private readonly router = inject(Router);
+  protected readonly draftStore = inject(RetireDraftStore);
+  private readonly i18n = inject(TranslationService);
 
-  creditId = '';
-  tonnes = 1_000_000;
-  reason = '';
-
-  readonly step = signal<Step>('form');
+  readonly currentStep = signal<WizardStep>(1);
+  readonly selectedCredits = signal<CreditMetadata[]>([]);
   readonly submitting = signal(false);
-  readonly retirementId = signal<string | null>(null);
-  readonly errorMsg = signal<string | null>(null);
+  readonly signingError = signal<string | null>(null);
+  readonly draftNotice = signal<string | null>(null);
+  readonly draftRestored = signal(false);
+  readonly statusMessage = signal<string | null>(null);
 
-  goConfirm(): void {
-    this.step.set('confirm');
+  readonly reasonControl = new FormControl<string>('', { validators: [Validators.required] });
+  readonly tonnesControl = new FormControl<number | null>(null, {
+    validators: [Validators.required, multipleOf100kValidator()],
+  });
+
+  readonly activeCredits = computed(() => {
+    const owner = this.wallet.publicKey();
+    return this.store
+      .credits()
+      .filter((c) => c.status === CreditStatus.Active && c.owner === owner);
+  });
+
+  readonly allSelected = computed(
+    () =>
+      this.activeCredits().length > 0 &&
+      this.selectedCredits().length === this.activeCredits().length,
+  );
+
+  readonly totalSelectedTonnes = computed(() =>
+    this.selectedCredits()
+      .reduce((sum, c) => sum + BigInt(c.tonnes), 0n)
+      .toString(),
+  );
+
+  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
+
+  get expectedNetwork(): string {
+    return this.wallet.expectedNetwork();
+  }
+
+  get tonnesError(): boolean {
+    const v = this.tonnes;
+    return !v || v <= 0 || v % 100_000 !== 0;
+  }
+
+  private get tonnes(): number {
+    return Number(this.selectedCredits()[0]?.tonnes ?? 1_000_000);
+  }
+
+  async ngOnInit(): Promise<void> {
+    const pk = this.wallet.publicKey();
+    if (pk && this.auth.isAuthenticated()) {
+      await this.store.loadByOwner(pk);
+    }
+  }
+
+  stepLabel(step: WizardStep): string {
+    switch (step) {
+      case 1:
+        return this.i18n.t('retire.step.selectCredits');
+      case 2:
+        return this.i18n.t('retire.step.reason');
+      case 3:
+        return this.i18n.t('retire.step.confirm');
+      default:
+        return '';
+    }
+  }
+
+  stepAnnouncement(): string {
+    const step = this.currentStep();
+    const label = this.stepLabel(step);
+    return step === 3
+      ? 'Step 3 of 3, ' + label + '. Review and submit your retirement.'
+      : 'Step ' + step + ' of 3, ' + label + '.';
+  }
+
+  isSelected(credit: CreditMetadata): boolean {
+    return this.selectedCredits().some((c) => c.id === credit.id);
+  }
+
+  constructor() {
+    effect(() => {
+      const credits = this.selectedCredits();
+      this.currentStep();
+      if (credits.length === 0) return;
+      this.persistDraft();
+    });
+    this.reasonControl.valueChanges.subscribe(() => this.persistDraft());
+  }
+
+  toggleCredit(credit: CreditMetadata): void {
+    this.selectedCredits.update((list) => {
+      const idx = list.findIndex((c) => c.id === credit.id);
+      return idx >= 0 ? [...list.slice(0, idx), ...list.slice(idx + 1)] : [...list, credit];
+    });
+  }
+
+  toggleSelectAll(): void {
+    if (this.allSelected()) {
+      this.selectedCredits.set([]);
+    } else {
+      this.selectedCredits.set([...this.activeCredits()]);
+    }
+  }
+
+  async nextStep(step: WizardStep): Promise<void> {
+    if (step === 1 && this.activeCredits().length === 0) return;
+    if (step === 2 && this.reasonControl.invalid) return;
+    if (step === 3 && this.reasonControl.invalid) return;
+    this.currentStep.set(step);
+  }
+
+  private persistDraft(): void {
+    const credits = this.selectedCredits();
+    if (credits.length === 0) return;
+    this.draftStore.save({
+      step: this.currentStep(),
+      credits,
+      tonnes: String(this.tonnesControl.value ?? 0),
+      reason: this.reasonControl.value ?? '',
+    });
+  }
+
+  private restoreDraft(): void {
+    const draft = this.draftStore.restore(this.activeCredits());
+    if (!draft) {
+      const reason = this.draftStore.notice();
+      if (reason) {
+        this.draftNotice.set(
+          reason === 'expired'
+            ? 'Your saved retirement draft expired and was cleared.'
+            : 'Your saved retirement draft was out of date and was cleared.',
+        );
+      }
+      return;
+    }
+    this.selectedCredits.set(this.draftStore.resolve(this.activeCredits()));
+    this.reasonControl.setValue(draft.reason);
+    this.tonnesControl.setValue(Number(draft.tonnes));
+    this.currentStep.set(draft.step);
+    this.draftRestored.set(true);
+  }
+
+  discardDraft(): void {
+    this.draftStore.discard();
+    this.draftNotice.set(null);
+    this.draftRestored.set(false);
+    this.reset();
   }
 
   async submit(): Promise<void> {
+    const credits = this.selectedCredits();
+    const reason = this.reasonControl.value;
+    const pk = this.wallet.publicKey();
+
+    if (credits.length === 0 || !pk) return;
+
+    this.tonnesControl.setValue(Number(this.totalSelectedTonnes()));
+    if (this.tonnesControl.invalid) {
+      this.signingError.set('Total tonnes must be a positive multiple of 100,000.');
+      this.currentStep.set(3);
+      return;
+    }
+
     this.submitting.set(true);
+    this.signingError.set(null);
+    this.statusMessage.set('Submitting your retirement...');
+
     try {
       const token = this.auth.token()!;
-      const { retirementId } = await firstValueFrom(
-        this.api.retireCredit(
+
+      if (credits.length === 1) {
+        const credit = credits[0];
+
+        const attemptRetire = async (): Promise<{ retirementId: string }> => {
+          return await firstValueFrom(
+            this.api.retireCredit(
+              {
+                buyerPublicKey: pk!,
+                creditId: credit.id,
+                tonnes: credit.tonnes,
+                reason: reason ?? '',
+              },
+              token,
+            ),
+          );
+        };
+
+        let retirementId: string;
+        try {
+          retirementId = (await attemptRetire()).retirementId;
+        } catch (err) {
+          const walletError = normalizeWalletError(err);
+          if (walletError.type === 'staleEnvelope') {
+            // Retry once with a fresh envelope
+            retirementId = (await attemptRetire()).retirementId;
+          } else {
+            throw err;
+          }
+        }
+        this.store.loadOne(credit.id).catch(() => {});
+        this.clearDraft();
+        await this.router.navigate(['/certificates', retirementId]);
+        return;
+      }
+
+      const { succeeded, failed } = await firstValueFrom(
+        this.api.batchRetire(
           {
-            buyerPublicKey: this.wallet.publicKey()!,
-            creditId: this.creditId,
-            tonnes: String(this.tonnes),
-            reason: this.reason,
+            buyerPublicKey: pk!,
+            creditIds: credits.map((c) => c.id),
+            tonnes: credits.map((c) => c.tonnes),
+            reason: reason ?? '',
           },
           token,
         ),
       );
-      this.retirementId.set(retirementId);
-      // Refresh the credit entry in the store so any cached data is updated.
-      this.store.loadOne(this.creditId).catch(() => {});
-      this.step.set('success');
+
+      for (const c of credits) {
+        this.store.loadOne(c.id).catch(() => {});
+      }
+
+      if (failed.length > 0) {
+        this.signingError.set(
+          failed.length + ' credit(s) failed: ' + failed.map((f) => f.reason).join(', '),
+        );
+      }
+
+      if (succeeded.length > 0) {
+        this.toast.showSuccess(succeeded.length + ' credit(s) retired successfully');
+        this.clearDraft();
+        await this.router.navigate(['/certificates', succeeded[0]]);
+      }
     } catch (err) {
-      this.errorMsg.set(err instanceof Error ? err.message : 'Unknown error.');
-      this.step.set('error');
+      const walletError = normalizeWalletError(err);
+      this.signingError.set(walletError.displayMessage);
+      this.statusMessage.set(null);
+      this.currentStep.set(3);
     } finally {
       this.submitting.set(false);
     }
   }
 
-  reset(): void {
-    this.creditId = '';
-    this.tonnes = 1_000_000;
-    this.reason = '';
-    this.retirementId.set(null);
-    this.errorMsg.set(null);
-    this.step.set('form');
+  private clearDraft(): void {
+    this.draftStore.discard();
+    this.draftRestored.set(false);
   }
 
-  formatTonnes(kg: number): string {
-    return (kg / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
+  formatTonnes(raw: string): string {
+    return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
+  }
+
+  private reportWalletError(err: WalletError | unknown): void {
+    const walletError = normalizeWalletError(err);
+    this.signingError.set(walletError.displayMessage);
+    this.statusMessage.set(null);
+    this.currentStep.set(3);
+  }
+
+  reset(): void {
+    this.currentStep.set(1);
+    this.selectedCredits.set([]);
+    this.reasonControl.reset('');
+    this.signingError.set(null);
+    this.statusMessage.set(null);
   }
 }

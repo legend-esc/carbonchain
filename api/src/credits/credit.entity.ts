@@ -1,39 +1,45 @@
-import { CreditStatus } from '../shared';
+import { Entity, PrimaryColumn, Column, Index } from 'typeorm';
+import { CreditStatus } from '../../../shared';
 
-/**
- * Off-chain index of an on-chain carbon credit.
- * Ready for TypeORM — uncomment decorators and add @nestjs/typeorm when DB is wired.
- *
- * @Entity('credits')
- */
+@Entity('credits')
+@Index('idx_credits_status_methodology_geography', [
+  'status',
+  'methodology',
+  'geography',
+])
+@Index('idx_credits_owner_address', ['issuer'])
+@Index('idx_credits_vintage_year', ['vintageYear'])
 export class CreditEntity {
-  // @PrimaryColumn()
+  @PrimaryColumn()
   id: string;
 
-  // @Column()
+  @Column()
   projectId: string;
 
-  // @Column()
+  @Column()
   issuer: string;
 
-  // @Column()
+  @Column()
+  owner: string;
+
+  @Column()
   vintageYear: number;
 
-  // @Column()
+  @Column()
   methodology: string;
 
-  // @Column()
+  @Column()
   geography: string;
 
-  // @Column()
+  @Column()
   tonnes: string;
 
-  // @Column()
+  @Column()
   ipfsHash: string;
 
-  // @Column({ type: 'varchar' })
+  @Column({ type: 'varchar' })
   status: CreditStatus;
 
-  // @Column({ type: 'bigint' })
+  @Column({ type: 'bigint' })
   issuedAt: number;
 }

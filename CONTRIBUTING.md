@@ -13,11 +13,11 @@ CarbonChain participates in the **Stellar Wave program on Drips** — a monthly,
 - [Development Environment Setup](#development-environment-setup)
 - [Running Tests](#running-tests)
 - [Code Style Guidelines](#code-style-guidelines)
-- [Commit Message Conventions](#commit-message-conventions)
-- [Commit Message Conventions](#commit-message-conventions)
+- [Adding Error Codes](#adding-error-codes)
 - [Branch Naming Conventions](#branch-naming-conventions)
 - [Pull Request Process](#pull-request-process)
 - [Issue and PR Templates](#issue-and-pr-templates)
+- [Contract Upgrade Checklist](#contract-upgrade-checklist)
 - [Stellar Wave Contributions](#stellar-wave-contributions)
 - [Documentation](#documentation)
 
@@ -264,11 +264,13 @@ cd contracts && cargo fmt --all
 
 Project style is configured in `contracts/rustfmt.toml` (100-char line width, 2021 edition, grouped imports). CI will fail if any contract is not formatted.
 
-Lint with clippy:
+Lint with clippy — **zero warnings are allowed** (`-D warnings` is enforced by CI):
 
 ```bash
-cargo clippy -- -D warnings
+cd contracts && cargo clippy --all-targets -- -D warnings
 ```
+
+Fix all warnings before opening a PR. Do not use `#[allow(...)]` to silence a warning without a documented reason in a comment on the same line.
 
 - Add doc comments (`///`) for all public contract functions
 - Use the `CarbonChainError` type for all error handling (see `docs/features/ERROR_CODES_REFERENCE.md`)
@@ -332,6 +334,7 @@ npx tsc --noEmit
 - Use Angular Signals for local state — avoid direct `BehaviorSubject` patterns where signals suffice
 - All HTTP calls go through `ApiService` — never use `HttpClient` directly in components
 - All wallet interactions go through `StellarWalletService`
+- No `console.log`, `console.debug`, or `console.info` in production code — the `no-console` ESLint rule disallows them. `console.error` and `console.warn` are still permitted for error reporting. Debug logging must be removed before opening a PR.
 
 ### General Guidelines
 
@@ -558,14 +561,96 @@ When creating a PR, please include:
 - [ ] Frontend: `npm run lint`, `npm run format:check`, and `ng test` pass
 - [ ] No secrets or private keys committed
 - [ ] `CHANGELOG.md` updated if this is a user-facing change
+---
+
+## Adding Error Codes
+
+CarbonChain smart contracts use stable numeric error codes. These codes are safe to use in API clients and monitoring because they never change across contract upgrades.
+
+### Numbering Scheme
+
+Codes are allocated by range per contract:
+
+| Range | Contract |
+|-------|----------|
+| 100–132 | Credit Registry |
+| 200–210 | Retirement |
+| 300–316 | Marketplace |
+| 400–412 | MRV Oracle |
+
+When adding a new error code, pick the **next available number** within the contract's range. Code ranges are non-overlapping (100–132, 200–210, 300–316, 400–412); once a range is exhausted, expand upward while preserving the gap between contracts.
+
+### Steps
+
+1. **Pick the next code** — find the highest code in the contract's range from `docs/features/ERROR_CODES_REFERENCE.md`, then increment by one.
+2. **Add the variant** — define the new error variant in the contract's error enum (e.g. `contracts/credit_registry/src/lib.rs`).
+3. **Update the reference doc** — add a new row to the contract's table in `docs/features/ERROR_CODES_REFERENCE.md` with the code, name, and description.
+4. **Emits / usage** — annotate the contract function that returns the new error (in the function's doc comment and in any API docs).
+5. **Test coverage** — add a test that asserts the new error is returned in the expected scenario.
 
 ---
 
+## Contract Upgrade Checklist
 
+Before deploying updates or modifications to any Soroban smart contracts on CarbonChain, contributors and maintainers must strictly follow this upgrade checklist.
+
+### Pre-Upgrade Verification
+
+1. **Migration Test on Testnet**:
+   - Deploy the new contract WASM to the Stellar Testnet.
+   - Run the full migration script against existing testnet contract state containing realistic data (e.g., active credits, retirements, and offer states).
+   - Validate that all post-migration queries match expected state and that no historical entries are corrupted or inaccessible.
+
+2. **Storage Layout Verification**:
+   - Ensure complete backward compatibility of Soroban storage data keys (`DataKey` enum).
+   - Verify that existing storage enum discriminants and field order remain unchanged; new keys must be appended or namespaced.
+   - Run storage layout diff tests ensuring existing persistent and temporary ledger entries deserialize cleanly into new schema structs.
+
+3. **Event Schema Compatibility**:
+   - Validate that contract events (`env.events().publish(...)`) maintain consistent topic structures.
+   - Ensure external indexers (such as the CarbonChain NestJS API event listeners) can consume both pre-upgrade and post-upgrade event payloads without deserialization failures.
+   - Document any new event topics or schema versions in `docs/features/`.
+
+### Upgrade Verification
+
+1. **WASM Hash Verification**:
+   - Compute the SHA-256 hash of the new contract WASM and compare it against the hash recorded in the migration script / release manifest.
+   - Confirm the deployed WASM hash matches the hash reviewed and approved in the PR.
+   - Only deploy a WASM built from a clean, approved tree; the build must be reproducible.
+
+2. **Admin Nonce Freshness**:
+   - Verify the current admin nonce is fresh and matches the expected value before executing the upgrade or admin transfer.
+   - Ensure no pending admin transfer (`propose_admin`) is outstanding unless the upgrade explicitly includes the admin acceptance step.
+   - Confirm replay protection (`InvalidNonce`) is intact and enforced by the new contract.
+
+3. **Migration Execution Order**:
+   - Run migration scripts in the correct dependency order (`credit_registry` → `retirement` → `marketplace` → `mrv_oracle`).
+   - Record each migration transaction hash and block number in the upgrade log.
+   - Do not proceed to the next contract until the previous migration's post-state checks pass.
+
+### Post-Upgrade Verification
+
+1. **Event Emission Verification**:
+   - Confirm all upgrade-related events are emitted (e.g., `ContractUpgraded`, `AdminTransferred`) with the correct topics and payloads.
+   - Verify event listeners in the NestJS API consume the post-upgrade event schema without errors.
+
+2. **State Consistency Checks**:
+   - Run storage state consistency checks confirming credit balances, retirements, offers, and MRV readings match pre-upgrade values.
+   - Validate all storage entries deserialize cleanly into the new schema structs with no data loss.
+   - Confirm no storage entries are orphaned or inaccessible after migration.
+
+3. **Rollback Plan**:
+   - Document and test a rollback procedure before executing the upgrade on mainnet.
+   - Retain the previous WASM hash and pre-upgrade storage snapshot for fast restoration.
+   - Define the rollback trigger conditions and the maintainer(s) authorized to initiate rollback.
+
+### Required Approvals
+
+- **2+ maintainer approvals** are required before any contract upgrade PR can be merged.
+- A **security review** is mandatory for any upgrade that changes contract logic (not just storage or event additions).
+- All CI checks (tests, lint, contract build) must pass before merge.
 
 ---
-
-## Documentation
 
 ### Existing Documentation
 

@@ -1,6 +1,10 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { envValidationSchema } from './env-validation';
@@ -8,6 +12,9 @@ import { CacheModule } from './common/cache.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingMiddleware } from './common/request-logging.middleware';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
+import { LoggingMiddleware } from './common/logging.middleware';
+import { IdempotencyInterceptor } from './common/idempotency.interceptor';
+import { StructuredExceptionFilter } from './common/filters/structured-exception.filter';
 import { HealthModule } from './health/health.module';
 import { StellarModule } from './stellar/stellar.module';
 import { CreditsModule } from './credits/credits.module';
@@ -20,6 +27,10 @@ import { EventsModule } from './events/events.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { AdminModule } from './admin/admin.module';
 import { RatesModule } from './rates/rates.module';
+import { OracleModule } from './oracle/oracle.module';
+import { MetricsModule } from './metrics/metrics.module';
+import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 
 @Module({
   imports: [
@@ -30,6 +41,29 @@ import { RatesModule } from './rates/rates.module';
       validationOptions: {
         abortEarly: true,
       },
+    }),
+    // TypeORM — async config so DATABASE_URL is read after ConfigModule loads
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres' as const,
+        url: config.get<string>(
+          'DATABASE_URL',
+          'postgresql://postgres:postgres@localhost:5432/carbonchain',
+        ),
+        synchronize: false,
+        logging: config.get<string>('NODE_ENV') !== 'production',
+        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        migrations: [__dirname + '/migrations/*{.ts,.js}'],
+        migrationsTableName: 'typeorm_migrations',
+        poolSize: 20,
+        extra: {
+          max: 20,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 2000,
+        },
+      }),
     }),
     ScheduleModule.forRoot(),
     CacheModule,
@@ -45,14 +79,26 @@ import { RatesModule } from './rates/rates.module';
     WebhooksModule,
     AdminModule,
     RatesModule,
+    OracleModule,
+    MetricsModule,
+    ReconciliationModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
+    // Issue #551: globally handle QueryTimeoutError → 503 and standardise all
+    // error responses so clients receive consistent JSON error bodies.
+    { provide: APP_FILTER, useClass: StructuredExceptionFilter },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
+    // RequestIdMiddleware must run first so that LoggingMiddleware,
+    // RequestMetricsMiddleware and downstream service calls can read the
+    // request id from RequestContextStore.
     consumer
-      .apply(RequestIdMiddleware, RequestLoggingMiddleware)
+      .apply(RequestIdMiddleware, LoggingMiddleware, RequestMetricsMiddleware)
       .forRoutes('*');
 
     consumer

@@ -23,3 +23,43 @@ body {
   font-family: sans-serif;
   transition: background 0.2s, color 0.2s;
 }
+
+/** Responsive breakpoints (#962) — narrow-viewport rules for all surfaces. */
+@media (max-width: 768px) {
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  button,
+  .btn,
+  [role="button"],
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/** Retire wizard: stack steps full-width below md breakpoint. */
+@media (max-width: 768px) {
+  .wizard-step {
+    flex-direction: column;
+    width: 100%;
+  }
+}
+
+/** Retire wizard: keep tables horizontally scrollable at small viewports. */
+@media (max-width: 480px) {
+  .table-scroll {
+    overflow-x: auto;
+  }
+}
+
+/** Portfolio: collapse summary cards and scroll charts on narrow viewports. */
+@media (max-width: 768px) {
+  .chart-card { overflow-x: auto; }
+
+  .summary-card {
+    width: 100%;
+  }
+}

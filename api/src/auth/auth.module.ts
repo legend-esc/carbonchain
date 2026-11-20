@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { StellarAuthStrategy } from './stellar-auth.strategy';
 import { StellarModule } from '../stellar/stellar.module';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { AdminGuard } from '../admin/admin.guard';
 
 @Module({
   imports: [
@@ -17,11 +18,13 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET', 'changeme'),
-        signOptions: { expiresIn: '1h' },
+        // Issue #933 — access tokens are short-lived (15 minutes).
+        // Refresh tokens are separate Redis-held UUIDs rotated on every use.
+        signOptions: { expiresIn: '15m' },
       }),
     }),
   ],
-  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard],
+  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard, AdminGuard],
   controllers: [AuthController],
   exports: [AuthService, JwtAuthGuard],
 })

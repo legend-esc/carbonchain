@@ -4,6 +4,9 @@ import { AdminVerifiersComponent } from './admin-verifiers.component';
 import { ApiService, VerifierInfo } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
 import { ToastService } from '../core/services/toast.service';
+import { Router } from '@angular/router';
+import { TestBed as TB } from '@angular/core/testing';
+import { adminGuard } from '../core/guards/admin.guard';
 
 const MOCK_TOKEN = 'header.eyJyb2xlIjoiYWRtaW4ifQ.sig'; // role: admin
 
@@ -21,7 +24,9 @@ describe('AdminVerifiersComponent', () => {
   function createApiSpy() {
     return {
       listVerifiers: vi.fn().mockReturnValue(of([])),
+      listVerifierApplications: vi.fn().mockReturnValue(of([])),
       getAdminStats: vi.fn().mockReturnValue(of(mockStats)),
+      getVerifierStake: vi.fn().mockReturnValue(of({ stake: '0' })),
       registerVerifier: vi.fn(),
       suspendVerifier: vi.fn(),
       configureVerifier: vi.fn(),
@@ -288,5 +293,44 @@ describe('AdminVerifiersComponent', () => {
 
     component.closeSuspend();
     expect(component['suspendingVerifier']()).toBeNull();
+  });
+});
+
+// ── Admin Guard redirect ──────────────────────────────────────────────────────
+
+describe('adminGuard', () => {
+  function runGuard(token: string | null, isAuthenticated: boolean) {
+    const authSpy = { token: () => token, isAuthenticated: () => isAuthenticated };
+    const routerSpy = { createUrlTree: vi.fn((path: string[]) => ({ path })) };
+
+    TB.configureTestingModule({
+      providers: [
+        { provide: AuthService, useValue: authSpy },
+        { provide: Router, useValue: routerSpy },
+      ],
+    });
+
+    const result = TB.runInInjectionContext(() => adminGuard({} as any, {} as any));
+    return { result, routerSpy };
+  }
+
+  it('redirects to /dashboard when authenticated but not admin', () => {
+    // non-admin token: payload role = "user"
+    const nonAdminToken = 'header.' + btoa(JSON.stringify({ role: 'user' })) + '.sig';
+    const { result, routerSpy } = runGuard(nonAdminToken, true);
+    expect(routerSpy.createUrlTree).toHaveBeenCalledWith(['/dashboard']);
+    expect(result).toEqual({ path: ['/dashboard'] });
+  });
+
+  it('allows access when authenticated and role is admin', () => {
+    const adminToken = 'header.' + btoa(JSON.stringify({ role: 'admin' })) + '.sig';
+    const { result } = runGuard(adminToken, true);
+    expect(result).toBe(true);
+  });
+
+  it('redirects to /connect-wallet when not authenticated', () => {
+    const { result, routerSpy } = runGuard(null, false);
+    expect(routerSpy.createUrlTree).toHaveBeenCalledWith(['/connect-wallet']);
+    expect(result).toEqual({ path: ['/connect-wallet'] });
   });
 });

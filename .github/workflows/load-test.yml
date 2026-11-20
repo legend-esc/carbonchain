@@ -1,0 +1,257 @@
+name: Load Tests (k6)
+
+# Issue #548 — Run k6 load tests on every release branch commit.
+# Results are published as GitHub Actions artifacts (HTML + JSON reports).
+# CI gate: P95 latency < 500 ms, error rate < 0.1 %.
+#
+# Triggered by:
+#   push to release/** or main
+#   manual dispatch (workflow_dispatch) — useful for ad-hoc baselines
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'API base URL to load-test against'
+        required: false
+        default: 'http://localhost:3000'
+      duration_override:
+        description: 'Override scenario duration (e.g. 1m for quick CI run)'
+        required: false
+        default: ''
+
+jobs:
+  load-test:
+    name: k6 Load Tests
+    runs-on: ubuntu-latest
+
+    # Spin up the full stack so tests run against a real API + database.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: carbonchain
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # ── Checkout ───────────────────────────────────────────────────────────
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # ── Node.js + API setup ────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API dependencies
+        run: cd api && npm ci --legacy-peer-deps
+
+      - name: Build API
+        run: cd api && npm run build
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
+        run: cd api && npm run migration:run
+
+      - name: Start API in background
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/carbonchain
+          JWT_SECRET: load-test-jwt-secret-not-for-production
+          ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY || 'SLOAD7YTM2J5ZQOQ4SI5L5ZCXZDTXSMONGDFFHGQCPWAP6CCRBPYRCI' }}
+          STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+          STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+          IPFS_API_KEY: load-test-placeholder
+          IPFS_SECRET_KEY: load-test-placeholder
+          NODE_ENV: test
+          PORT: 3000
+        run: |
+          cd api && node dist/main.js &
+          # Wait for the API to become ready (up to 30 s)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break
+            echo "Waiting for API... ($i/30)"
+            sleep 1
+          done
+
+      # ── Install k6 ────────────────────────────────────────────────────────
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq k6
+
+      # ── Create output directory ────────────────────────────────────────────
+      - name: Create results directory
+        run: mkdir -p scripts/load-test/results
+
+      # ── Run load tests ─────────────────────────────────────────────────────
+      - name: Run load test — GET /credits (list)
+        env:
+          BASE_URL: http://localhost:3000
+        run: |
+          k6 run \
+            --out json=scripts/load-test/results/list-credits.json \
+            --summary-export scripts/load-test/results/list-credits-summary.json \
+            scripts/load-test/list-credits.js
+        continue-on-error: true  # capture results even on threshold breach
+
+      # The write endpoints (issue/retire) need a valid JWT and, for retire, a
+      # set of pre-seeded credit IDs against a configured Stellar registry.
+      # The localhost API in this workflow has neither, so only run these when
+      # the required secrets are present (e.g. load testing a deployed API via
+      # workflow_dispatch with base_url). Otherwise they would 401/500 and
+      # fail the error-rate gate spuriously.
+      - name: Run load test — POST /credits/issue
+        if: ${{ secrets.LOAD_TEST_JWT_TOKEN != '' }}
+        env:
+          BASE_URL: http://localhost:3000
+          JWT_TOKEN: ${{ secrets.LOAD_TEST_JWT_TOKEN }}
+        run: |
+          k6 run \
+            --out json=scripts/load-test/results/issue-credits.json \
+            --summary-export scripts/load-test/results/issue-credits-summary.json \
+            scripts/load-test/issue-credits.js
+        continue-on-error: true
+
+      - name: Run load test — POST /credits/:id/retire
+        if: ${{ secrets.LOAD_TEST_JWT_TOKEN != '' && secrets.LOAD_TEST_CREDIT_IDS != '' }}
+        env:
+          BASE_URL: http://localhost:3000
+          JWT_TOKEN: ${{ secrets.LOAD_TEST_JWT_TOKEN }}
+          CREDIT_IDS: ${{ secrets.LOAD_TEST_CREDIT_IDS }}
+        run: |
+          k6 run \
+            --out json=scripts/load-test/results/retire-credit.json \
+            --summary-export scripts/load-test/results/retire-credit-summary.json \
+            scripts/load-test/retire-credit.js
+        continue-on-error: true
+
+      # ── Generate HTML report ───────────────────────────────────────────────
+      - name: Generate HTML report
+        if: always()
+        run: |
+          mkdir -p scripts/load-test/results
+          cat > scripts/load-test/results/report.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>CarbonChain Load Test Results</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+              h1 { color: #2e7d32; }
+              h2 { border-bottom: 2px solid #e0e0e0; padding-bottom: 0.5rem; }
+              .summary { background: #f5f5f5; padding: 1rem; border-radius: 8px; margin: 1rem 0; }
+              .pass { color: #2e7d32; font-weight: bold; }
+              .fail { color: #c62828; font-weight: bold; }
+              pre { background: #263238; color: #eceff1; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; }
+            </style>
+          </head>
+          <body>
+            <h1>CarbonChain Load Test Report</h1>
+            <p>Run: <code>${GITHUB_RUN_ID:-local}</code> &mdash; Branch: <code>${GITHUB_REF_NAME:-local}</code></p>
+
+            <h2>Thresholds</h2>
+            <div class="summary">
+              <ul>
+                <li>P95 latency &lt; <strong>500 ms</strong></li>
+                <li>Error rate &lt; <strong>0.1 %</strong></li>
+              </ul>
+            </div>
+
+            <h2>Scenarios</h2>
+            <ul>
+              <li><strong>Sustained:</strong> 100 RPS &times; 5 min &mdash; steady-state throughput baseline</li>
+              <li><strong>Spike:</strong> 10 → 500 VUs over 30 s &mdash; burst tolerance</li>
+              <li><strong>Stress:</strong> step-up ramp until threshold breach</li>
+            </ul>
+
+            <h2>Endpoints Tested</h2>
+            <ul>
+              <li><code>GET  /api/v1/credits</code></li>
+              <li><code>POST /api/v1/credits/issue</code></li>
+              <li><code>POST /api/v1/credits/:id/retire</code></li>
+            </ul>
+
+            <h2>Raw Results</h2>
+            <p>Full JSON metrics are available in the <strong>load-test-results</strong> artifact.</p>
+          </body>
+          </html>
+          EOF
+          # Substitute env vars in the HTML
+          sed -i "s/\${GITHUB_RUN_ID:-local}/${GITHUB_RUN_ID:-local}/g" scripts/load-test/results/report.html
+          sed -i "s/\${GITHUB_REF_NAME:-local}/${GITHUB_REF_NAME:-local}/g" scripts/load-test/results/report.html
+
+      # ── Upload artifacts ───────────────────────────────────────────────────
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: load-test-results
+          path: scripts/load-test/results/
+          retention-days: 30
+
+      # ── Enforce thresholds — fail CI if any test failed ────────────────────
+      - name: Check threshold results
+        if: always()
+        run: |
+          FAILED=0
+          for summary in scripts/load-test/results/*-summary.json; do
+            [ -f "$summary" ] || continue
+            # k6 sets root_group.checks pass/fail; non-zero exit from k6 itself
+            # already signals threshold breach, but we also parse summary for reporting.
+            PASSED=$(python3 -c "
+          import json, sys
+
+          def metric_value(metrics, name, key, default):
+              m = metrics.get(name, {})
+              if not isinstance(m, dict):
+                  return default
+              # k6 --new-machine-readable-summary nests stats under 'values';
+              # the legacy --summary-export format keeps them directly on the
+              # metric. Handle both so the gate reads real numbers either way.
+              if isinstance(m.get('values'), dict):
+                  return m['values'].get(key, default)
+              return m.get(key, default)
+
+          with open('$summary') as f:
+              d = json.load(f)
+          metrics = d.get('metrics', {})
+          # Check http_req_failed rate
+          failed_rate = metric_value(metrics, 'http_req_failed', 'rate', 0)
+          # Check p95 latency
+          p95 = metric_value(metrics, 'http_req_duration', 'p(95)', 999999)
+          if failed_rate >= 0.001:
+              print(f'FAIL: error rate {failed_rate:.4f} >= 0.001 in $summary')
+              sys.exit(1)
+          if p95 >= 500:
+              print(f'FAIL: p95 latency {p95:.1f}ms >= 500ms in $summary')
+              sys.exit(1)
+          print(f'PASS: error_rate={failed_rate:.4f}, p95={p95:.1f}ms in $summary')
+          " 2>&1) || FAILED=1
+            echo "$PASSED"
+          done
+          exit $FAILED

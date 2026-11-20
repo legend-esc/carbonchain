@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsNumberString } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumberString,
+  IsOptional,
+  IsInt,
+  Min,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateOfferDto {
@@ -27,4 +34,33 @@ export class CreateOfferDto {
   @IsNumberString()
   @IsNotEmpty()
   tonnes: string;
+
+  @ApiProperty({
+    example: 1735689600,
+    description: 'Offer expiration timestamp (seconds)',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expiresAt?: number;
+
+  @ApiProperty({
+    example: 0,
+    description: 'Seller replay-protection nonce',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  nonce?: number;
+
+  @ApiProperty({
+    example: 'native',
+    description: 'Asset identifier or contract address',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  priceAsset?: string;
 }

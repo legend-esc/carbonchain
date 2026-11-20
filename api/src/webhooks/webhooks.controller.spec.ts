@@ -1,31 +1,45 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
+import { StellarService } from '../stellar/stellar.service';
+import { CacheService } from '../common/cache.service';
 
 const mockConfigService = {
   get: jest.fn((key: string, def?: string) => {
-    if (key === 'WEBHOOK_SIGNATURE_HEADER') return 'x-mrv-signature';
-    if (key === 'WEBHOOK_SIGNATURE_ALGO') return 'sha256';
+    if (key === 'NODE_ENV') return 'test';
     return def;
   }),
 };
 
+const mockWebhooksService = {
+  registerWebhook: jest.fn(),
+  getWebhooks: jest.fn(),
+  getWebhook: jest.fn(),
+  deleteWebhook: jest.fn(),
+  validateWebhookUrl: jest.fn().mockResolvedValue(undefined),
+  getDeliveries: jest.fn(),
+  getWebhookMetrics: jest.fn(),
+};
+
 describe('WebhooksController', () => {
   let controller: WebhooksController;
-  let service: WebhooksService;
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WebhooksController],
       providers: [
-        WebhooksService,
+        { provide: WebhooksService, useValue: mockWebhooksService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarService, useValue: {} },
+        { provide: CacheService, useValue: {} },
       ],
     }).compile();
 
     controller = module.get<WebhooksController>(WebhooksController);
-    service = module.get<WebhooksService>(WebhooksService);
   });
 
   it('should be defined', () => {
@@ -33,38 +47,175 @@ describe('WebhooksController', () => {
   });
 
   describe('registerWebhook', () => {
-    it('should register a webhook', () => {
-      const result = controller.registerWebhook({
+    it('registers a webhook and returns the registration result with secret', async () => {
+      const dto = {
         url: 'https://example.com/webhook',
         events: ['credit_submitted'],
-      });
+      };
+      const expectedResult = {
+        id: 'webhook_123',
+        url: dto.url,
+        events: dto.events,
+        active: true,
+        failureCount: 0,
+        createdAt: new Date(),
+        secret: 'secret123',
+      };
+      mockWebhooksService.registerWebhook.mockResolvedValueOnce(expectedResult);
 
-      expect(result).toBeDefined();
-      expect(result.url).toBe('https://example.com/webhook');
+      const result = await controller.registerWebhook(dto);
+
+      expect(mockWebhooksService.registerWebhook).toHaveBeenCalledWith(
+        dto.url,
+        dto.events,
+      );
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('returns list of webhooks without secrets', async () => {
+      const webhooks = [
+        { id: '1', url: 'https://a.com', events: ['e1'], active: true },
+        { id: '2', url: 'https://b.com', events: ['e2'], active: false },
+      ];
+      mockWebhooksService.getWebhooks.mockResolvedValueOnce(webhooks);
+
+      const result = await controller.getWebhooks();
+
+      expect(result).toEqual(webhooks);
     });
   });
 
-  describe('getWebhooks', () => {
-    it('should return all webhooks', () => {
-      controller.registerWebhook({
-        url: 'https://example.com/webhook1',
-        events: ['credit_submitted'],
-      });
+  describe('getWebhook', () => {
+    it('returns a single webhook without secret', async () => {
+      const webhook = {
+        id: '1',
+        url: 'https://a.com',
+        events: ['e1'],
+        active: true,
+      };
+      mockWebhooksService.getWebhook.mockResolvedValueOnce(webhook);
 
-      const webhooks = controller.getWebhooks();
-      expect(webhooks.length).toBeGreaterThan(0);
+      const result = await controller.getWebhook('1');
+
+      expect(result).toEqual(webhook);
+    });
+
+    it('throws NotFoundException for nonexistent webhook', async () => {
+      mockWebhooksService.getWebhook.mockResolvedValueOnce(undefined);
+
+      await expect(controller.getWebhook('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('getWebhookMetrics', () => {
+    it('returns aggregated webhook metrics from the service', async () => {
+      const metrics = {
+        totalWebhooks: 3,
+        activeWebhooks: 2,
+        inactiveWebhooks: 1,
+        totalDeliveries: 10,
+        successfulDeliveries: 7,
+        failedDeliveries: 2,
+        pendingDeliveries: 1,
+        averageDeliveryLatencyMs: 123.45,
+        failureRateByEventType: {
+          credit_submitted: 0.2,
+          credit_approved: 0,
+        },
+        topFailingWebhooks: [
+          { id: 'webhook_1', url: 'https://a.com', failureCount: 2 },
+        ],
+      };
+      mockWebhooksService.getWebhookMetrics.mockResolvedValueOnce(metrics);
+
+      const result = await controller.getWebhookMetrics();
+
+      expect(mockWebhooksService.getWebhookMetrics).toHaveBeenCalledTimes(1);
+      expect(result).toEqual(metrics);
+    });
+
+    it('is guarded by admin-only access', () => {
+      const guards = Reflect.getMetadata(
+        '__guards__',
+        controller.getWebhookMetrics,
+      );
+      expect(guards).toBeDefined();
+      expect(guards.length).toBeGreaterThan(0);
     });
   });
 
   describe('deleteWebhook', () => {
-    it('should delete a webhook', () => {
-      const webhook = controller.registerWebhook({
-        url: 'https://example.com/webhook',
-        events: ['credit_submitted'],
-      });
+    it('deletes a webhook', async () => {
+      mockWebhooksService.deleteWebhook.mockResolvedValueOnce(true);
 
-      const result = controller.deleteWebhook(webhook.id);
+      const result = await controller.deleteWebhook('webhook_123');
+
       expect(result.success).toBe(true);
+      expect(mockWebhooksService.deleteWebhook).toHaveBeenCalledWith(
+        'webhook_123',
+      );
+    });
+
+    it('returns false for nonexistent webhook', async () => {
+      mockWebhooksService.deleteWebhook.mockResolvedValueOnce(false);
+
+      const result = await controller.deleteWebhook('nonexistent-id');
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('getDeliveries', () => {
+    it('forwards parsed query params to the service and returns paginated result', async () => {
+      const query = {
+        webhookId: 'webhook_123',
+        status: 'failed',
+        eventType: 'credit_submitted',
+        from: '2024-01-01T00:00:00.000Z',
+        to: '2024-01-31T23:59:59.999Z',
+        page: 2,
+        pageSize: 10,
+      };
+      const expectedResult = {
+        data: [
+          {
+            id: 'delivery_1',
+            webhookId: 'webhook_123',
+            eventType: 'credit_submitted',
+            status: 'failed',
+            attempts: 3,
+            createdAt: new Date(),
+          },
+        ],
+        total: 11,
+        page: 2,
+        pageSize: 10,
+        totalPages: 2,
+      };
+      mockWebhooksService.getDeliveries.mockResolvedValueOnce(expectedResult);
+
+      const result = await controller.getDeliveries(query);
+
+      expect(mockWebhooksService.getDeliveries).toHaveBeenCalledWith(query);
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('passes through an empty query object', async () => {
+      const expectedResult = {
+        data: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        totalPages: 0,
+      };
+      mockWebhooksService.getDeliveries.mockResolvedValueOnce(expectedResult);
+
+      const result = await controller.getDeliveries({});
+
+      expect(mockWebhooksService.getDeliveries).toHaveBeenCalledWith({});
+      expect(result).toEqual(expectedResult);
     });
   });
 });

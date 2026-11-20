@@ -34,4 +34,20 @@ describe('Request ID propagation (e2e)', () => {
       .expect(200);
     expect(res.headers['x-request-id']).toBe('caller-supplied-id');
   });
+
+  it('assigns distinct generated ids to consecutive requests', async () => {
+    const first = await request(app.getHttpServer()).get('/').expect(200);
+    const second = await request(app.getHttpServer()).get('/').expect(200);
+
+    const firstId = first.headers['x-request-id'];
+    const secondId = second.headers['x-request-id'];
+
+    expect(firstId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(secondId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(firstId).not.toBe(secondId);
+  });
 });

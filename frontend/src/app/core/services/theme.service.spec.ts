@@ -7,7 +7,18 @@ describe('ThemeService', () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.classList.remove('dark');
-    vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false } as MediaQueryList);
+
+    // Ensure matchMedia exists in the test environment.
+    const mm = window.matchMedia;
+    if (!mm) {
+      Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        value: () => ({ matches: false }) as MediaQueryList,
+      });
+    } else {
+      vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false } as MediaQueryList);
+    }
+
     TestBed.configureTestingModule({});
     service = TestBed.inject(ThemeService);
   });

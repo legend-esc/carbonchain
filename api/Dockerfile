@@ -19,6 +19,11 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 
+# Ensure the 'node' user can read the compiled output.
+RUN chmod -R 755 /app/dist
+
 EXPOSE 3000
+
+USER node
 
 CMD ["node", "dist/main"]

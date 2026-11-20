@@ -20,6 +20,9 @@ debug = false
 panic = "abort"
 lto = true
 codegen-units = 1
+# Drop the debug `name` custom section; otherwise the credit_registry WASM
+# exceeds Soroban's 128 KiB contract code size limit.
+strip = "symbols"
 
 [profile.release-with-logs]
 inherits = "release"

@@ -1,0 +1,355 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { VerifiersService } from './verifiers.service';
+import { StellarService } from '../stellar/stellar.service';
+import { StellarKeypairService } from '../stellar/stellar-keypair.service';
+import { CacheService } from '../common/cache.service';
+import { VERIFIER_REPOSITORY } from './verifier.repository';
+import { VERIFIER_APPLICATION_REPOSITORY } from './verifier-application.repository';
+import { Keypair, xdr } from '@stellar/stellar-sdk';
+
+describe('VerifiersService.approveCredit', () => {
+  let service: VerifiersService;
+  let mockStellarService: jest.Mocked<Partial<StellarService>>;
+  let mockKeypairService: jest.Mocked<Partial<StellarKeypairService>>;
+  let mockCacheService: jest.Mocked<Partial<CacheService>>;
+
+  const CONTRACT_ID = 'CABC123';
+  const VERIFIER_ADDR =
+    'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
+  const CREDIT_ID =
+    'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+
+  let signingMode = 'test';
+
+  const testKeypair = () => Keypair.random();
+
+  beforeEach(async () => {
+    mockStellarService = {
+      readContract: jest.fn(),
+      invokeContract: jest.fn(),
+      buildContractTransaction: jest.fn(),
+    };
+
+    mockKeypairService = {
+      getAdminKeypair: jest.fn(),
+    };
+
+    mockCacheService = {
+      get: jest.fn(),
+      set: jest.fn(),
+    };
+
+    mockConfigService = {
+      get: jest.fn(),
+      set: jest.fn(),
+    };
+
+    mockConfigService.get.mockImplementation((key: string) => {
+      if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return CONTRACT_ID;
+      if (key === 'VERIFIER_SIGNING_MODE') return signingMode;
+      return undefined;
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      imports: [],
+      providers: [
+        VerifiersService,
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarService, useValue: mockStellarService },
+        { provide: StellarKeypairService, useValue: mockKeypairService },
+        { provide: CacheService, useValue: mockCacheService },
+        {
+          provide: VERIFIER_REPOSITORY,
+          useValue: {
+            findAll: jest.fn().mockResolvedValue([]),
+            findByAddress: jest.fn().mockResolvedValue(null),
+            save: jest.fn(),
+            saveAll: jest.fn(),
+          },
+        },
+        {
+          provide: VERIFIER_APPLICATION_REPOSITORY,
+          useValue: {
+            findById: jest.fn().mockResolvedValue(null),
+            findByApplicant: jest.fn().mockResolvedValue(null),
+            save: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<VerifiersService>(VerifiersService);
+  });
+
+  /** Spy on listVerifiers so we don't need ScVal mocks for the verifier lookup. */
+  const spyListVerifiers = (addrs: string[]) =>
+    jest
+      .spyOn(service, 'listVerifiers')
+      .mockResolvedValue(addrs.map((a) => ({ address: a })));
+
+  /** Per-method readContract mock so the new threshold reads don't collide. */
+  const setReadMock = () => {
+    mockStellarService.readContract.mockImplementation(
+      async (_contractId: string, method: string) => {
+        if (method === 'get_nonce') {
+          return 42; // Return plain number instead of xdr.ScVal
+        }
+        if (method === 'get_required_approvals') {
+          // Default: a 1-of-N threshold (first approval is allowed).
+          return 1; // Return plain number instead of xdr.ScVal
+        }
+        if (method === 'get_approval_count') {
+          return 0; // Return plain number
+        }
+        return null;
+      },
+    );
+  };
+
+  /** Setup nonce + invokeContract mocks that succeed. */
+  const setupSuccess = () => {
+    setReadMock();
+    mockStellarService.invokeContract.mockResolvedValue({} as any);
+    mockStellarService.buildContractTransaction.mockResolvedValue(
+      'UNSIGNED_XDR',
+    );
+    mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+  };
+
+  describe('method name and nonce', () => {
+    beforeEach(() => {
+      signingMode = 'test';
+    });
+
+    it('should call invokeContract with approve_and_mint (not approve_credit)', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.invokeContract).toHaveBeenCalledTimes(1);
+      const [contractId, method, args] =
+        mockStellarService.invokeContract.mock.calls[0];
+      expect(contractId).toBe(CONTRACT_ID);
+      expect(method).toBe('approve_and_mint');
+      expect(args).toHaveLength(3);
+    });
+
+    it('should include the verifier nonce as the third argument', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      const [, , args] = mockStellarService.invokeContract.mock.calls[0];
+      // The nonce (42 from mock) should be passed as the third argument
+      expect(args[2]).toBeDefined();
+    });
+
+    it('should read the nonce with get_nonce before invoking', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      const nonceCall = mockStellarService.readContract.mock.calls.find(
+        ([, method]) => method === 'get_nonce',
+      );
+      expect(nonceCall).toBeDefined();
+      expect(nonceCall![0]).toBe(CONTRACT_ID);
+    });
+  });
+
+  describe('buildContractTransaction (client-side signing flow)', () => {
+    beforeEach(() => {
+      signingMode = 'production';
+    });
+
+    it('should call buildContractTransaction with contract id, approve_and_mint, args and verifier source account', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.buildContractTransaction).toHaveBeenCalledTimes(
+        1,
+      );
+      const [contractId, method, args, sourceAccount] =
+        mockStellarService.buildContractTransaction.mock.calls[0];
+      expect(contractId).toBe(CONTRACT_ID);
+      expect(method).toBe('approve_and_mint');
+      expect(args).toHaveLength(3);
+      expect(args[2]).toBeDefined();
+      expect(sourceAccount).toBe(VERIFIER_ADDR);
+    });
+
+    it('should return the unsigned transaction XDR from buildContractTransaction', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+      mockStellarService.buildContractTransaction.mockResolvedValue(
+        'UNSIGNED_XDR_FOR_FREIGHTER',
+      );
+
+      const result = await service.approveCredit(
+        VERIFIER_ADDR,
+        CREDIT_ID,
+        VERIFIER_ADDR,
+      );
+
+      expect(result).toBe('UNSIGNED_XDR_FOR_FREIGHTER');
+    });
+
+    it('should not sign or submit the transaction itself', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setupSuccess();
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.invokeContract).not.toHaveBeenCalled();
+      expect(mockKeypairService.getAdminKeypair).not.toHaveBeenCalled();
+    });
+
+    it('should propagate errors from buildContractTransaction', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setReadMock();
+      mockStellarService.buildContractTransaction.mockRejectedValue(
+        new Error('Simulation failed'),
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow('Simulation failed');
+    });
+  });
+
+  describe('error handling', () => {
+    beforeEach(() => {
+      signingMode = 'test';
+    });
+
+    const setupErrorMocks = () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setReadMock();
+      mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+    };
+
+    it('should map AlreadyApproved (Error 125) to ConflictException', async () => {
+      setupErrorMocks();
+      mockStellarService.invokeContract.mockRejectedValue(
+        new Error('Contract invocation failed: AlreadyApproved (Error(125))'),
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should map Error(125) to ConflictException', async () => {
+      setupErrorMocks();
+      mockStellarService.invokeContract.mockRejectedValue(
+        new Error('Transaction failed with Error(125)'),
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should map status: 125 to ConflictException', async () => {
+      setupErrorMocks();
+      mockStellarService.invokeContract.mockRejectedValue(
+        new Error('Simulation failed: status: 125'),
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should throw ForbiddenException when caller does not match verifier address', async () => {
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, 'GDIFFERENTCALLER'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should re-throw unknown errors unchanged', async () => {
+      setupErrorMocks();
+      const unknownError = new Error('Network timeout');
+      mockStellarService.invokeContract.mockRejectedValue(unknownError);
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow('Network timeout');
+    });
+
+    it('should throw NotFoundException when verifier is not registered', async () => {
+      // listVerifiers returns no verifiers
+      spyListVerifiers([]);
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('multi-sig threshold enforcement (#771)', () => {
+    beforeEach(() => {
+      signingMode = 'production';
+    });
+
+    it('should proceed to invokeContract when approval count is below threshold', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      setReadMock();
+      mockStellarService.invokeContract.mockResolvedValue({} as any);
+      mockStellarService.buildContractTransaction.mockResolvedValue(
+        'UNSIGNED_XDR',
+      );
+      mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+
+      await service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR);
+
+      expect(mockStellarService.buildContractTransaction).toHaveBeenCalledTimes(
+        1,
+      );
+    });
+
+    it('should throw BadRequestException when threshold is unconfigured (0)', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      mockStellarService.readContract.mockImplementation(
+        async (_c: string, method: string) => {
+          if (method === 'get_nonce') return 42;
+          if (method === 'get_required_approvals') return 0;
+          if (method === 'get_approval_count') return 0;
+          return null;
+        },
+      );
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw ConflictException when approval count already meets threshold', async () => {
+      spyListVerifiers([VERIFIER_ADDR]);
+      // Mock the private methods directly to avoid xdr issues
+      jest.spyOn(service, 'getRequiredApprovals').mockResolvedValue(2);
+      jest.spyOn(service, 'getCreditApprovalCount').mockResolvedValue(2);
+      mockKeypairService.getAdminKeypair.mockReturnValue(testKeypair());
+
+      await expect(
+        service.approveCredit(VERIFIER_ADDR, CREDIT_ID, VERIFIER_ADDR),
+      ).rejects.toThrow(ConflictException);
+      expect(mockStellarService.invokeContract).not.toHaveBeenCalled();
+      expect(
+        mockStellarService.buildContractTransaction,
+      ).not.toHaveBeenCalled();
+    });
+  });
+});
