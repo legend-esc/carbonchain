@@ -18,6 +18,9 @@ import { RetirementRecord } from '../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { CalculatorService } from './calculator.service';
+import { EstimateDto } from './dto/estimate.dto';
+import type { EstimateResult } from './calculator.service';
 
 export interface CertificateVerification {
   id: string;
@@ -37,7 +40,14 @@ export class RetirementController {
   constructor(
     private readonly retirementService: RetirementService,
     private readonly certificateService: CertificateService,
+    private readonly calculatorService: CalculatorService,
   ) {}
+
+  /** POST /retirement/calculator/estimate — calculate CO2e from activity inputs */
+  @Post('calculator/estimate')
+  estimate(@Body() dto: EstimateDto): EstimateResult {
+    return this.calculatorService.estimate(dto.activities as any);
+  }
 
   /** POST /retirement — protected: requires JWT */
   @UseGuards(JwtAuthGuard)
