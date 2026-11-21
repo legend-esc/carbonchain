@@ -1,0 +1,213 @@
+<section class="seller-dashboard" aria-label="Seller dashboard">
+  <header class="seller-dashboard__header">
+    <div>
+      <h1 class="seller-dashboard__title">Seller Dashboard</h1>
+    </div>
+
+    <div class="seller-dashboard__actions">
+      @if (wallet.isConnected()) {
+        <button
+          type="button"
+          class="btn btn--ghost"
+          (click)="refresh()"
+          [disabled]="loading()"
+        >
+          {{ loading() ? 'Refreshing…' : 'Refresh' }}
+        </button>
+        <a routerLink="/marketplace" class="btn btn--primary">Go to Marketplace</a>
+      } @else {
+        <button
+          type="button"
+          class="btn btn--primary"
+          (click)="connectAndLoad()"
+          [disabled]="wallet.state() === 'connecting'"
+        >
+          {{ wallet.state() === 'connecting' ? 'Connecting…' : 'Connect Wallet' }}
+        </button>
+      }
+    </div>
+  </header>
+
+  @if (error()) {
+    <div class="alert--error" role="alert">{{ error() }}</div>
+  }
+
+  @if (!wallet.isConnected()) {
+    <p class="empty-state">Connect your Stellar wallet to view your active listings, escrow, and sales analytics.</p>
+  } @else {
+    <!-- Metrics Cards -->
+    <section class="metrics-grid" aria-label="Seller metrics">
+      <article class="metric-card" tabindex="0">
+        <span class="metric-card__label">Total Active Offers</span>
+        <span class="metric-card__value">{{ totalActiveOffers() }}</span>
+        <span class="metric-card__sub">{{ offers().length }} total historical listings</span>
+      </article>
+
+      <article class="metric-card" tabindex="0">
+        <span class="metric-card__label">Escrowed Tonnes</span>
+        <span class="metric-card__value">
+          {{ escrowedTonnes() | number: '1.0-4' }} t
+        </span>
+        <span class="metric-card__sub">Locked in open marketplace offers</span>
+      </article>
+
+      <article class="metric-card" tabindex="0">
+        <span class="metric-card__label">Total Sales Volume (XLM / USDC)</span>
+        <span class="metric-card__value">
+          {{ salesVolumeXlm() | number: '1.0-2' }} XLM
+        </span>
+        <span class="metric-card__sub">
+          {{ salesVolumeUsdc() | number: '1.0-2' }} USDC · {{ filledOffers().length }} filled orders
+        </span>
+      </article>
+    </section>
+
+    <!-- Sales Breakdown Chart -->
+    <section class="panel" aria-label="Sales revenue breakdown">
+      <div class="panel__header">
+        <h2 class="panel__title">Sales Breakdown by Asset</h2>
+      </div>
+
+      <div
+        class="chart-bars"
+        role="img"
+        [attr.aria-label]="
+          'Sales volume: ' +
+          (salesVolumeXlm() | number: '1.0-2') +
+          ' XLM and ' +
+          (salesVolumeUsdc() | number: '1.0-2') +
+          ' USDC'
+        "
+      >
+        @for (point of salesBreakdown(); track point.asset) {
+          <div class="chart-row">
+            <span>{{ point.label }}</span>
+            <div class="chart-track">
+              <div
+                class="chart-fill"
+                [class.chart-fill--xlm]="point.asset === 'XLM'"
+                [class.chart-fill--usdc]="point.asset === 'USDC'"
+                [style.width.%]="point.percent"
+              ></div>
+            </div>
+            <span class="mono">
+              {{ point.volume | number: '1.0-2' }} {{ point.asset }} ({{ point.tonnes | number: '1.0-2' }} t)
+            </span>
+          </div>
+        }
+      </div>
+    </section>
+
+    <!-- Active Offer Management Table -->
+    <section class="panel" aria-label="Offer management">
+      <div class="panel__header">
+        <h2 class="panel__title">Offer Management</h2>
+        <div class="filter-tabs" role="tablist" aria-label="Filter offers by status">
+          <button
+            type="button"
+            role="tab"
+            class="tab-btn"
+            [class.tab-btn--active]="statusFilter() === 'all'"
+            [attr.aria-selected]="statusFilter() === 'all'"
+            (click)="setFilter('all')"
+          >
+            All ({{ offers().length }})
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab-btn"
+            [class.tab-btn--active]="statusFilter() === 'open'"
+            [attr.aria-selected]="statusFilter() === 'open'"
+            (click)="setFilter('open')"
+          >
+            Open ({{ activeOffers().length }})
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab-btn"
+            [class.tab-btn--active]="statusFilter() === 'filled'"
+            [attr.aria-selected]="statusFilter() === 'filled'"
+            (click)="setFilter('filled')"
+          >
+            Filled ({{ filledOffers().length }})
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab-btn"
+            [class.tab-btn--active]="statusFilter() === 'cancelled'"
+            [attr.aria-selected]="statusFilter() === 'cancelled'"
+            (click)="setFilter('cancelled')"
+          >
+            Cancelled
+          </button>
+        </div>
+      </div>
+
+      @if (loading()) {
+        <p class="empty-state" aria-live="polite">Loading seller offers…</p>
+      } @else if (filteredOffers().length === 0) {
+        <p class="empty-state">No offers found for this filter.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="offers-table">
+            <thead>
+              <tr>
+                <th scope="col">Offer</th>
+                <th scope="col">Credit</th>
+                <th scope="col">Methodology</th>
+                <th scope="col">Tonnes</th>
+                <th scope="col">Price / t</th>
+                <th scope="col">Status</th>
+                <th scope="col">Created</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (offer of filteredOffers(); track offer.id) {
+                <tr>
+                  <td class="mono">#{{ offer.id }}</td>
+                  <td class="mono">
+                    <a [routerLink]="['/credits', offer.credit_id]">
+                      {{ offer.credit_id | slice: 0 : 8 }}…
+                    </a>
+                  </td>
+                  <td>{{ offer.methodology ?? '—' }}</td>
+                  <td>{{ formatTonnes(offer.tonnes_available) }}</td>
+                  <td class="mono">{{ formatUnitPrice(offer) }}</td>
+                  <td>
+                    <span
+                      class="badge"
+                      [class.badge--open]="offer.status === 'open'"
+                      [class.badge--filled]="offer.status === 'filled'"
+                      [class.badge--cancelled]="offer.status === 'cancelled'"
+                    >
+                      {{ offer.status }}
+                    </span>
+                  </td>
+                  <td>{{ formatDate(offer.created_at) }}</td>
+                  <td>
+                    @if (offer.status === 'open') {
+                      <button
+                        type="button"
+                        class="btn btn--danger"
+                        (click)="cancelOffer(offer)"
+                        [disabled]="cancellingOfferId() === offer.id"
+                      >
+                        {{ cancellingOfferId() === offer.id ? 'Cancelling…' : 'Cancel' }}
+                      </button>
+                    } @else {
+                      <span>—</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+</section>

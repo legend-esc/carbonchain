@@ -7,6 +7,7 @@ import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RedisSequenceNumberManager } from './redis-sequence-number-manager.service';
 import { METRICS_EVENT_EMITTER } from '../metrics/metrics-events';
 import { CacheService } from '../common/cache.service';
+import { MockHorizonHarness } from '../../test/mocks/horizon.mock';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -1105,5 +1106,186 @@ describe('StellarService - sequence number integration', () => {
         service.invalidateAccountCache(ADDRESS),
       ).resolves.toBeUndefined();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MockHorizonHarness integration tests (#1379)
+// ---------------------------------------------------------------------------
+
+describe('StellarService - MockHorizonHarness integration (#1379)', () => {
+  let harness: MockHorizonHarness;
+  let service: StellarService;
+  let signerKeypair: Keypair;
+
+  beforeAll(async () => {
+    harness = new MockHorizonHarness();
+    await harness.start();
+    signerKeypair = Keypair.random();
+  });
+
+  afterAll(async () => {
+    await harness.stop();
+  });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    harness.reset();
+
+    const adapter = harness.createServerAdapter();
+    mockLoadAccount.mockImplementation(adapter.loadAccount);
+    mockFeeStats.mockImplementation(adapter.feeStats);
+    mockSubmitTransaction.mockImplementation(adapter.submitTransaction);
+
+    harness.setAccount(signerKeypair.publicKey(), {
+      sequence: '500',
+      balances: [
+        { balance: '2500.0000000', asset_type: 'native' },
+        {
+          balance: '100.0000000',
+          asset_type: 'credit_alphanum4',
+          asset_code: 'CC01',
+          asset_issuer: signerKeypair.publicKey(),
+        },
+      ],
+    });
+
+    const module = await buildModule({ HORIZON_URL: harness.url });
+    service = module.get<StellarService>(StellarService);
+    service.onModuleInit();
+  });
+
+  it('queries simulated account balances and sequence via getAccountInfo', async () => {
+    const account = await service.getAccountInfo(signerKeypair.publicKey());
+
+    expect(account.sequence).toBe('500');
+    expect(account.balances).toHaveLength(2);
+    expect(account.balances[0].balance).toBe('2500.0000000');
+  });
+
+  it('uses simulated fee stats when building a transaction', async () => {
+    harness.setFeeStats({
+      fee_charged: {
+        max: '5000',
+        min: '100',
+        mode: '300',
+        p10: '100',
+        p20: '150',
+        p30: '200',
+        p40: '250',
+        p50: '350',
+        p60: '400',
+        p70: '500',
+        p80: '700',
+        p90: '1000',
+        p95: '2000',
+        p99: '5000',
+      },
+    });
+    mockSimulateTransaction.mockResolvedValue({
+      transactionData: 'AAAAAA==',
+      minResourceFee: '1000',
+      result: { retval: 'ok' },
+    });
+
+    const xdr = await service.buildContractTransaction(
+      'CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526',
+      'approve_credit',
+      [],
+      signerKeypair.publicKey(),
+    );
+
+    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+      TransactionBuilder: typeof TransactionBuilder;
+    };
+    const tx = actual.TransactionBuilder.fromXDR(
+      xdr,
+      service.getNetworkPassphrase(),
+    );
+    // p50 (350) + minResourceFee (1000) -> ceil(1350 * 1.1) = 1485
+    expect(tx.fee).toBe('1485');
+  });
+
+  it('submits a signed transaction and records it in MockHorizonHarness', async () => {
+    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+      TransactionBuilder: typeof TransactionBuilder;
+      Operation: typeof Operation;
+    };
+    const tx = new actual.TransactionBuilder(
+      {
+        accountId: () => signerKeypair.publicKey(),
+        sequenceNumber: () => '500',
+        incrementSequenceNumber: () => {},
+      },
+      {
+        fee: '100',
+        networkPassphrase: service.getNetworkPassphrase(),
+      },
+    )
+      .addOperation(actual.Operation.setOptions({}))
+      .setTimeout(30)
+      .build();
+    tx.sign(signerKeypair);
+
+    const res = await service.submitTransaction(tx.toXDR());
+    expect(res.successful).toBe(true);
+    expect(res.hash).toMatch(/^mock_horizon_tx_hash_/);
+    expect(harness.getSubmittedTransactions()).toHaveLength(1);
+  });
+
+  it('retries on tx_bad_seq and succeeds on the subsequent attempt', async () => {
+    harness.queueTransactionError('tx_bad_seq');
+
+    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+      TransactionBuilder: typeof TransactionBuilder;
+      Operation: typeof Operation;
+    };
+    const tx = new actual.TransactionBuilder(
+      {
+        accountId: () => signerKeypair.publicKey(),
+        sequenceNumber: () => '500',
+        incrementSequenceNumber: () => {},
+      },
+      {
+        fee: '100',
+        networkPassphrase: service.getNetworkPassphrase(),
+      },
+    )
+      .addOperation(actual.Operation.setOptions({}))
+      .setTimeout(30)
+      .build();
+    tx.sign(signerKeypair);
+
+    const res = await service.submitTransaction(tx.toXDR());
+    expect(res.successful).toBe(true);
+    expect(mockSubmitTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates tx_insufficient_balance without masking the Horizon error', async () => {
+    harness.queueTransactionError('tx_insufficient_balance');
+
+    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+      TransactionBuilder: typeof TransactionBuilder;
+      Operation: typeof Operation;
+    };
+    const tx = new actual.TransactionBuilder(
+      {
+        accountId: () => signerKeypair.publicKey(),
+        sequenceNumber: () => '500',
+        incrementSequenceNumber: () => {},
+      },
+      {
+        fee: '100',
+        networkPassphrase: service.getNetworkPassphrase(),
+      },
+    )
+      .addOperation(actual.Operation.setOptions({}))
+      .setTimeout(30)
+      .build();
+    tx.sign(signerKeypair);
+
+    await expect(service.submitTransaction(tx.toXDR())).rejects.toThrow(
+      /tx_insufficient_balance/,
+    );
   });
 });

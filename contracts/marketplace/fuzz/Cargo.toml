@@ -1,0 +1,24 @@
+[package]
+name = "carbonchain-marketplace-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+soroban-sdk = { version = "=26.0.1", features = ["testutils"] }
+carbonchain-marketplace = { path = ".." }
+carbonchain-credit-registry = { path = "../../credit_registry", features = ["testutils"] }
+
+[[bin]]
+name = "offer_matching"
+path = "fuzz_targets/offer_matching.rs"
+test = false
+doc = false
+bench = false
