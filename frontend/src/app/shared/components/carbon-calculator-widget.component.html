@@ -1,0 +1,97 @@
+<section class="calc-widget" aria-labelledby="calc-widget-title">
+  <header class="calc-widget__header">
+    <div>
+      <h2 id="calc-widget-title" class="calc-widget__title">Carbon Footprint Calculator</h2>
+      <p class="calc-widget__subtitle">
+        Estimate your annual emissions and offset them in one click.
+      </p>
+    </div>
+
+    <div class="calc-widget__tabs" role="group" aria-label="Calculator profile">
+      <button
+        type="button"
+        class="calc-tab"
+        [class.calc-tab--active]="profile() === 'individual'"
+        (click)="setProfile('individual')"
+      >
+        Individual
+      </button>
+      <button
+        type="button"
+        class="calc-tab"
+        [class.calc-tab--active]="profile() === 'smb'"
+        (click)="setProfile('smb')"
+      >
+        SMB
+      </button>
+    </div>
+  </header>
+
+  <div class="calc-sliders">
+    <div class="calc-slider">
+      <div class="calc-slider__top">
+        <label for="calc-energy">Home / Office Energy</label>
+        <span class="calc-slider__val">{{ homeEnergyKwh() | number }} kWh/mo</span>
+      </div>
+      <input
+        id="calc-energy"
+        type="range"
+        min="0"
+        [max]="profile() === 'smb' ? 10000 : 3000"
+        step="25"
+        [ngModel]="homeEnergyKwh()"
+        (ngModelChange)="homeEnergyKwh.set(+$event)"
+      />
+      <span class="calc-slider__sub">≈ {{ energyTonnes() | number: '1.2-2' }} t CO₂e/yr</span>
+    </div>
+
+    <div class="calc-slider">
+      <div class="calc-slider__top">
+        <label for="calc-flights">Flights</label>
+        <span class="calc-slider__val">{{ flightHoursYr() | number }} hours/yr</span>
+      </div>
+      <input
+        id="calc-flights"
+        type="range"
+        min="0"
+        [max]="profile() === 'smb' ? 500 : 150"
+        step="1"
+        [ngModel]="flightHoursYr()"
+        (ngModelChange)="flightHoursYr.set(+$event)"
+      />
+      <span class="calc-slider__sub">≈ {{ flightsTonnes() | number: '1.2-2' }} t CO₂e/yr</span>
+    </div>
+
+    <div class="calc-slider">
+      <div class="calc-slider__top">
+        <label for="calc-commute">Commute</label>
+        <span class="calc-slider__val">{{ commuteKmWk() | number }} km/wk</span>
+      </div>
+      <input
+        id="calc-commute"
+        type="range"
+        min="0"
+        [max]="profile() === 'smb' ? 5000 : 1000"
+        step="10"
+        [ngModel]="commuteKmWk()"
+        (ngModelChange)="commuteKmWk.set(+$event)"
+      />
+      <span class="calc-slider__sub">≈ {{ commuteTonnes() | number: '1.2-2' }} t CO₂e/yr</span>
+    </div>
+  </div>
+
+  <footer class="calc-widget__footer">
+    <div class="calc-total">
+      <span class="calc-total__label">Estimated Annual Footprint</span>
+      <span class="calc-total__value" aria-live="polite">
+        {{ totalTonnes() | number: '1.2-2' }} t CO₂e
+      </span>
+    </div>
+
+    @if (showRetireButton()) {
+      <button type="button" class="calc-retire-btn" (click)="onRetireOffset()">
+        Retire This Offset ({{ recommendedTonnes() | number: '1.1-1' }} t)
+      </button>
+    }
+  </footer>
+</section>

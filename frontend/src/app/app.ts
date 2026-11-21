@@ -9,6 +9,7 @@ import { TranslatePipe } from './core/pipes/translate.pipe';
 import { ToastComponent } from './shared/components/toast.component';
 import { OnlineStatusService } from './core/services/online-status.service';
 import { InstallPromptComponent } from './core/components/install-prompt.component';
+import { TxStatusModalComponent } from './core/components/tx-status-modal.component';
 import { PwaInstallService } from './core/services/pwa-install.service';
 
 @Component({
@@ -23,6 +24,7 @@ import { PwaInstallService } from './core/services/pwa-install.service';
     TranslatePipe,
     ToastComponent,
     InstallPromptComponent,
+    TxStatusModalComponent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.css',
