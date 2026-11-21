@@ -20,6 +20,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+*.log
+
+# Local environment files — never commit secrets
+.env.*
+!.env.example
 
 # ── Rust / Soroban ────────────────────────────────────────────────────────────
 target/
@@ -142,3 +147,17 @@ Desktop.ini
 # Lighthouse CI reports
 .lighthouseci/
 lhci_reports/
+
+# ── Markdown implementation notes (generated during dev) ──────────────────────
+BATCH_*.md
+FEATURES_IMPLEMENTED.md
+IMPLEMENTATION_SUMMARY.md
+PR_CHECKLIST.md
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Claude AI tooling ─────────────────────────────────────────────────────────
+.claude/

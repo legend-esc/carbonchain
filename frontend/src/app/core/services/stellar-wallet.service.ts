@@ -16,10 +16,34 @@ interface FreighterApi {
   getNetworkDetails(): Promise<{ network: string; networkPassphrase: string }>;
 }
 
+interface XBullApi {
+  connect(): Promise<{ publicKey: string }>;
+  sign(params: { xdr: string; networkPassphrase?: string }): Promise<{ signedXDR: string }>;
+  getPublicKey(): Promise<string>;
+}
+
+interface AlbedoApi {
+  publicKey(params?: object): Promise<{ pubkey: string; network: string }>;
+  tx(params: { xdr: string; network?: string; submit?: boolean }): Promise<{ signed_envelope_xdr: string; network: string }>;
+}
+
 declare global {
   interface Window {
     freighter?: FreighterApi;
+    xBull?: XBullApi;
+    albedo?: AlbedoApi;
   }
+}
+
+export type WalletProvider = 'freighter' | 'xbull' | 'albedo' | 'lobstr';
+
+export interface WalletAdapter {
+  id: WalletProvider;
+  name: string;
+  isInstalled(): boolean;
+  installUrl: string;
+  connect(): Promise<{ publicKey: string; network: string }>;
+  signTransaction(xdr: string, networkPassphrase?: string): Promise<string>;
 }
 
 export type WalletState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -31,6 +55,7 @@ export type WalletNetwork = 'testnet' | 'mainnet';
 // actually on.
 const STORAGE_ADDRESS_KEY = 'cc_wallet_address';
 const STORAGE_NETWORK_KEY = 'cc_wallet_network';
+const STORAGE_PROVIDER_KEY = 'cc_wallet_provider';
 
 /**
  * Issue #960 — Freighter can hang (locked extension, dead RPC) without ever
@@ -49,6 +74,7 @@ export class StellarWalletService {
   private readonly _expectedNetwork = signal<string>('testnet');
   private readonly _network = signal<WalletNetwork | null>(this.loadStoredNetwork());
   private readonly _networkMismatch = signal<boolean>(false);
+  private readonly _selectedProvider = signal<WalletProvider>(this.loadStoredProvider());
 
   private readonly _networkChanged$ = new Subject<WalletNetwork | null>();
   private readonly _addressChanged$ = new Subject<string | null>();
@@ -70,6 +96,8 @@ export class StellarWalletService {
   readonly network = this._network.asReadonly();
   /** True when Freighter's live network no longer matches the persisted `network`. */
   readonly networkMismatch = this._networkMismatch.asReadonly();
+  /** Currently selected wallet provider. */
+  readonly selectedProvider = this._selectedProvider.asReadonly();
 
   /**
    * Issue #965 — emits whenever the network changes (including to `null` on
@@ -321,6 +349,134 @@ export class StellarWalletService {
   }
 
   /**
+   * Returns all supported wallet adapters with live isInstalled() checks.
+   */
+  getAvailableAdapters(): WalletAdapter[] {
+    // Capture `this` for use in adapter closures.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
+
+    const freighterAdapter: WalletAdapter = {
+      id: 'freighter',
+      name: 'Freighter',
+      installUrl: 'https://freighter.app',
+      isInstalled: () => typeof window !== 'undefined' && !!window.freighter,
+      async connect() {
+        const connected = await window.freighter!.isConnected();
+        if (!connected) {
+          throw new WalletError(
+            'Freighter is not connected. Please unlock your wallet.',
+            'userRejected',
+          );
+        }
+        const publicKey = await window.freighter!.getPublicKey();
+        const { network } = await window.freighter!.getNetworkDetails();
+        return { publicKey, network };
+      },
+      async signTransaction(xdr: string, networkPassphrase?: string) {
+        return window.freighter!.signTransaction(xdr, { networkPassphrase });
+      },
+    };
+
+    const xbullAdapter: WalletAdapter = {
+      id: 'xbull',
+      name: 'xBull',
+      installUrl: 'https://xbull.app',
+      isInstalled: () => typeof window !== 'undefined' && !!window.xBull,
+      async connect() {
+        const result = await window.xBull!.connect();
+        return { publicKey: result.publicKey, network: 'testnet' };
+      },
+      async signTransaction(xdr: string, networkPassphrase?: string) {
+        const result = await window.xBull!.sign({ xdr, networkPassphrase });
+        return result.signedXDR;
+      },
+    };
+
+    const albedoAdapter: WalletAdapter = {
+      id: 'albedo',
+      name: 'Albedo',
+      installUrl: 'https://albedo.link',
+      isInstalled: () => typeof window !== 'undefined' && !!window.albedo,
+      async connect() {
+        const result = await window.albedo!.publicKey();
+        return { publicKey: result.pubkey, network: result.network ?? 'testnet' };
+      },
+      async signTransaction(xdr: string, networkPassphrase?: string) {
+        const result = await window.albedo!.tx({ xdr, network: networkPassphrase, submit: false });
+        return result.signed_envelope_xdr;
+      },
+    };
+
+    const lobstrAdapter: WalletAdapter = {
+      id: 'lobstr',
+      name: 'Lobstr',
+      installUrl: 'https://lobstr.co',
+      isInstalled: () => false,
+      async connect() {
+        throw new WalletError(
+          'Lobstr WalletConnect is not yet available in-browser. Install the Lobstr app.',
+          'unsupported',
+        );
+      },
+      async signTransaction(_xdr: string, _networkPassphrase?: string) {
+        throw new WalletError(
+          'Lobstr WalletConnect is not yet available in-browser. Install the Lobstr app.',
+          'unsupported',
+        );
+      },
+    };
+
+    return [freighterAdapter, xbullAdapter, albedoAdapter, lobstrAdapter];
+  }
+
+  /**
+   * Connect using a specific wallet provider.
+   * Sets the selected provider, establishes the connection, and persists the session.
+   */
+  async connectWithProvider(provider: WalletProvider): Promise<string> {
+    this._selectedProvider.set(provider);
+    this.persistProvider(provider);
+
+    if (provider === 'freighter') {
+      return this.connect();
+    }
+
+    this._state.set('connecting');
+    this._error.set(null);
+
+    try {
+      const adapters = this.getAvailableAdapters();
+      const adapter = adapters.find((a) => a.id === provider);
+      if (!adapter) {
+        throw new WalletError(`Unsupported wallet provider: ${provider}`, 'unsupported');
+      }
+
+      if (provider === 'lobstr') {
+        throw new WalletError(
+          'Lobstr WalletConnect is not yet available in-browser. Install the Lobstr app.',
+          'unsupported',
+        );
+      }
+
+      const { publicKey, network } = await adapter.connect();
+      const walletNetwork = this.mapNetwork(network);
+
+      this.setAddress(publicKey);
+      this.setNetwork(walletNetwork);
+      this._networkMismatch.set(false);
+      this._state.set('connected');
+      this.persistSession(publicKey, walletNetwork);
+      return publicKey;
+    } catch (err) {
+      const walletError = normalizeWalletError(err);
+      this._error.set(walletError.message);
+      this._state.set('error');
+      throw walletError;
+    }
+  }
+
+  /**
    * Clears any network-scoped cached data and disconnects the wallet.
    *
    * Emits on `networkChanged$` / `addressChanged$` / `scopeChanged$` so
@@ -389,10 +545,16 @@ export class StellarWalletService {
     localStorage.setItem(STORAGE_NETWORK_KEY, network);
   }
 
+  private persistProvider(provider: WalletProvider): void {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_PROVIDER_KEY, provider);
+  }
+
   private clearPersistedSession(): void {
     if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(STORAGE_ADDRESS_KEY);
     localStorage.removeItem(STORAGE_NETWORK_KEY);
+    localStorage.removeItem(STORAGE_PROVIDER_KEY);
   }
 
   private loadStoredAddress(): string | null {
@@ -404,6 +566,15 @@ export class StellarWalletService {
     if (typeof localStorage === 'undefined') return null;
     const stored = localStorage.getItem(STORAGE_NETWORK_KEY);
     return stored === 'mainnet' || stored === 'testnet' ? stored : null;
+  }
+
+  private loadStoredProvider(): WalletProvider {
+    if (typeof localStorage === 'undefined') return 'freighter';
+    const stored = localStorage.getItem(STORAGE_PROVIDER_KEY);
+    const valid: WalletProvider[] = ['freighter', 'xbull', 'albedo', 'lobstr'];
+    return valid.includes(stored as WalletProvider)
+      ? (stored as WalletProvider)
+      : 'freighter';
   }
 }
 

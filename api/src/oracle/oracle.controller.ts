@@ -11,6 +11,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Sse,
+  MessageEvent,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
@@ -30,11 +32,42 @@ import {
 } from './oracle.service';
 import { AdminGuard } from '../admin/admin.guard';
 import { WebhookIpAllowlistGuard } from '../webhooks/webhook-ip-allowlist.guard';
+import { Observable } from 'rxjs';
 
 @ApiTags('oracle')
 @Controller('oracle')
 export class OracleController {
   constructor(private readonly oracleService: OracleService) {}
+
+  // ── Issue #1318: SSE live MRV stream per project ─────────────────────────────
+
+  /**
+   * GET /oracle/projects/:id/stream
+   *
+   * Server-Sent Events endpoint that streams live MRV readings for a project.
+   *
+   * - Emits a `MessageEvent` with `data: MrvDataPoint` each time a new MRV
+   *   reading is ingested for the project via `POST /oracle/mrv`.
+   * - Emits a keep-alive ping every 15 seconds (`type: 'ping'`, `data: ':ping'`)
+   *   so proxies and browsers do not close idle connections.
+   *
+   * Clients using the browser `EventSource` API reconnect automatically on
+   * disconnect.  No authentication is required (public read endpoint).
+   *
+   * Issue #1318
+   */
+  @ApiOperation({
+    summary:
+      'Stream live MRV readings for a project via Server-Sent Events (Issue #1318)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'SSE stream — emits MrvDataPoint on each new reading',
+  })
+  @Sse('projects/:id/stream')
+  streamProject(@Param('id') id: string): Observable<MessageEvent> {
+    return this.oracleService.streamProject(id);
+  }
 
   // ── Issue #1169: Health/Status endpoint (public) ─────────────────────────────
 

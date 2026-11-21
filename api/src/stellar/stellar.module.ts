@@ -6,6 +6,7 @@ import { StellarKeypairService } from './stellar-keypair.service';
 import { SequenceNumberManager } from './sequence-number-manager.service';
 import { RedisSequenceNumberManager } from './redis-sequence-number-manager.service';
 import { AccountCacheInvalidationService } from './account-cache-invalidation.service';
+import { RpcCircuitBreakerService } from './rpc-circuit-breaker.service';
 
 /**
  * Issue #914 — StellarModule now provides both the in-memory SequenceNumberManager
@@ -19,6 +20,9 @@ import { AccountCacheInvalidationService } from './account-cache-invalidation.se
  *
  * CacheModule is declared as a global module in AppModule, so CacheService
  * is already available for injection here without re-importing CacheModule.
+ *
+ * Issue #1319 — RpcCircuitBreakerService is provided here and exported so that
+ * any module importing StellarModule can inject it for health/metrics purposes.
  */
 @Module({
   imports: [ConfigModule, CacheModule],
@@ -31,6 +35,8 @@ import { AccountCacheInvalidationService } from './account-cache-invalidation.se
     RedisSequenceNumberManager,
     // Issue #1180 — Redis-backed account cache invalidation for multi-instance deployments.
     AccountCacheInvalidationService,
+    // Issue #1319 — Horizon RPC circuit breaker with health-check probing.
+    RpcCircuitBreakerService,
     StellarService,
   ],
   exports: [
@@ -39,6 +45,8 @@ import { AccountCacheInvalidationService } from './account-cache-invalidation.se
     SequenceNumberManager,
     RedisSequenceNumberManager,
     AccountCacheInvalidationService,
+    // Issue #1319
+    RpcCircuitBreakerService,
   ],
 })
 export class StellarModule {}
