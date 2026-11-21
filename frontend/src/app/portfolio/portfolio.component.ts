@@ -6,6 +6,7 @@ import { CreditMetadata, CreditStatus, RetirementRecord, TONNES_SCALE } from '@s
 import { CreditStore } from '../core/store/credit.store';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
+import { TableSkeletonComponent } from '../shared/components/table-skeleton.component';
 
 // ── Chart helpers ─────────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 @Component({
   selector: 'app-portfolio',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, TableSkeletonComponent],
   template: `
     <div class="portfolio">
       <h1>Portfolio Analytics</h1>
@@ -132,7 +133,12 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
       @if (!wallet.publicKey()) {
         <p class="status">Connect your wallet to view your portfolio analytics.</p>
       } @else if (loading()) {
-        <p class="status">Loading portfolio data…</p>
+        <!-- issue #1354: shimmer skeleton while credits load -->
+        <app-table-skeleton
+          [rows]="5"
+          [columns]="portfolioSkeletonCols"
+          label="Loading portfolio data…"
+        />
       } @else if (loadError()) {
         <p class="alert alert--error">{{ loadError() }}</p>
       } @else {
@@ -458,6 +464,9 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 export class PortfolioComponent implements OnInit {
   protected readonly wallet = inject(StellarWalletService);
   protected readonly store = inject(CreditStore);
+
+  /** Column widths for the loading skeleton — represent Credit ID, Methodology, Vintage, Tonnes, Status. */
+  readonly portfolioSkeletonCols = ['wide', 'normal', 'narrow', 'narrow', 'narrow'] as const;
   private readonly api = inject(ApiService);
 
   // ── State ──────────────────────────────────────────────────────────────────
