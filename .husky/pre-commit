@@ -1,1 +1,8 @@
 npx --no -- lint-staged
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --config .gitleaks.toml --redact
+else
+  echo "Warning: gitleaks is not installed — secrets scanning was skipped. CI will catch any leaks."
+  exit 0
+fi

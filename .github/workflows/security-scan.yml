@@ -61,3 +61,18 @@ jobs:
       - name: Run npm audit (--audit-level=high) on ${{ matrix.package }}
         working-directory: ${{ matrix.package }}
         run: npm audit --audit-level=high
+
+  gitleaks:
+    name: Gitleaks Secrets Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@2f9f4b0a5f552d1d48e61df7c48c5b5e39d6a78d # v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: false
