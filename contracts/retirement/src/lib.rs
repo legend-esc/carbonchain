@@ -394,6 +394,9 @@ impl Retirement {
         }
         .publish(&env);
 
+        // Issue #1288: Mint SBT badge for retirement proof (non-transferable)
+        Self::mint_sbt_badge(&env, &buyer, &retirement_id)?;
+
         Ok(retirement_id)
     }
 

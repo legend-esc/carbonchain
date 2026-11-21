@@ -75,6 +75,12 @@ pub struct CreditMetadata {
     pub ipfs_hash: String,
     pub status: CreditStatus,
     pub issued_at: u64,
+    /// Issue #1287: Project developer/indigenous community royalty address
+    /// Receives creator royalties on secondary market trades
+    pub developer_address: Option<Address>,
+    /// Issue #1287: Royalty percentage in basis points (100 = 1%, max 1000 = 10%)
+    /// Applied to marketplace secondary trades to benefit local developers
+    pub developer_royalty_bps: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

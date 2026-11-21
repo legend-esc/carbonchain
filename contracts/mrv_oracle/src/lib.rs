@@ -483,12 +483,15 @@ impl MrvOracle {
             Self::resolve_threshold(&env, &project_id, &registry_id, &credits.get(0).unwrap())?;
         let (anomaly, prev_tonnes) = Self::detect_anomaly(&env, &project_id, tonnes, threshold)?;
 
+        // Issue #1285: Sliding-window variance check to detect slow data tampering
+        let window_variance_exceeded = Self::check_sliding_window_variance(&env, &project_id, tonnes, threshold)?;
+
         let point = MrvDataPoint {
             oracle: oracle.clone(),
             project_id: project_id.clone(),
             tonnes,
             recorded_at: timestamp,
-            anomaly,
+            anomaly: anomaly || window_variance_exceeded,
         };
 
         env.storage()
@@ -900,6 +903,47 @@ impl MrvOracle {
                 Ok((diff_times_10000 > prev_times_threshold, p.tonnes))
             }
         }
+    }
+
+    /// Issue #1285: Sliding-window variance check
+    /// Detects slow data tampering by computing moving average of last 5 readings
+    /// and verifying new reading doesn't exceed window variance limits (20% of moving average)
+    fn check_sliding_window_variance(
+        env: &Env,
+        project_id: &String,
+        new_tonnes: i128,
+        threshold_bps: u32,
+    ) -> Result<bool, OracleError> {
+        let history: Vec<MrvDataPoint> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::History(project_id.clone()))
+            .unwrap_or_else(|| Vec::new(env));
+
+        // Need at least 5 historical readings to perform variance check
+        if history.len() < 5 {
+            return Ok(false);
+        }
+
+        // Get last 5 readings
+        let start = if history.len() >= 5 { history.len() - 5 } else { 0 };
+        let last_five: Vec<i128> = (start..history.len())
+            .map(|i| history.get(i as u32).unwrap().tonnes)
+            .collect();
+
+        // Compute moving average
+        let sum: i128 = last_five.iter().fold(0i128, |acc, &x| acc.saturating_add(x));
+        let moving_avg = sum / 5;
+
+        // Check if new reading exceeds 20% variance from moving average
+        // threshold_bps is already in basis points (e.g., 2000 = 20%)
+        let tolerance = moving_avg
+            .checked_mul(threshold_bps as i128)
+            .ok_or(OracleError::Overflow)?
+            / 10000;
+
+        let diff = (new_tonnes - moving_avg).abs();
+        Ok(diff > tolerance)
     }
 }
 
