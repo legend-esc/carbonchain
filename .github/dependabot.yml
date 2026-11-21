@@ -6,11 +6,13 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    open-pull-requests-limit: 10
     reviewers:
       - "carbonchain/maintainers"
     labels:
       - "dependencies"
       - "infrastructure"
+      - "security"
 
   # NestJS API
   - package-ecosystem: "npm"
@@ -18,11 +20,18 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
     reviewers:
       - "carbonchain/maintainers"
     labels:
       - "dependencies"
       - "infrastructure"
+      - "security"
 
   # Angular frontend
   - package-ecosystem: "npm"
@@ -30,11 +39,18 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
     reviewers:
       - "carbonchain/maintainers"
     labels:
       - "dependencies"
       - "infrastructure"
+      - "security"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -42,6 +58,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    open-pull-requests-limit: 5
     reviewers:
       - "carbonchain/maintainers"
     labels:
