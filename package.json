@@ -1,6 +1,6 @@
 {
   "name": "carbonchain",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Transparent, tamper-proof carbon credit registry on Stellar",
   "author": "weare",
