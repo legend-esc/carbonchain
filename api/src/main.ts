@@ -15,6 +15,7 @@ async function bootstrap() {
     logger: false,
   });
   app.useLogger(new PinoNestLogger());
+  app.flushLogs();
 
   // #45 — security headers
   app.use(helmet());
@@ -178,5 +179,8 @@ function buildSwaggerPlaygroundScript(token: string): string {
 bootstrap().catch((error) => {
   // Route startup failures through Pino so they are emitted as structured
   // JSON (with redaction) rather than plain console.error output.
-  new PinoNestLogger().error(error, 'Bootstrap failed');
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+  new PinoNestLogger().error(message, stack, 'Bootstrap');
+  process.exit(1);
 });
