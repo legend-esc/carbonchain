@@ -53,6 +53,8 @@ pub struct RetirementRecord {
     /// credit metadata at retirement time to enable complete provenance on
     /// the certificate without a secondary registry lookup.
     pub vintage_year: u32,
+    /// Issue #1277 — SHA256 fingerprint of retirement data for on-chain verification
+    pub certificate_fingerprint: Option<BytesN<32>>,
 }
 
 #[derive(Clone)]

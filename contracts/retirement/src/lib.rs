@@ -400,38 +400,39 @@ impl Retirement {
         Ok(retirement_id)
     }
 
-    /// Issue #1288: Mint a Soulbound Token (SBT) badge for retirement
-    /// SBT is non-transferable and proves the holder retired carbon credits
-    /// Stored as a list of retirement IDs per address in persistent storage
-    fn mint_sbt_badge(env: &Env, owner: &Address, retirement_id: &BytesN<32>) -> Result<(), RetirementError> {
-        let mut badges: Vec<BytesN<32>> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SBTBadges(owner.clone()))
-            .unwrap_or_else(|| Vec::new(env));
+    /// Issue #1282: Retire a partial amount of a credit (with auto-split)
+    /// Automatically splits the credit if necessary, retires the requested portion,
+    /// and leaves the remainder in the caller's possession.
+    pub fn retire_partial(
+        env: Env,
+        buyer: Address,
+        credit_id: BytesN<32>,
+        tonnes_to_retire: i128,
+        reason: String,
+        nonce: u64,
+    ) -> Result<BytesN<32>, RetirementError> {
+        let registry_id = Self::get_registry(&env);
 
-        // Add retirement ID to owner's badge collection
-        badges.push_back(retirement_id.clone());
+        // Call split_credit to split if needed
+        let _split_result: (BytesN<32>, BytesN<32>) = env
+            .try_invoke_contract(
+                &registry_id,
+                &Symbol::new(&env, "split_credit"),
+                (credit_id.clone(), tonnes_to_retire).into_val(&env),
+            )
+            .map_err(|_| RetirementError::InvalidRegistry)?;
 
-        // Store updated badges (non-transferable by design - can only read by owner)
-        env.storage()
-            .persistent()
-            .set(&DataKey::SBTBadges(owner.clone()), &badges);
-
-        // Extend TTL to ensure SBT badge persists
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::SBTBadges(owner.clone()), MIN_TTL, MIN_TTL);
-
-        Ok(())
-    }
-
-    /// Issue #1288: Query SBT badges for an address (read-only, proves ownership)
-    pub fn get_sbt_badges(env: Env, owner: Address) -> Vec<BytesN<32>> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::SBTBadges(&owner))
-            .unwrap_or_else(|| Vec::new(&env))
+        // Now retire the split portion
+        Self::retire(
+            env,
+            buyer,
+            credit_id,
+            tonnes_to_retire,
+            reason,
+            None,
+            registry_id,
+            nonce,
+        )
     }
 
     /// Retire multiple carbon credits in a single transaction with partial-success mode.
@@ -936,6 +937,45 @@ impl Retirement {
         env.storage()
             .persistent()
             .get(&DataKey::CertificateHash(retirement_id))
+    }
+
+    /// Compute SHA256 fingerprint for retirement certificate verification
+    pub fn compute_certificate_fingerprint(
+        env: Env,
+        retirement_id: BytesN<32>,
+    ) -> Result<BytesN<32>, RetirementError> {
+        let key = DataKey::Retirement(retirement_id);
+        let mut record: RetirementRecord = env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RetirementError::NotFound)?;
+
+        let mut hasher_input = Vec::new();
+        hasher_input.push_back(record.buyer.to_xdr(&env).into());
+        hasher_input.push_back(record.tonnes_retired.to_xdr(&env).into());
+        hasher_input.push_back(record.credit_id.to_xdr(&env).into());
+        hasher_input.push_back(record.retired_at.to_xdr(&env).into());
+
+        let fingerprint = env.crypto().sha256(&hasher_input);
+        record.certificate_fingerprint = Some(fingerprint);
+        env.storage().persistent().set(&key, &record);
+
+        Ok(fingerprint)
+    }
+
+    /// Verify retirement certificate fingerprint
+    pub fn verify_certificate_fingerprint(
+        env: Env,
+        retirement_id: BytesN<32>,
+        fingerprint: BytesN<32>,
+    ) -> Result<bool, RetirementError> {
+        let key = DataKey::Retirement(retirement_id);
+        let record: RetirementRecord = env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(RetirementError::NotFound)?;
+
+        Ok(record.certificate_fingerprint.map(|fp| fp == fingerprint).unwrap_or(false))
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────

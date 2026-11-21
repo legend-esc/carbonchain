@@ -1,0 +1,87 @@
+<div class="ipfs-viewer">
+  <div class="viewer-header">
+    <div class="viewer-title-group">
+      <h3>{{ title() }}</h3>
+      <a
+        class="gateway-link"
+        [href]="documentUrl()"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Open on IPFS Gateway ({{ cid() | slice: 0 : 16 }}…)
+      </a>
+    </div>
+
+    <div class="verification-status" aria-live="polite">
+      @switch (status()) {
+        @case ('downloading') {
+          <span class="badge badge--pending">Downloading from IPFS…</span>
+        }
+        @case ('hashing') {
+          <span class="badge badge--pending">Computing SHA-256…</span>
+        }
+        @case ('verified') {
+          <span class="badge badge--verified" role="status">
+            ✓ Cryptographically Verified
+          </span>
+        }
+        @case ('mismatch') {
+          <span class="badge badge--mismatch" role="alert">
+            ✕ Hash Mismatch
+          </span>
+        }
+        @case ('error') {
+          <span class="badge badge--error" role="alert">
+            ⚠ Verification Failed
+          </span>
+        }
+      }
+    </div>
+  </div>
+
+  <dl class="hash-details">
+    <dt>On-Chain SHA-256</dt>
+    <dd class="mono">{{ normalizedExpectedHash() }}</dd>
+
+    @if (computedHash(); as actual) {
+      <dt>Computed SHA-256</dt>
+      <dd class="mono">{{ actual }}</dd>
+    }
+
+    @if (fileSizeBytes(); as size) {
+      <dt>Document Size</dt>
+      <dd>{{ formatBytes(size) }}</dd>
+    }
+  </dl>
+
+  @if (status() === 'mismatch') {
+    <div class="alert alert--mismatch" role="alert">
+      <strong>Security Warning:</strong> The document retrieved from the IPFS gateway does not match
+      the cryptographic hash anchored on the Stellar contract. Do not rely on this preview.
+    </div>
+  } @else if (status() === 'error') {
+    <div class="alert alert--error" role="alert">
+      <p>{{ errorMessage() }}</p>
+      <button class="btn-retry" type="button" (click)="verifyAndPreview()">Retry</button>
+    </div>
+  } @else if (status() === 'verified' && previewUrl(); as safeUrl) {
+    <div class="preview-container">
+      @if (isPdf()) {
+        <iframe
+          class="preview-frame"
+          [src]="safeUrl"
+          [title]="title()"
+        ></iframe>
+      } @else if (isImage()) {
+        <img class="preview-image" [src]="safeUrl" [alt]="title()" />
+      } @else {
+        <div class="preview-download">
+          <p>Preview is not available for this file type ({{ contentType() || 'binary' }}).</p>
+          <a class="btn-download" [href]="safeUrl" [download]="cid()">
+            Download Verified Document
+          </a>
+        </div>
+      }
+    </div>
+  }
+</div>
