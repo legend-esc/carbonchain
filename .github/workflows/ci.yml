@@ -341,7 +341,16 @@ jobs:
       # #48 — run unit tests
       - name: Run Unit Tests
         run: cd api && npm run test
-      # #48 — run e2e tests with postgres available
+      # #1365 — start local Stellar standalone container for offline deterministic E2E tests
+      - name: Start local Stellar standalone container
+        run: |
+          docker run -d --name stellar-quickstart \
+            -p 8000:8000 \
+            stellar/quickstart:latest \
+            --standalone --enable-soroban-rpc
+          chmod +x scripts/wait-for-local-stellar.sh
+          ./scripts/wait-for-local-stellar.sh http://localhost:8000 http://localhost:8000/soroban/rpc
+      # #48 — run e2e tests with postgres and local stellar standalone available
       - name: Run E2E Tests
         run: cd api && npm run test:e2e
         env:
@@ -349,8 +358,9 @@ jobs:
           JWT_SECRET: ci-test-secret-for-e2e-testing-32chars
           ADMIN_SECRET_KEY: SCI7YTM2J5ZQOQ4SI5L5ZCXZDTXSMONGDFFHGQCPWAP6CCRBPYRCIATS
           STELLAR_NETWORK: testnet
-          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
-          STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+          STELLAR_HORIZON_URL: http://localhost:8000
+          STELLAR_SOROBAN_RPC: http://localhost:8000/soroban/rpc
+          STELLAR_FRIENDBOT_URL: http://localhost:8000/friendbot
           IPFS_API_KEY: ci-test-ipfs-api-key
           IPFS_SECRET_KEY: ci-test-ipfs-secret-key
       # #249 — generate test coverage report

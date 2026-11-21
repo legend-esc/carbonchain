@@ -1,16 +1,22 @@
 {
   "name": "carbonchain",
-  "version": "0.0.1",
+  "version": "0.6.0",
   "private": true,
   "description": "Transparent, tamper-proof carbon credit registry on Stellar",
   "author": "weare",
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "release": "standard-version",
+    "release:dry-run": "standard-version --dry-run",
+    "release:patch": "standard-version --release-as patch",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major"
   },
   "devDependencies": {
     "@commitlint/cli": "19.8.1",
     "@commitlint/config-conventional": "19.8.1",
     "husky": "9.1.7",
-    "lint-staged": "15.5.2"
+    "lint-staged": "15.5.2",
+    "standard-version": "^9.5.0"
   }
 }

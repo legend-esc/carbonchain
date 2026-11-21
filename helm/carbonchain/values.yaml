@@ -1,0 +1,173 @@
+# Default values for carbonchain.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/legend-esc/carbonchain-api
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"
+
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 20
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: api.carbonchain.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: carbonchain-api-tls
+      hosts:
+        - api.carbonchain.example.com
+
+# Non-sensitive configuration injected via ConfigMap
+config:
+  NODE_ENV: production
+  PORT: "3000"
+  LOG_LEVEL: info
+  STELLAR_NETWORK: testnet
+  STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+  STELLAR_SOROBAN_RPC: https://soroban-testnet.stellar.org
+  REDIS_SENTINEL_NAME: mymaster
+  REDIS_SENTINEL_PORT: "26379"
+  TRUST_PROXY: "1"
+
+# Reference to a pre-created Secret holding sensitive keys:
+# DATABASE_URL, DATABASE_REPLICA_URLS, JWT_SECRET, ADMIN_SECRET_KEY,
+# ORACLE_WEBHOOK_SECRET, IPFS_API_KEY, IPFS_SECRET_KEY, REDIS_PASSWORD
+secrets:
+  existingSecret: carbonchain-api-secrets
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - carbonchain
+          topologyKey: kubernetes.io/hostname
+
+# High-availability Redis + Redis Sentinel StatefulSets
+redisSentinel:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  masterSet: mymaster
+  quorum: 2
+  downAfterMilliseconds: 5000
+  failoverTimeout: 10000
+  parallelSyncs: 1
+  redisReplicas: 3
+  sentinelReplicas: 3
+  port: 6379
+  sentinelPort: 26379
+  auth:
+    existingSecret: carbonchain-api-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
+  persistence:
+    enabled: true
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 2Gi
+  resources:
+    redis:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    sentinel:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi

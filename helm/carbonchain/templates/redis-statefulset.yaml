@@ -1,0 +1,195 @@
+{{- if .Values.redisSentinel.enabled }}
+{{- $fullName := include "carbonchain.fullname" . -}}
+{{- $redisPort := .Values.redisSentinel.port | int -}}
+{{- $sentinelPort := .Values.redisSentinel.sentinelPort | int -}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-redis-headless
+  labels:
+    {{- include "carbonchain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: redis
+      port: {{ $redisPort }}
+      targetPort: redis
+  selector:
+    {{- include "carbonchain.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-redis-sentinel-headless
+  labels:
+    {{- include "carbonchain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: sentinel
+      port: {{ $sentinelPort }}
+      targetPort: sentinel
+  selector:
+    {{- include "carbonchain.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-redis
+  labels:
+    {{- include "carbonchain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: {{ $fullName }}-redis-headless
+  replicas: {{ .Values.redisSentinel.redisReplicas }}
+  selector:
+    matchLabels:
+      {{- include "carbonchain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "carbonchain.labels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.redisSentinel.image.repository }}:{{ .Values.redisSentinel.image.tag }}"
+          imagePullPolicy: {{ .Values.redisSentinel.image.pullPolicy }}
+          ports:
+            - name: redis
+              containerPort: {{ $redisPort }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redisSentinel.auth.existingSecret }}
+                  key: {{ .Values.redisSentinel.auth.existingSecretPasswordKey }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              ARGS="--appendonly yes --appendfsync everysec --requirepass $REDIS_PASSWORD --masterauth $REDIS_PASSWORD"
+              if [ "$(hostname)" != "{{ $fullName }}-redis-0" ]; then
+                ARGS="$ARGS --replicaof {{ $fullName }}-redis-0.{{ $fullName }}-redis-headless.{{ .Release.Namespace }}.svc.cluster.local {{ $redisPort }}"
+              fi
+              exec redis-server $ARGS
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" ping | grep -q PONG
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" ping | grep -q PONG
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.redisSentinel.resources.redis | nindent 12 }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  {{- if .Values.redisSentinel.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.redisSentinel.persistence.accessModes | nindent 10 }}
+        {{- if .Values.redisSentinel.persistence.storageClassName }}
+        storageClassName: {{ .Values.redisSentinel.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redisSentinel.persistence.size }}
+  {{- else }}
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-redis-sentinel
+  labels:
+    {{- include "carbonchain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+spec:
+  serviceName: {{ $fullName }}-redis-sentinel-headless
+  replicas: {{ .Values.redisSentinel.sentinelReplicas }}
+  selector:
+    matchLabels:
+      {{- include "carbonchain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis-sentinel
+  template:
+    metadata:
+      labels:
+        {{- include "carbonchain.labels" . | nindent 8 }}
+        app.kubernetes.io/component: redis-sentinel
+    spec:
+      containers:
+        - name: sentinel
+          image: "{{ .Values.redisSentinel.image.repository }}:{{ .Values.redisSentinel.image.tag }}"
+          imagePullPolicy: {{ .Values.redisSentinel.image.pullPolicy }}
+          ports:
+            - name: sentinel
+              containerPort: {{ $sentinelPort }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redisSentinel.auth.existingSecret }}
+                  key: {{ .Values.redisSentinel.auth.existingSecretPasswordKey }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              MASTER_HOST="{{ $fullName }}-redis-0.{{ $fullName }}-redis-headless.{{ .Release.Namespace }}.svc.cluster.local"
+              cat <<EOF > /tmp/sentinel.conf
+              port {{ $sentinelPort }}
+              sentinel resolve-hostnames yes
+              sentinel announce-hostnames yes
+              sentinel monitor {{ .Values.redisSentinel.masterSet }} $MASTER_HOST {{ $redisPort }} {{ .Values.redisSentinel.quorum }}
+              sentinel auth-pass {{ .Values.redisSentinel.masterSet }} $REDIS_PASSWORD
+              sentinel down-after-milliseconds {{ .Values.redisSentinel.masterSet }} {{ .Values.redisSentinel.downAfterMilliseconds }}
+              sentinel failover-timeout {{ .Values.redisSentinel.masterSet }} {{ .Values.redisSentinel.failoverTimeout }}
+              sentinel parallel-syncs {{ .Values.redisSentinel.masterSet }} {{ .Values.redisSentinel.parallelSyncs }}
+              EOF
+              exec redis-sentinel /tmp/sentinel.conf
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - -p
+                - {{ $sentinelPort | quote }}
+                - ping
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - -p
+                - {{ $sentinelPort | quote }}
+                - ping
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.redisSentinel.resources.sentinel | nindent 12 }}
+{{- end }}
