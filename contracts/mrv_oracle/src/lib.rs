@@ -18,6 +18,18 @@ pub struct MrvDataPoint {
     pub recorded_at: u64,
     /// Flagged when the reading exceeds the project's effective anomaly threshold.
     pub anomaly: bool,
+    /// Disputed flag for invalid/slashed readings
+    pub disputed: bool,
+}
+
+/// Oracle reputation tracking for slashing mechanism
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub struct OracleReputation {
+    pub oracle: Address,
+    pub reputation_score: i32,
+    pub dispute_count: u32,
+    pub deregistered: bool,
 }
 
 #[derive(Clone)]
@@ -51,6 +63,8 @@ pub enum DataKey {
     HistoryMeta(String),
     /// Per-methodology anomaly threshold in basis points.
     MethodologyThreshold(Symbol),
+    /// Oracle reputation tracking for slashing mechanism
+    OracleRep(Address),
 }
 
 #[contracterror]
@@ -713,6 +727,37 @@ impl MrvOracle {
 
         let avg = if count > 0 { sum / count } else { 0 };
         (sum, avg)
+    }
+
+    /// Dispute an MRV reading and slash oracle reputation
+    pub fn dispute_reading(
+        env: Env,
+        admin: Address,
+        project_id: String,
+        _timestamp: u64,
+        _reason: String,
+    ) -> Result<(), OracleError> {
+        Self::require_admin(&env, &admin)?;
+
+        let mut rep: OracleReputation = env.storage()
+            .persistent()
+            .get(&DataKey::OracleRep(admin.clone()))
+            .unwrap_or(OracleReputation {
+                oracle: admin,
+                reputation_score: 100,
+                dispute_count: 0,
+                deregistered: false,
+            });
+
+        rep.dispute_count += 1;
+        rep.reputation_score = (rep.reputation_score - 10).max(0);
+
+        if rep.dispute_count >= 5 {
+            rep.deregistered = true;
+        }
+
+        env.storage().persistent().set(&DataKey::OracleRep(rep.oracle.clone()), &rep);
+        Ok(())
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
