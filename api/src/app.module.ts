@@ -25,6 +25,7 @@ import { OracleModule } from './oracle/oracle.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { GraphqlModule } from './graphql/graphql.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
     OracleModule,
     MetricsModule,
     ReconciliationModule,
+    GraphqlModule,
   ],
   controllers: [AppController],
   providers: [

@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   ServiceUnavailableException,
+  MessageEvent,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
@@ -15,6 +16,8 @@ import { CacheService } from '../common/cache.service';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { ApiProperty } from '@nestjs/swagger';
 import { MrvDataPoint } from '../../../shared';
+import { Observable, Subject, interval, merge } from 'rxjs';
+import { map } from 'rxjs/operators';
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -112,6 +115,9 @@ const AGGREGATE_CACHE_TTL = 60; // seconds
 const STATUS_CACHE_TTL = 30; // seconds — Issue #1169
 const STATUS_CACHE_KEY = 'oracle:status';
 
+/** Keep-alive ping interval for SSE streams (ms). Issue #1318. */
+const SSE_PING_INTERVAL_MS = 15_000;
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 /**
@@ -177,6 +183,15 @@ export class OracleService {
   private readonly contractId: string;
   private readonly webhookSecret: string;
   private static readonly TIMESTAMP_SKEW_SECONDS = 300;
+
+  /**
+   * Issue #1318 — per-project SSE subjects.
+   * Each Subject holds the stream of live MRV events for a given project.
+   * Subjects are created lazily on first subscriber and kept alive indefinitely
+   * (clients that disconnect simply unsubscribe; the subject remains for future
+   * reconnects and new MRV pushes).
+   */
+  private readonly projectStreams = new Map<string, Subject<MessageEvent>>();
 
   constructor(
     private readonly stellarService: StellarService,
@@ -450,6 +465,17 @@ export class OracleService {
     await this.cacheService.del(`oracle:aggregate:${dto.projectId}`);
     await this.cacheService.del(`oracle:aggregate:${dto.projectId}:noAnomaly`);
 
+    // Issue #1318 — push the new reading into the SSE stream for this project.
+    const mrvPoint: MrvDataPoint = {
+      oracle: dto.oraclePublicKey,
+      project_id: dto.projectId,
+      tonnes_sequestered: dto.tonnesSequestered,
+      measurement_date: Number(timestampSeconds),
+      methodology: '',
+      anomaly_flag: anomaly,
+    };
+    this.pushMrvEvent(dto.projectId, mrvPoint);
+
     return { anomaly };
   }
 
@@ -670,6 +696,53 @@ export class OracleService {
     const month = String(d.getUTCMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
   }
+  // ── Issue #1318: SSE project stream ──────────────────────────────────────────
+
+  /**
+   * Returns an Observable suitable for NestJS `@Sse()` endpoints.
+   *
+   * The observable merges two sources:
+   *   1. A per-project `Subject<MessageEvent>` that receives a push whenever
+   *      `ingestMrvData` successfully records a new reading for `projectId`.
+   *   2. A 15-second interval that emits a keep-alive SSE comment (`:ping`)
+   *      so proxies and browsers do not close idle connections.
+   *
+   * Clients using the `EventSource` API reconnect automatically on disconnect.
+   */
+  streamProject(projectId: string): Observable<MessageEvent> {
+    if (!this.projectStreams.has(projectId)) {
+      this.projectStreams.set(projectId, new Subject<MessageEvent>());
+    }
+    const subject = this.projectStreams.get(projectId)!;
+
+    // Keep-alive: emit a ping comment every 15 seconds.
+    // SSE comment lines start with `:` — in NestJS SSE this is expressed as
+    // `{ data: ':ping', type: 'ping' }`.
+    const keepAlive$: Observable<MessageEvent> = interval(
+      SSE_PING_INTERVAL_MS,
+    ).pipe(
+      map(
+        (): MessageEvent => ({
+          data: ':ping',
+          type: 'ping',
+        }),
+      ),
+    );
+
+    return merge(subject.asObservable(), keepAlive$);
+  }
+
+  /**
+   * Push a new MRV reading into the SSE stream for `projectId`.
+   * Called internally by `ingestMrvData` on each successful ingestion.
+   */
+  private pushMrvEvent(projectId: string, point: MrvDataPoint): void {
+    const subject = this.projectStreams.get(projectId);
+    if (subject) {
+      subject.next({ data: point });
+    }
+  }
+
   /**
    * Set or clear a per-project anomaly threshold override.
    * Pass thresholdBps=0 to clear the override and revert to global threshold.
