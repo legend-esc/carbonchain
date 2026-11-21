@@ -6,6 +6,7 @@ import { RetirementController } from './retirement.controller';
 import { CreditRetirementController } from './credit-retirement.controller';
 import { CertificatesController } from './certificates.controller';
 import { CertificateService } from './certificate.service';
+import { CalculatorService } from './calculator.service';
 import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { RetireTxService } from './retire-tx.service';
 import { StellarModule } from '../stellar/stellar.module';
@@ -32,6 +33,7 @@ import { NonceService } from '../common/nonce.service';
   providers: [
     RetirementService,
     CertificateService,
+    CalculatorService,
     CertHashReconciler,
     RetireTxService,
     NonceService,

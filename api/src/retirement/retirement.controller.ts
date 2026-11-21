@@ -29,6 +29,21 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ThrottlerGuard, Throttle } from '../common/throttler.guard';
 import { PageResult } from '../credits/credit.repository';
 import { CertificateService } from './certificate.service';
+import { CalculatorService } from './calculator.service';
+import { EstimateDto } from './dto/estimate.dto';
+import type { EstimateResult } from './calculator.service';
+
+export interface CertificateVerification {
+  id: string;
+  credit_id: string;
+  buyer: string;
+  tonnes_retired: string;
+  reason: string;
+  retired_at: number;
+  tx_hash: string;
+  verified: boolean;
+  ledger_sequence?: number;
+}
 import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { CertificateResponseDto } from './dto/certificate-response.dto';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
@@ -41,6 +56,16 @@ export class RetirementController {
   constructor(
     private readonly retirementService: RetirementService,
     private readonly certificateService: CertificateService,
+    private readonly calculatorService: CalculatorService,
+  ) {}
+
+  /** POST /retirement/calculator/estimate — calculate CO2e from activity inputs */
+  @Post('calculator/estimate')
+  estimate(@Body() dto: EstimateDto): EstimateResult {
+    return this.calculatorService.estimate(dto.activities as any);
+  }
+
+  /** POST /retirement — protected: requires JWT */
     private readonly certHashReconciler: CertHashReconciler,
     private readonly retireTxService: RetireTxService,
   ) {}

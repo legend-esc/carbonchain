@@ -1,3 +1,11 @@
+import { Controller, Get, Post, Param, Body, UseGuards, Res } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { AdminGuard } from './admin.guard';
+import { AdminService, AdminStats } from './admin.service';
+import { ReportsService } from './reports.service';
+import type { VerifierCapabilities } from './admin.service';
+import { CreditStatus } from '../shared';
+import type { Response as ExpressResponse } from 'express';
 import {
   Controller,
   Get,
@@ -46,7 +54,10 @@ function buildAuditCtx(req: {
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly reportsService: ReportsService,
+  ) {}
 
   @ApiOperation({ summary: 'Get admin stats' })
   @ApiResponse({ status: 200, description: 'Admin statistics' })
@@ -258,5 +269,32 @@ export class AdminController {
       body.nonce,
       buildAuditCtx(req),
     );
+  }
+
+  /**
+   * GET /admin/reports/export/compliance-csv
+   * Streams UNFCCC/SEC-format CSV. Restricted to Admin or Auditor roles.
+   */
+  @Get('reports/export/compliance-csv')
+  async exportComplianceCsv(
+    @Res() res: ExpressResponse,
+  ): Promise<void> {
+    // Role comes from JWT; AdminGuard already checks for 'admin', but
+    // ReportsService also gates on 'admin' | 'auditor' at the service level.
+    const req = (res as unknown as { req: { user?: { role?: string } } }).req;
+    const role = req?.user?.role ?? 'admin';
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="compliance-export.csv"',
+    );
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    const generator = this.reportsService.generateComplianceCsv(role);
+    for await (const chunk of generator) {
+      res.write(chunk);
+    }
+    res.end();
   }
 }
