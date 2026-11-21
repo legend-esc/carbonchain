@@ -365,7 +365,47 @@ services:
           cpus: '0.25'
           memory: 64m
 
+  # ── Seed Data ──────────────────────────────────────────────────────────────
+  # Issue #1363 — Seeds 10 projects, 3 verifiers + applications into Postgres
+  # so new contributors have data to browse immediately after `docker compose up`.
+  #
+  # Lifecycle: runs once to completion (restart: "no") after the API is healthy
+  # (which guarantees all TypeORM migrations have already run). The script is
+  # idempotent — repeated runs skip existing rows.
+  #
+  # To re-run manually:
+  #   docker compose run --rm seed-data
+  seed-data:
+    image: node:20-alpine
+    restart: "no"
+    working_dir: /app
+    # Mount the workspace root so the script can resolve the shared/ package
+    # and ts-node can find tsconfig.json in the api/ directory.
+    volumes:
+      - .:/app:ro
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/carbonchain
+      API_URL: http://api:3000
+    # Install ts-node + pg at runtime — no extra Dockerfile needed.
+    command: >
+      sh -c "
+        cd /app &&
+        npm install --no-save --quiet ts-node pg @types/pg typescript 2>/dev/null &&
+        npx ts-node --transpile-only scripts/seed-local-data.ts
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256m
+
 volumes:
   postgres_data:
   postgres_replica_data:
   redis_data:
+

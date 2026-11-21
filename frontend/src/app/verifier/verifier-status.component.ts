@@ -5,11 +5,12 @@ import { firstValueFrom } from 'rxjs';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { ApiService } from '../core/services/api.service';
 import { ToastService } from '../core/services/toast.service';
+import { TableSkeletonComponent } from '../shared/components/table-skeleton.component';
 
 @Component({
   selector: 'app-verifier-status',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule],
+  imports: [CommonModule, FormsModule, RouterModule, TableSkeletonComponent],
   template: `
     <div class="verifier-status">
       <h1 class="page-title">Verifier Application Status</h1>
@@ -33,7 +34,12 @@ import { ToastService } from '../core/services/toast.service';
         </div>
 
         @if (loading()) {
-          <p class="status">Checking…</p>
+          <!-- issue #1354: skeleton while application record loads -->
+          <app-table-skeleton
+            [rows]="4"
+            [columns]="['wide', 'normal', 'narrow']"
+            label="Checking application status…"
+          />
         } @else if (error()) {
           <p class="alert alert--error" role="alert">{{ error() }}</p>
         } @else if (app()) {

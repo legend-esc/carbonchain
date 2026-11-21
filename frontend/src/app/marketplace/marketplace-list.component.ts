@@ -3,11 +3,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Offer } from '@shared';
 import { MarketplaceStore } from '../core/store/marketplace.store';
+import { TableSkeletonComponent } from '../shared/components/table-skeleton.component';
 
 @Component({
   selector: 'app-marketplace-list',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TableSkeletonComponent],
   template: `
     <div class="listings">
       <div class="listings__toolbar">
@@ -49,7 +50,12 @@ import { MarketplaceStore } from '../core/store/marketplace.store';
       @if (store.error()) {
         <p class="error" role="alert">{{ store.error() }}</p>
       } @else if (store.isLoading()) {
-        <p class="status">Loading listings…</p>
+        <!-- issue #1354: shimmer skeleton replaces the plain text spinner -->
+        <app-table-skeleton
+          [rows]="6"
+          [columns]="listSkeletonCols"
+          label="Loading active listings…"
+        />
       } @else if (store.activeOffers().length === 0) {
         <p class="status">No active listings.</p>
       } @else {
@@ -258,6 +264,17 @@ import { MarketplaceStore } from '../core/store/marketplace.store';
 export class MarketplaceListComponent implements OnInit {
   protected readonly store = inject(MarketplaceStore);
   readonly offerSelected = output<Offer>();
+
+  /** Column layout for <app-table-skeleton> — mirrors the 7 list table columns. */
+  readonly listSkeletonCols = [
+    'normal', // ID
+    'wide',   // Credit
+    'wide',   // Seller
+    'narrow', // Tonnes
+    'narrow', // Price
+    'narrow', // Asset
+    'narrow', // Action
+  ] as const;
 
   filterMethodology = '';
   filterMinPrice: number | undefined;

@@ -47,7 +47,7 @@ export interface WalletAdapter {
 }
 
 export type WalletState = 'disconnected' | 'connecting' | 'connected' | 'error';
-export type WalletNetwork = 'testnet' | 'mainnet';
+export type WalletNetwork = 'testnet' | 'mainnet' | 'futurenet';
 
 /** Step-by-step transaction lifecycle for TxStatusModalComponent (#1349). */
 export type TxStatusStep =
@@ -410,6 +410,9 @@ export class StellarWalletService {
   /** Map Horizon server from network passphrase. */
   private horizonForPassphrase(networkPassphrase: string): string {
     const p = networkPassphrase.toLowerCase();
+    if (p.includes('futurenet')) {
+      return 'https://horizon-futurenet.stellar.org';
+    }
     if (p.includes('test') && !p.includes('main')) {
       return 'https://horizon-testnet.stellar.org';
     }
@@ -659,9 +662,16 @@ export class StellarWalletService {
     this.clearPersistedSession();
   }
 
-  /** Maps Freighter's raw network string ('PUBLIC', 'TESTNET', ...) to our two-value model. */
+  /** Maps Freighter's raw network string ('PUBLIC', 'TESTNET', 'FUTURENET', ...) to our model. */
   private mapNetwork(freighterNetwork: string): WalletNetwork {
-    return freighterNetwork.toUpperCase() === 'PUBLIC' ? 'mainnet' : 'testnet';
+    switch (freighterNetwork.toUpperCase()) {
+      case 'PUBLIC':
+        return 'mainnet';
+      case 'FUTURENET':
+        return 'futurenet';
+      default:
+        return 'testnet';
+    }
   }
 
   // ── Scope plumbing (issue #965) ───────────────────────────────────────────
@@ -723,7 +733,7 @@ export class StellarWalletService {
   private loadStoredNetwork(): WalletNetwork | null {
     if (typeof localStorage === 'undefined') return null;
     const stored = localStorage.getItem(STORAGE_NETWORK_KEY);
-    return stored === 'mainnet' || stored === 'testnet' ? stored : null;
+    return stored === 'mainnet' || stored === 'testnet' || stored === 'futurenet' ? stored : null;
   }
 
   private loadStoredProvider(): WalletProvider {

@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { Offer } from '@shared';
+import { TableSkeletonComponent } from '../shared/components/table-skeleton.component';
 
 import { ApiService } from '../core/services/api.service';
 import { AuthService } from '../core/services/auth.service';
@@ -45,6 +46,7 @@ const FOCUSABLE =
     CancelOfferDialogComponent,
     PriceHistoryChartComponent,
     WatchlistComponent,
+    TableSkeletonComponent,
   ],
   template: `
     <div class="marketplace">
@@ -156,28 +158,13 @@ const FOCUSABLE =
           </section>
         }
 
-        <!-- Loading skeleton (initial load) -->
+        <!-- Loading skeleton (initial load) — issue #1354 -->
         @if (isLoading() && visibleOffers().length === 0) {
-          <div
-            class="skeleton-wrapper"
-            aria-busy="true"
-            role="status"
-            aria-label="Loading listings"
-          >
-            @for (i of skeletonRows; track i) {
-              <div class="skeleton-row" aria-hidden="true">
-                <div class="skeleton-cell wide"></div>
-                <div class="skeleton-cell"></div>
-                <div class="skeleton-cell narrow"></div>
-                <div class="skeleton-cell"></div>
-                <div class="skeleton-cell narrow"></div>
-                <div class="skeleton-cell narrow"></div>
-                <div class="skeleton-cell narrow"></div>
-                <div class="skeleton-cell narrow"></div>
-                <div class="skeleton-cell narrow"></div>
-              </div>
-            }
-          </div>
+          <app-table-skeleton
+            [rows]="8"
+            [columns]="marketplaceSkeletonCols"
+            label="Loading marketplace listings…"
+          />
         } @else if (error()) {
           <p class="error" role="alert">{{ error() }}</p>
         } @else if (visibleOffers().length === 0) {
@@ -429,41 +416,7 @@ const FOCUSABLE =
         margin-bottom: 1.25rem;
       }
 
-      /* Skeleton */
-      .skeleton-wrapper {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        margin-top: 0.5rem;
-      }
-      .skeleton-row {
-        display: flex;
-        gap: 0.75rem;
-        padding: 0.6rem 0;
-        border-bottom: 1px solid #eee;
-      }
-      .skeleton-cell {
-        height: 16px;
-        flex: 1;
-        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-        background-size: 200% 100%;
-        animation: shimmer 1.4s infinite;
-        border-radius: 4px;
-      }
-      .skeleton-cell.wide {
-        flex: 2;
-      }
-      .skeleton-cell.narrow {
-        flex: 0.5;
-      }
-      @keyframes shimmer {
-        0% {
-          background-position: 200% 0;
-        }
-        100% {
-          background-position: -200% 0;
-        }
-      }
+      /* Skeleton — moved to TableSkeletonComponent (issue #1354) */
 
       /* Table */
       .status {
@@ -672,7 +625,18 @@ export class MarketplaceComponent implements OnInit {
   private readonly router = inject(Router);
 
   readonly PAGE_SIZE = 20;
-  readonly skeletonRows = [1, 2, 3, 4, 5];
+  /** Column layout passed to <app-table-skeleton> — mirrors the marketplace table headers. */
+  readonly marketplaceSkeletonCols = [
+    'wide',   // Credit ID
+    'normal', // Project
+    'narrow', // Tonnes
+    'normal', // Methodology
+    'narrow', // Price
+    'narrow', // Asset
+    'narrow', // Status
+    'narrow', // Payment Asset
+    'narrow', // Action
+  ] as const;
   readonly methodologies = ['REDD+', 'VCS', 'Gold Standard', 'CDM', 'Plan Vivo', 'Custom'];
 
   /** Payment assets available in the asset picker when buying a credit. */
