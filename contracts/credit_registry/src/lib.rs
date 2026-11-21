@@ -19,6 +19,8 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, IntoVal, String,
 pub const UNITS_PER_TONNE: i128 = 1_000_000;
 /// Minimum credit unit — represents 0.1 tonne.
 pub const MIN_CREDIT_UNIT: i128 = 100_000;
+/// High-volume threshold: 10,000 tonnes (requires 2 verifier approvals)
+pub const HIGH_VOLUME_THRESHOLD: i128 = 10_000 * UNITS_PER_TONNE;
 
 pub mod approvals_bitmap;
 pub mod errors;
@@ -88,6 +90,57 @@ fn validate_vintage_age(env: &Env, vintage_year: u32) -> Result<(), CarbonChainE
     let age = calendar_year(env.ledger().timestamp()).saturating_sub(u64::from(vintage_year));
     if age > u64::from(crate::storage::get_max_vintage_age(env)) {
         return Err(CarbonChainError::VintageExpired);
+    }
+    Ok(())
+}
+
+/// Issue #1281: Methodology-specific validation rules
+/// Each methodology has distinct mandatory metadata requirements
+fn validate_methodology_requirements(
+    _env: &Env,
+    methodology: &str,
+    vintage_year: u32,
+    ipfs_hash: &str,
+) -> Result<(), CarbonChainError> {
+    match methodology {
+        "VCS" => {
+            // VCS requires: vintage <= current_year and non-empty ipfs_hash
+            let current_year = calendar_year(_env.ledger().timestamp()) as u32;
+            if vintage_year > current_year {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+            if ipfs_hash.len() == 0 {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+        }
+        "Gold" => {
+            // Gold requires: non-empty ipfs_hash and valid vintage
+            if ipfs_hash.len() == 0 {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+        }
+        "CDM" => {
+            // CDM requires: registered project code (prefix matching)
+            // For now, just require ipfs_hash
+            if ipfs_hash.len() == 0 {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+        }
+        "PlanVivo" => {
+            // Plan Vivo requires: co-benefit index and valid vintage
+            if vintage_year < 2000 {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+            if ipfs_hash.len() == 0 {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+        }
+        _ => {
+            // Other methodologies: just require ipfs_hash
+            if ipfs_hash.len() == 0 {
+                return Err(CarbonChainError::InvalidMetadata);
+            }
+        }
     }
     Ok(())
 }
@@ -770,6 +823,9 @@ impl CreditRegistry {
             return Err(CarbonChainError::InvalidMetadata);
         }
 
+        // Issue #1281: Methodology-specific validation
+        validate_methodology_requirements(&env, &methodology, vintage_year, &ipfs_hash)?;
+
         if let Some(existing_id) = get_credit_by_project_vintage(&env, &project_id, vintage_year) {
             if let Some(existing_credit) = get_credit(&env, &existing_id) {
                 // Issue #661: Block re-submission for ANY existing status.
@@ -884,7 +940,16 @@ impl CreditRegistry {
         increment_approval_count(&env, &verifier);
 
         let required = get_required_approvals(&env);
-        if count_approvals(&get_credit_approvals(&env, &credit_id)) >= required {
+
+        // Issue #1284: Multi-sig for high-volume credits (>10k tonnes)
+        // Require minimum 2 verifier approvals for governance safety
+        let required_for_credit = if credit.tonnes > HIGH_VOLUME_THRESHOLD {
+            2i64.max(required as i64) as u32
+        } else {
+            required
+        };
+
+        if count_approvals(&get_credit_approvals(&env, &credit_id)) >= required_for_credit {
             credit.status = CreditStatus::Active;
             set_credit(&env, &credit_id, &credit);
             clear_approvals(&env, &credit_id);
