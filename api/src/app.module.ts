@@ -80,6 +80,7 @@ import { GraphqlModule } from './graphql/graphql.module';
   controllers: [AppController],
   providers: [
     AppService,
+    CacheWarmingService,
     { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
     // Issue #551: globally handle QueryTimeoutError → 503 and standardise all
     // error responses so clients receive consistent JSON error bodies.

@@ -7,6 +7,7 @@ import { CreditRetirementController } from './credit-retirement.controller';
 import { CertificatesController } from './certificates.controller';
 import { CertificateService } from './certificate.service';
 import { CertHashReconciler } from './cert-hash-reconciler.service';
+import { RetireTxService } from './retire-tx.service';
 import { StellarModule } from '../stellar/stellar.module';
 import { AuthModule } from '../auth/auth.module';
 import { CreditsModule } from '../credits/credits.module';
@@ -32,6 +33,7 @@ import { NonceService } from '../common/nonce.service';
     RetirementService,
     CertificateService,
     CertHashReconciler,
+    RetireTxService,
     NonceService,
     { provide: RETIREMENT_REPOSITORY, useClass: InMemoryRetirementRepository },
     {
