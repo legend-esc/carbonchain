@@ -1,0 +1,163 @@
+name: PR Size Labeler
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label-pr-size:
+    name: Label PR Size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Calculate diff size, apply label, and warn on large PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            const EXCLUDED_EXACT = new Set([
+              'package-lock.json',
+              'yarn.lock',
+              'pnpm-lock.yaml',
+              'Cargo.lock',
+              'poetry.lock',
+            ]);
+
+            const EXCLUDED_PATTERNS = [
+              /(^|\/)package-lock\.json$/,
+              /(^|\/)dist\//,
+              /(^|\/)build\//,
+              /(^|\/)coverage\//,
+              /\.generated\.[^/]+$/,
+              /\.gen\.[^/]+$/,
+              /\.pb\.go$/,
+              /\.pb\.ts$/,
+              /\.min\.(js|css)$/,
+            ];
+
+            function isExcluded(filename) {
+              const base = filename.split('/').pop();
+              if (EXCLUDED_EXACT.has(base)) return true;
+              return EXCLUDED_PATTERNS.some((re) => re.test(filename));
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            let totalLines = 0;
+            let countedFiles = 0;
+            for (const file of files) {
+              if (isExcluded(file.filename)) continue;
+              totalLines += (file.additions || 0) + (file.deletions || 0);
+              countedFiles += 1;
+            }
+
+            const SIZE_LABELS = [
+              { name: 'size/XS', color: '3CBF00', description: 'Pull request is <= 50 lines', max: 50 },
+              { name: 'size/S',  color: '5D9801', description: 'Pull request is 51-200 lines', max: 200 },
+              { name: 'size/M',  color: '7F7203', description: 'Pull request is 201-500 lines', max: 500 },
+              { name: 'size/L',  color: 'A14C05', description: 'Pull request is 501-1000 lines', max: 1000 },
+              { name: 'size/XL', color: 'C32607', description: 'Pull request is > 1000 lines', max: Infinity },
+            ];
+
+            const target = SIZE_LABELS.find((l) => totalLines <= l.max);
+
+            // Ensure target label exists in repository
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: target.name });
+            } catch (err) {
+              if (err.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: target.name,
+                  color: target.color,
+                  description: target.description,
+                });
+              } else {
+                throw err;
+              }
+            }
+
+            // Remove stale size/* labels and apply the new one
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner,
+              repo,
+              issue_number: pull_number,
+            });
+
+            const sizeLabelNames = new Set(SIZE_LABELS.map((l) => l.name));
+            for (const label of currentLabels) {
+              if (sizeLabelNames.has(label.name) && label.name !== target.name) {
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number: pull_number,
+                  name: label.name,
+                });
+              }
+            }
+
+            if (!currentLabels.some((l) => l.name === target.name)) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pull_number,
+                labels: [target.name],
+              });
+            }
+
+            // Post or update polite reminder if lines > 500
+            const MARKER = '<!-- pr-size-labeler-warning -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            const existingComment = comments.find(
+              (c) => c.body && c.body.includes(MARKER),
+            );
+
+            if (totalLines > 500) {
+              const body = [
+                MARKER,
+                `### Large PR Notice (${target.name} — ${totalLines} lines changed across ${countedFiles} files)`,
+                '',
+                'Thank you for your contribution! This pull request modifies more than **500 lines** (excluding `package-lock.json` and generated files).',
+                '',
+                'Large PRs are harder to review thoroughly and take longer to land. If possible, please consider splitting this change into smaller, focused pull requests (e.g. separating refactoring, implementation, and tests).',
+              ].join('\n');
+
+              if (existingComment) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existingComment.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: pull_number,
+                  body,
+                });
+              }
+            } else if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existingComment.id,
+                body: `${MARKER}\nPR size is now **${totalLines} lines** (${target.name}), within the 500-line guideline. Thank you!`,
+              });
+            }

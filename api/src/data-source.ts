@@ -8,11 +8,16 @@ const masterUrl =
   process.env['DATABASE_URL'] ??
   'postgresql://postgres:postgres@localhost:5432/carbonchain';
 
-// #559 — comma-separated replica connection strings. When present, TypeORM
-// routes SELECT queries across `slaves` (round-robin) and everything else
-// (INSERT/UPDATE/DELETE, transactions) to `master`. Empty/unset means no
-// replicas are configured — all traffic goes to the master, same as before.
-const replicaUrls = (process.env['DATABASE_REPLICA_URLS'] ?? '')
+// #559 / #1371 — comma-separated replica connection strings (or single
+// DATABASE_REPLICA_URL). When present, TypeORM routes SELECT queries across
+// `slaves` (round-robin) and everything else (INSERT/UPDATE/DELETE,
+// transactions) to `master`. Empty/unset means no replicas are configured —
+// all traffic goes to the master.
+const rawReplicaUrls =
+  process.env['DATABASE_REPLICA_URLS'] ??
+  process.env['DATABASE_REPLICA_URL'] ??
+  '';
+const replicaUrls = rawReplicaUrls
   .split(',')
   .map((url) => url.trim())
   .filter((url) => url.length > 0);
@@ -45,6 +50,7 @@ export const AppDataSource = new DataSource({
         replication: {
           master: { url: masterUrl },
           slaves: replicaUrls.map((url) => ({ url })),
+          selector: 'RR',
         },
       }
     : { url: masterUrl }),

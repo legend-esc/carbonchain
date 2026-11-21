@@ -21,6 +21,8 @@ const redactPaths = [
 
 export const pinoLogger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
+  messageKey: 'message',
+  errorKey: 'error',
   base: {
     service: process.env.SERVICE_NAME ?? 'carbonchain-api',
   },
@@ -28,11 +30,21 @@ export const pinoLogger = pino({
     level(label) {
       return { level: label };
     },
+    log(object: Record<string, unknown>) {
+      const formatted: Record<string, unknown> = { ...object };
+      if (typeof formatted.trace === 'string' && !formatted.error) {
+        formatted.error = { stack: formatted.trace };
+      }
+      return formatted;
+    },
   },
-  timestamp: pino.stdTimeFunctions.isoTime,
+  serializers: {
+    error: pino.stdSerializers.err,
+  },
+  timestamp: () => `,"timestamp":"${new Date().toISOString()}"`,
   mixin() {
     const requestId = RequestContextStore.getRequestId();
-    return requestId ? { requestId } : {};
+    return requestId ? { requestId, correlationId: requestId } : {};
   },
   redact: {
     paths: redactPaths,
