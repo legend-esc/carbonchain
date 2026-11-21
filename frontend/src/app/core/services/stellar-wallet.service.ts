@@ -16,14 +16,58 @@ interface FreighterApi {
   getNetworkDetails(): Promise<{ network: string; networkPassphrase: string }>;
 }
 
+interface XBullApi {
+  connect(): Promise<{ publicKey: string }>;
+  sign(params: { xdr: string; networkPassphrase?: string }): Promise<{ signedXDR: string }>;
+  getPublicKey(): Promise<string>;
+}
+
+interface AlbedoApi {
+  publicKey(params?: object): Promise<{ pubkey: string; network: string }>;
+  tx(params: { xdr: string; network?: string; submit?: boolean }): Promise<{ signed_envelope_xdr: string; network: string }>;
+}
+
 declare global {
   interface Window {
     freighter?: FreighterApi;
+    xBull?: XBullApi;
+    albedo?: AlbedoApi;
   }
+}
+
+export type WalletProvider = 'freighter' | 'xbull' | 'albedo' | 'lobstr';
+
+export interface WalletAdapter {
+  id: WalletProvider;
+  name: string;
+  isInstalled(): boolean;
+  installUrl: string;
+  connect(): Promise<{ publicKey: string; network: string }>;
+  signTransaction(xdr: string, networkPassphrase?: string): Promise<string>;
 }
 
 export type WalletState = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type WalletNetwork = 'testnet' | 'mainnet' | 'futurenet';
+
+/** Step-by-step transaction lifecycle for TxStatusModalComponent (#1349). */
+export type TxStatusStep =
+  | 'idle'
+  | 'preparing'
+  | 'signing'
+  | 'submitting'
+  | 'confirmed'
+  | 'error';
+
+export interface TxStatusState {
+  visible: boolean;
+  step: TxStatusStep;
+  /** 1-based step index (1..4) currently active or where an error occurred. */
+  activeStepNumber: 1 | 2 | 3 | 4;
+  label?: string;
+  txHash?: string | null;
+  ledgerSeq?: number | null;
+  errorMessage?: string | null;
+}
 
 // Issue #539: persist both the address and the network across reloads —
 // restoring only the address left the app defaulting to the environment's
@@ -31,6 +75,7 @@ export type WalletNetwork = 'testnet' | 'mainnet' | 'futurenet';
 // actually on.
 const STORAGE_ADDRESS_KEY = 'cc_wallet_address';
 const STORAGE_NETWORK_KEY = 'cc_wallet_network';
+const STORAGE_PROVIDER_KEY = 'cc_wallet_provider';
 
 /**
  * Issue #960 — Freighter can hang (locked extension, dead RPC) without ever
@@ -49,6 +94,7 @@ export class StellarWalletService {
   private readonly _expectedNetwork = signal<string>('testnet');
   private readonly _network = signal<WalletNetwork | null>(this.loadStoredNetwork());
   private readonly _networkMismatch = signal<boolean>(false);
+  private readonly _selectedProvider = signal<WalletProvider>(this.loadStoredProvider());
 
   private readonly _networkChanged$ = new Subject<WalletNetwork | null>();
   private readonly _addressChanged$ = new Subject<string | null>();
@@ -56,6 +102,15 @@ export class StellarWalletService {
 
   private readonly _xlmBalance = signal<number | null>(null);
   private readonly _balanceError = signal<string | null>(null);
+
+  private readonly _txStatus = signal<TxStatusState>({
+    visible: false,
+    step: 'idle',
+    activeStepNumber: 1,
+    txHash: null,
+    ledgerSeq: null,
+    errorMessage: null,
+  });
 
   private balancePollTimer: ReturnType<typeof setInterval> | null = null;
   private _balancePollIntervalMs = 30_000;
@@ -65,11 +120,14 @@ export class StellarWalletService {
   readonly error = this._error.asReadonly();
   readonly isConnected = computed(() => this._state() === 'connected');
   readonly expectedNetwork = this._expectedNetwork.asReadonly();
+  readonly txStatus = this._txStatus.asReadonly();
 
   /** Network (testnet/mainnet) the wallet last connected/persisted with. */
   readonly network = this._network.asReadonly();
   /** True when Freighter's live network no longer matches the persisted `network`. */
   readonly networkMismatch = this._networkMismatch.asReadonly();
+  /** Currently selected wallet provider. */
+  readonly selectedProvider = this._selectedProvider.asReadonly();
 
   /**
    * Issue #965 — emits whenever the network changes (including to `null` on
@@ -185,6 +243,10 @@ export class StellarWalletService {
       throw new WalletError('Freighter wallet extension is not installed.', 'unsupported');
     }
 
+    if (this._txStatus().visible) {
+      this.setTxStep('signing');
+    }
+
     try {
       return await this.withTimeout(
         window.freighter!.signTransaction(xdr, { networkPassphrase }),
@@ -193,8 +255,132 @@ export class StellarWalletService {
     } catch (err) {
       const walletError = normalizeWalletError(err);
       this._error.set(walletError.message);
+      if (this._txStatus().visible) {
+        this.failTx(walletError.message);
+      }
       throw walletError;
     }
+  }
+
+  // ── Transaction Status Stepper (#1349) ────────────────────────────────────
+
+  /** Opens the transaction status modal at step 1 (Preparing Transaction). */
+  beginTx(label?: string): void {
+    this._txStatus.set({
+      visible: true,
+      step: 'preparing',
+      activeStepNumber: 1,
+      label,
+      txHash: null,
+      ledgerSeq: null,
+      errorMessage: null,
+    });
+  }
+
+  /** Advances the transaction status modal to a specific step. */
+  setTxStep(
+    step: Exclude<TxStatusStep, 'idle' | 'error'>,
+    details?: { txHash?: string; ledgerSeq?: number },
+  ): void {
+    const stepMap: Record<Exclude<TxStatusStep, 'idle' | 'error'>, 1 | 2 | 3 | 4> = {
+      preparing: 1,
+      signing: 2,
+      submitting: 3,
+      confirmed: 4,
+    };
+    this._txStatus.update((prev) => ({
+      ...prev,
+      visible: true,
+      step,
+      activeStepNumber: stepMap[step],
+      txHash: details?.txHash ?? prev.txHash ?? null,
+      ledgerSeq: details?.ledgerSeq ?? prev.ledgerSeq ?? null,
+      errorMessage: null,
+    }));
+  }
+
+  /** Marks the current transaction step as failed with an error message. */
+  failTx(errorMessage: string): void {
+    this._txStatus.update((prev) => ({
+      ...prev,
+      visible: true,
+      step: 'error',
+      errorMessage,
+    }));
+  }
+
+  /** Closes and resets the transaction status modal. */
+  closeTxModal(): void {
+    this._txStatus.set({
+      visible: false,
+      step: 'idle',
+      activeStepNumber: 1,
+      txHash: null,
+      ledgerSeq: null,
+      errorMessage: null,
+    });
+  }
+
+  /** Returns the Horizon base URL for the active wallet network. */
+  getHorizonUrl(): string {
+    return this._network() === 'mainnet'
+      ? 'https://horizon.stellar.org'
+      : 'https://horizon-testnet.stellar.org';
+  }
+
+  /** Returns the Stellar Expert explorer URL for a transaction hash. */
+  getExplorerTxUrl(txHash: string): string {
+    const net = this._network() === 'mainnet' ? 'public' : 'testnet';
+    return `https://stellar.expert/explorer/${net}/tx/${encodeURIComponent(txHash)}`;
+  }
+
+  /**
+   * Polls Horizon `/transactions/{hash}` until the transaction is confirmed on
+   * a ledger, updating `txStatus` to `confirmed` with the ledger sequence.
+   */
+  async confirmTransactionOnHorizon(
+    txHash: string,
+    opts?: { timeoutMs?: number; pollIntervalMs?: number },
+  ): Promise<{ hash: string; ledger: number; successful: boolean }> {
+    const timeoutMs = opts?.timeoutMs ?? 45_000;
+    const pollIntervalMs = opts?.pollIntervalMs ?? 2_000;
+    const deadline = Date.now() + timeoutMs;
+    const horizonUrl = this.getHorizonUrl();
+
+    this.setTxStep('submitting', { txHash });
+
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`${horizonUrl}/transactions/${encodeURIComponent(txHash)}`);
+        if (res.ok) {
+          const json = (await res.json()) as {
+            hash?: string;
+            ledger?: number;
+            successful?: boolean;
+          };
+          if (json.successful === false) {
+            const msg = 'Transaction failed on Stellar ledger.';
+            this.failTx(msg);
+            throw new Error(msg);
+          }
+          const ledger = json.ledger ?? 0;
+          this.setTxStep('confirmed', { txHash, ledgerSeq: ledger });
+          return { hash: json.hash ?? txHash, ledger, successful: true };
+        }
+        if (res.status !== 404) {
+          throw new Error(`Horizon returned HTTP ${res.status} while checking transaction.`);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('failed on Stellar ledger')) {
+          throw err;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    const timeoutErr = 'Timed out waiting for Horizon ledger confirmation.';
+    this.failTx(timeoutErr);
+    throw new Error(timeoutErr);
   }
 
   /**
@@ -324,6 +510,134 @@ export class StellarWalletService {
   }
 
   /**
+   * Returns all supported wallet adapters with live isInstalled() checks.
+   */
+  getAvailableAdapters(): WalletAdapter[] {
+    // Capture `this` for use in adapter closures.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
+
+    const freighterAdapter: WalletAdapter = {
+      id: 'freighter',
+      name: 'Freighter',
+      installUrl: 'https://freighter.app',
+      isInstalled: () => typeof window !== 'undefined' && !!window.freighter,
+      async connect() {
+        const connected = await window.freighter!.isConnected();
+        if (!connected) {
+          throw new WalletError(
+            'Freighter is not connected. Please unlock your wallet.',
+            'userRejected',
+          );
+        }
+        const publicKey = await window.freighter!.getPublicKey();
+        const { network } = await window.freighter!.getNetworkDetails();
+        return { publicKey, network };
+      },
+      async signTransaction(xdr: string, networkPassphrase?: string) {
+        return window.freighter!.signTransaction(xdr, { networkPassphrase });
+      },
+    };
+
+    const xbullAdapter: WalletAdapter = {
+      id: 'xbull',
+      name: 'xBull',
+      installUrl: 'https://xbull.app',
+      isInstalled: () => typeof window !== 'undefined' && !!window.xBull,
+      async connect() {
+        const result = await window.xBull!.connect();
+        return { publicKey: result.publicKey, network: 'testnet' };
+      },
+      async signTransaction(xdr: string, networkPassphrase?: string) {
+        const result = await window.xBull!.sign({ xdr, networkPassphrase });
+        return result.signedXDR;
+      },
+    };
+
+    const albedoAdapter: WalletAdapter = {
+      id: 'albedo',
+      name: 'Albedo',
+      installUrl: 'https://albedo.link',
+      isInstalled: () => typeof window !== 'undefined' && !!window.albedo,
+      async connect() {
+        const result = await window.albedo!.publicKey();
+        return { publicKey: result.pubkey, network: result.network ?? 'testnet' };
+      },
+      async signTransaction(xdr: string, networkPassphrase?: string) {
+        const result = await window.albedo!.tx({ xdr, network: networkPassphrase, submit: false });
+        return result.signed_envelope_xdr;
+      },
+    };
+
+    const lobstrAdapter: WalletAdapter = {
+      id: 'lobstr',
+      name: 'Lobstr',
+      installUrl: 'https://lobstr.co',
+      isInstalled: () => false,
+      async connect() {
+        throw new WalletError(
+          'Lobstr WalletConnect is not yet available in-browser. Install the Lobstr app.',
+          'unsupported',
+        );
+      },
+      async signTransaction(_xdr: string, _networkPassphrase?: string) {
+        throw new WalletError(
+          'Lobstr WalletConnect is not yet available in-browser. Install the Lobstr app.',
+          'unsupported',
+        );
+      },
+    };
+
+    return [freighterAdapter, xbullAdapter, albedoAdapter, lobstrAdapter];
+  }
+
+  /**
+   * Connect using a specific wallet provider.
+   * Sets the selected provider, establishes the connection, and persists the session.
+   */
+  async connectWithProvider(provider: WalletProvider): Promise<string> {
+    this._selectedProvider.set(provider);
+    this.persistProvider(provider);
+
+    if (provider === 'freighter') {
+      return this.connect();
+    }
+
+    this._state.set('connecting');
+    this._error.set(null);
+
+    try {
+      const adapters = this.getAvailableAdapters();
+      const adapter = adapters.find((a) => a.id === provider);
+      if (!adapter) {
+        throw new WalletError(`Unsupported wallet provider: ${provider}`, 'unsupported');
+      }
+
+      if (provider === 'lobstr') {
+        throw new WalletError(
+          'Lobstr WalletConnect is not yet available in-browser. Install the Lobstr app.',
+          'unsupported',
+        );
+      }
+
+      const { publicKey, network } = await adapter.connect();
+      const walletNetwork = this.mapNetwork(network);
+
+      this.setAddress(publicKey);
+      this.setNetwork(walletNetwork);
+      this._networkMismatch.set(false);
+      this._state.set('connected');
+      this.persistSession(publicKey, walletNetwork);
+      return publicKey;
+    } catch (err) {
+      const walletError = normalizeWalletError(err);
+      this._error.set(walletError.message);
+      this._state.set('error');
+      throw walletError;
+    }
+  }
+
+  /**
    * Clears any network-scoped cached data and disconnects the wallet.
    *
    * Emits on `networkChanged$` / `addressChanged$` / `scopeChanged$` so
@@ -399,10 +713,16 @@ export class StellarWalletService {
     localStorage.setItem(STORAGE_NETWORK_KEY, network);
   }
 
+  private persistProvider(provider: WalletProvider): void {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_PROVIDER_KEY, provider);
+  }
+
   private clearPersistedSession(): void {
     if (typeof localStorage === 'undefined') return;
     localStorage.removeItem(STORAGE_ADDRESS_KEY);
     localStorage.removeItem(STORAGE_NETWORK_KEY);
+    localStorage.removeItem(STORAGE_PROVIDER_KEY);
   }
 
   private loadStoredAddress(): string | null {
@@ -414,6 +734,15 @@ export class StellarWalletService {
     if (typeof localStorage === 'undefined') return null;
     const stored = localStorage.getItem(STORAGE_NETWORK_KEY);
     return stored === 'mainnet' || stored === 'testnet' || stored === 'futurenet' ? stored : null;
+  }
+
+  private loadStoredProvider(): WalletProvider {
+    if (typeof localStorage === 'undefined') return 'freighter';
+    const stored = localStorage.getItem(STORAGE_PROVIDER_KEY);
+    const valid: WalletProvider[] = ['freighter', 'xbull', 'albedo', 'lobstr'];
+    return valid.includes(stored as WalletProvider)
+      ? (stored as WalletProvider)
+      : 'freighter';
   }
 }
 

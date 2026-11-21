@@ -6,7 +6,7 @@ import { CreditMetadata, CreditStatus, RetirementRecord, TONNES_SCALE } from '@s
 import { CreditStore } from '../core/store/credit.store';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
-import { TableSkeletonComponent } from '../shared/components/table-skeleton.component';
+import { ExportReceiptsButtonComponent } from './export-receipts-button.component';
 
 // ── Chart helpers ─────────────────────────────────────────────────────────────
 
@@ -125,10 +125,19 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 @Component({
   selector: 'app-portfolio',
   standalone: true,
-  imports: [CommonModule, RouterModule, TableSkeletonComponent],
+  imports: [CommonModule, RouterModule, ExportReceiptsButtonComponent],
   template: `
     <div class="portfolio">
-      <h1>Portfolio Analytics</h1>
+      <div class="portfolio__header">
+        <h1>Portfolio Analytics</h1>
+        @if (wallet.publicKey() && !loading() && !loadError()) {
+          <app-export-receipts-button
+            [retirements]="retirements()"
+            [credits]="store.credits()"
+            [walletAddress]="wallet.publicKey()"
+          />
+        }
+      </div>
 
       @if (!wallet.publicKey()) {
         <p class="status">Connect your wallet to view your portfolio analytics.</p>
@@ -288,8 +297,16 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
         margin: 0 auto;
         padding: 0 1rem;
       }
+      .portfolio__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.5rem;
+      }
       h1 {
-        margin: 0 0 1.5rem;
+        margin: 0;
       }
       h2 {
         margin: 0 0 1rem;

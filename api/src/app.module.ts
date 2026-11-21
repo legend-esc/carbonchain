@@ -1,3 +1,5 @@
+import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -8,6 +10,8 @@ import { AppService } from './app.service';
 import { envValidationSchema } from './env-validation';
 import { CacheModule } from './common/cache.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
+import { RequestLoggingMiddleware } from './common/request-logging.middleware';
+import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 import { LoggingMiddleware } from './common/logging.middleware';
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { StructuredExceptionFilter } from './common/filters/structured-exception.filter';
@@ -21,10 +25,13 @@ import { RetirementModule } from './retirement/retirement.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { EventsModule } from './events/events.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { AdminModule } from './admin/admin.module';
+import { RatesModule } from './rates/rates.module';
 import { OracleModule } from './oracle/oracle.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestMetricsMiddleware } from './metrics/request-metrics.middleware';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { GraphqlModule } from './graphql/graphql.module';
 
 @Module({
   imports: [
@@ -71,13 +78,17 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
     MarketplaceModule,
     EventsModule,
     WebhooksModule,
+    AdminModule,
+    RatesModule,
     OracleModule,
     MetricsModule,
     ReconciliationModule,
+    GraphqlModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    CacheWarmingService,
     { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
     // Issue #551: globally handle QueryTimeoutError → 503 and standardise all
     // error responses so clients receive consistent JSON error bodies.
@@ -92,5 +103,12 @@ export class AppModule implements NestModule {
     consumer
       .apply(RequestIdMiddleware, LoggingMiddleware, RequestMetricsMiddleware)
       .forRoutes('*');
+
+    consumer
+      .apply(IdempotencyMiddleware)
+      .forRoutes(
+        { path: '*', method: RequestMethod.POST },
+        { path: '*', method: RequestMethod.PUT },
+      );
   }
 }

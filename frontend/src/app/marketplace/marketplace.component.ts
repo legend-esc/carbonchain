@@ -17,6 +17,7 @@ import { MarketEventsStore } from '../core/store/market-events.store';
 import { WatchlistStore, defaultOfferKey } from '../core/store/watchlist.store';
 import { MarketplaceListComponent } from './marketplace-list.component';
 import { OfferDetailComponent } from './offer-detail.component';
+import { CancelOfferDialogComponent } from './cancel-offer-dialog.component';
 import { PriceHistoryChartComponent } from './price-history-chart.component';
 import { WatchlistComponent } from './watchlist.component';
 
@@ -42,6 +43,7 @@ const FOCUSABLE =
     TranslatePipe,
     MarketplaceListComponent,
     OfferDetailComponent,
+    CancelOfferDialogComponent,
     PriceHistoryChartComponent,
     WatchlistComponent,
     TableSkeletonComponent,
@@ -214,18 +216,30 @@ const FOCUSABLE =
                       }}</span>
                     </td>
                     <td>
-                      <button
-                        class="btn btn-sm btn-primary"
-                        type="button"
-                        [disabled]="offer.status !== 'open' || buying() === offer.id"
-                        (click)="buy(offer)"
-                        [attr.aria-label]="
-                          'Buy credit ' + offer.credit_id + ' for ' + formatPrice(offer)
-                        "
-                        [attr.aria-busy]="buying() === offer.id"
-                      >
-                        {{ buying() === offer.id ? 'Buying…' : 'Buy' }}
-                      </button>
+                      @if (offer.seller === wallet.publicKey() && offer.status === 'open') {
+                        <button
+                          class="btn btn-sm btn-danger"
+                          type="button"
+                          [disabled]="cancelling() && offerToCancel()?.id === offer.id"
+                          (click)="openCancelDialog(offer)"
+                          [attr.aria-label]="'Cancel offer ' + offer.id + ' for credit ' + offer.credit_id"
+                        >
+                          Cancel
+                        </button>
+                      } @else {
+                        <button
+                          class="btn btn-sm btn-primary"
+                          type="button"
+                          [disabled]="offer.status !== 'open' || buying() === offer.id"
+                          (click)="buy(offer)"
+                          [attr.aria-label]="
+                            'Buy credit ' + offer.credit_id + ' for ' + formatPrice(offer)
+                          "
+                          [attr.aria-busy]="buying() === offer.id"
+                        >
+                          {{ buying() === offer.id ? 'Buying…' : 'Buy' }}
+                        </button>
+                      }
                     </td>
                   </tr>
                 }
@@ -273,6 +287,20 @@ const FOCUSABLE =
               (closed)="closeOffer()"
               (buy)="onBuyComplete($event)"
               (cancelled)="onCancelled($event)"
+            />
+          </div>
+        }
+
+        <!-- Issue #1352: Offer cancellation confirmation dialog with gas fee breakdown. -->
+        @if (offerToCancel()) {
+          <div class="overlay" (click)="closeCancelDialog()" role="presentation"></div>
+          <div class="modal" (keydown)="onCancelDialogKeydown($event)">
+            <app-cancel-offer-dialog
+              [offer]="offerToCancel()!"
+              [busy]="cancelling()"
+              [error]="cancelError()"
+              (confirmed)="confirmCancelOffer($event)"
+              (cancelled)="closeCancelDialog()"
             />
           </div>
         }
@@ -646,6 +674,10 @@ export class MarketplaceComponent implements OnInit {
   readonly buying = signal<string | null>(null);
   /** The offer shown in the modal dialog. */
   readonly selectedOffer = signal<Offer | null>(null);
+  /** The offer pending cancellation confirmation (issue #1352). */
+  readonly offerToCancel = signal<Offer | null>(null);
+  readonly cancelling = signal(false);
+  readonly cancelError = signal<string | null>(null);
 
   private nextCursor: string | null = null;
 
@@ -756,6 +788,51 @@ export class MarketplaceComponent implements OnInit {
     // Reload listings after cancellation
     const pk = this.wallet.publicKey();
     if (pk) void this.store.loadOffersBySeller(pk);
+  }
+
+  openCancelDialog(offer: Offer): void {
+    this.lastFocused = document.activeElement as HTMLElement | null;
+    this.cancelError.set(null);
+    this.offerToCancel.set(offer);
+  }
+
+  closeCancelDialog(): void {
+    if (this.cancelling()) return;
+    this.offerToCancel.set(null);
+    this.cancelError.set(null);
+    this.lastFocused?.focus();
+    this.lastFocused = null;
+  }
+
+  onCancelDialogKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      this.closeCancelDialog();
+    }
+  }
+
+  async confirmCancelOffer(offer: Offer): Promise<void> {
+    const token = this.auth.token();
+    if (!token) {
+      this.cancelError.set('Not authenticated.');
+      return;
+    }
+
+    this.cancelling.set(true);
+    this.cancelError.set(null);
+    try {
+      await firstValueFrom(this.api.cancelOffer(Number(offer.id), offer.seller, token));
+      this.toast.show('Offer cancelled. Escrowed credits returned to your wallet.', 'success');
+      this.offerToCancel.set(null);
+      this.lastFocused?.focus();
+      this.lastFocused = null;
+      await this.load();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to cancel offer.';
+      this.cancelError.set(msg);
+    } finally {
+      this.cancelling.set(false);
+    }
   }
 
   /** Load (or reload) the first page of results, resetting state. */

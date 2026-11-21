@@ -18,11 +18,19 @@ import { QuoteOfferDto, QuoteResult } from './dto/quote-offer.dto';
 import { Offer } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UseReplicaForRead } from '../common/use-replica-for-read.decorator';
+import {
+  WashTradingDetectorService,
+  CandleData,
+  OhlcvParams,
+} from './wash-trading-detector.service';
 
 @ApiTags('marketplace')
 @Controller('marketplace')
 export class MarketplaceController {
-  constructor(private readonly marketplaceService: MarketplaceService) {}
+  constructor(
+    private readonly marketplaceService: MarketplaceService,
+    private readonly washTradingDetectorService: WashTradingDetectorService,
+  ) {}
 
   /**
    * #930 — Server-side keyset pagination.
@@ -141,5 +149,29 @@ export class MarketplaceController {
     @Body() dto: QuoteOfferDto,
   ): Promise<QuoteResult> {
     return this.marketplaceService.quoteOffer(id, dto.accountId);
+  }
+
+  /**
+   * Issue #1321 — OHLCV candle data endpoint.
+   *
+   * GET /marketplace/candles?creditId=&from=&to=&interval=
+   *
+   * Returns OHLCV candle data, excluding credits flagged as wash trades by
+   * WashTradingDetectorService.  The underlying data source is a stub until a
+   * price-history table is available; this endpoint returns an empty array in
+   * the current implementation.
+   */
+  @ApiOperation({
+    summary:
+      'Get OHLCV candle data, excluding wash-traded credits (Issue #1321)',
+  })
+  @ApiQuery({ name: 'creditId', required: false, type: String })
+  @ApiQuery({ name: 'from', required: false, type: Number })
+  @ApiQuery({ name: 'to', required: false, type: Number })
+  @ApiQuery({ name: 'interval', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'OHLCV candle data array' })
+  @Get('candles')
+  getCandles(@Query() query: OhlcvParams): CandleData[] {
+    return this.washTradingDetectorService.getOhlcvCandles(query);
   }
 }

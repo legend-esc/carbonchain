@@ -1,0 +1,66 @@
+<div class="dropzone-wrapper">
+  <div
+    class="dropzone"
+    [class.dropzone--dragover]="isDragOver()"
+    [class.dropzone--disabled]="disabled()"
+    role="button"
+    tabindex="0"
+    [attr.aria-disabled]="disabled()"
+    [attr.aria-label]="label()"
+    (click)="openFilePicker(fileInput)"
+    (keydown.enter)="openFilePicker(fileInput)"
+    (keydown.space)="onSpaceKey($event, fileInput)"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (drop)="onDrop($event)"
+  >
+    <input
+      #fileInput
+      type="file"
+      class="dropzone__input"
+      [accept]="acceptAttribute()"
+      [multiple]="multiple()"
+      [disabled]="disabled()"
+      (change)="onFileInputChange($event)"
+      tabindex="-1"
+      aria-hidden="true"
+    />
+
+    <div class="dropzone__icon" aria-hidden="true">📄</div>
+    <p class="dropzone__title">{{ label() }}</p>
+    <p class="dropzone__hint">
+      Drag and drop {{ multiple() ? 'files' : 'a file' }} here, or
+      <span class="dropzone__browse">browse</span>
+    </p>
+    <p class="dropzone__constraints">
+      Accepted: PDF, GeoJSON, PNG, JPEG · Max {{ maxSizeMb() }} MB
+    </p>
+  </div>
+
+  @if (errors().length > 0) {
+    <ul class="dropzone__errors" role="alert">
+      @for (err of errors(); track err) {
+        <li>{{ err }}</li>
+      }
+    </ul>
+  }
+
+  @if (selectedFiles().length > 0) {
+    <ul class="dropzone__files" aria-label="Selected files">
+      @for (file of selectedFiles(); track file.name + file.size) {
+        <li class="dropzone__file">
+          <span class="dropzone__file-name">{{ file.name }}</span>
+          <span class="dropzone__file-size">{{ formatFileSize(file.size) }}</span>
+          <button
+            type="button"
+            class="dropzone__remove"
+            (click)="removeFile(file)"
+            [attr.aria-label]="'Remove ' + file.name"
+          >
+            ✕
+          </button>
+        </li>
+      }
+    </ul>
+  }
+</div>

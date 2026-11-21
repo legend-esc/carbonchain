@@ -32,6 +32,7 @@ import type {
   TxBadSeqEvent,
 } from '../metrics/metrics-events';
 import type { EventEmitter } from 'events';
+import { RpcCircuitBreakerService } from './rpc-circuit-breaker.service';
 
 /**
  * Default fee-buffer multiplier applied on top of the simulated minResourceFee.
@@ -109,6 +110,14 @@ export class StellarService implements OnModuleInit {
     @Optional()
     @Inject(METRICS_EVENT_EMITTER)
     private readonly metricsEmitter?: EventEmitter,
+    /**
+     * Issue #1319 — Optional Horizon RPC circuit breaker.
+     * When present, `onModuleInit` uses `getActiveUrl()` to select the initial
+     * Horizon URL, and `simulateTransaction` / `sendTransaction` calls record
+     * success/failure so the breaker can trip to the failover URL when needed.
+     */
+    @Optional()
+    private readonly rpcCircuitBreakerService?: RpcCircuitBreakerService,
   ) {
     const rawMultiplier = configService.get<string>('FEE_BUFFER_MULTIPLIER');
     const parsed =
@@ -133,9 +142,17 @@ export class StellarService implements OnModuleInit {
   }
 
   onModuleInit() {
-    const horizonUrl =
+    const configHorizonUrl =
       this.configService.get<string>('HORIZON_URL') ||
       'https://horizon-testnet.stellar.org';
+
+    // Issue #1319 — if the circuit breaker service is available, use its
+    // getActiveUrl() so the initial connection targets the correct endpoint
+    // (primary or failover, depending on any breaker state carried over from
+    // a previous module lifecycle in long-running processes).
+    const horizonUrl =
+      this.rpcCircuitBreakerService?.getActiveUrl() ?? configHorizonUrl;
+
     const sorobanRpcUrl =
       this.configService.get<string>('SOROBAN_RPC_URL') ||
       'https://soroban-testnet.stellar.org';
@@ -444,6 +461,8 @@ export class StellarService implements OnModuleInit {
               durationMs: Date.now() - startTime,
               feeStroops: currentFee,
             } satisfies ContractInvocationCompletedEvent);
+            // Issue #1319 — record send success on the circuit breaker.
+            this.rpcCircuitBreakerService?.recordSuccess();
             this.logger.log(
               `[issue#546] Contract call fee paid: method=${method} fee_stroops=${currentFee}`,
             );
@@ -914,10 +933,20 @@ export class StellarService implements OnModuleInit {
   async simulateTransaction(
     tx: Transaction,
   ): Promise<rpc.Api.SimulateTransactionResponse> {
-    return this.withTimeout(
-      this.sorobanRpcServer.simulateTransaction(tx),
-      'simulateTransaction',
-    );
+    try {
+      const result = await this.withTimeout(
+        this.sorobanRpcServer.simulateTransaction(tx),
+        'simulateTransaction',
+      );
+      // Issue #1319 — record success so the circuit breaker can track the
+      // health of the RPC endpoint.
+      this.rpcCircuitBreakerService?.recordSuccess();
+      return result;
+    } catch (err) {
+      // Issue #1319 — record failure for breaker evaluation.
+      this.rpcCircuitBreakerService?.recordFailure();
+      throw err;
+    }
   }
 
   private async pollTransactionStatus(
@@ -1057,6 +1086,8 @@ export class StellarService implements OnModuleInit {
           .setTimeout(30)
           .build();
 
+        // Issue #1319 — simulateTransaction already records success/failure on
+        // the RpcCircuitBreakerService, so no additional recording is needed here.
         const simulation = await this.simulateTransaction(tx);
         if (rpc.Api.isSimulationSuccess(simulation) && simulation.result) {
           return simulation.result.retval;
