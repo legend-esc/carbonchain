@@ -65,6 +65,11 @@ jobs:
       # wasm32v1-none artifact to exist before clippy or cargo test compiles test targets.
       - name: Build Contracts (WASM)
         run: cd contracts && cargo build --target wasm32v1-none --release
+      # #1360 — enforce Soroban compiled WASM bytecode size budget.
+      - name: Check Soroban WASM size budget
+        env:
+          WASM_SIZE_BUDGET_BYTES: "65536"
+        run: bash scripts/check-wasm-size.sh contracts/target/wasm32v1-none/release
       # Upload the built WASM artifacts so the test and deploy jobs can consume
       # them without a second compilation pass. The artifact retention is kept
       # short (1 day) since it is only needed within the same workflow run.
