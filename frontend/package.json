@@ -29,7 +29,7 @@
   "private": true,
   "packageManager": "npm@11.6.2",
   "dependencies": {
-    "@angular/common": "^21.2.22",
+    "@angular/common": "^22.2.6",
     "@angular/compiler": "^21.2.22",
     "@angular/core": "^21.2.22",
     "@angular/forms": "^21.2.22",
