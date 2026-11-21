@@ -25,6 +25,26 @@ declare global {
 export type WalletState = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type WalletNetwork = 'testnet' | 'mainnet';
 
+/** Step-by-step transaction lifecycle for TxStatusModalComponent (#1349). */
+export type TxStatusStep =
+  | 'idle'
+  | 'preparing'
+  | 'signing'
+  | 'submitting'
+  | 'confirmed'
+  | 'error';
+
+export interface TxStatusState {
+  visible: boolean;
+  step: TxStatusStep;
+  /** 1-based step index (1..4) currently active or where an error occurred. */
+  activeStepNumber: 1 | 2 | 3 | 4;
+  label?: string;
+  txHash?: string | null;
+  ledgerSeq?: number | null;
+  errorMessage?: string | null;
+}
+
 // Issue #539: persist both the address and the network across reloads —
 // restoring only the address left the app defaulting to the environment's
 // network (mainnet in prod) regardless of which network the user was
@@ -57,6 +77,15 @@ export class StellarWalletService {
   private readonly _xlmBalance = signal<number | null>(null);
   private readonly _balanceError = signal<string | null>(null);
 
+  private readonly _txStatus = signal<TxStatusState>({
+    visible: false,
+    step: 'idle',
+    activeStepNumber: 1,
+    txHash: null,
+    ledgerSeq: null,
+    errorMessage: null,
+  });
+
   private balancePollTimer: ReturnType<typeof setInterval> | null = null;
   private _balancePollIntervalMs = 30_000;
 
@@ -65,6 +94,7 @@ export class StellarWalletService {
   readonly error = this._error.asReadonly();
   readonly isConnected = computed(() => this._state() === 'connected');
   readonly expectedNetwork = this._expectedNetwork.asReadonly();
+  readonly txStatus = this._txStatus.asReadonly();
 
   /** Network (testnet/mainnet) the wallet last connected/persisted with. */
   readonly network = this._network.asReadonly();
@@ -185,6 +215,10 @@ export class StellarWalletService {
       throw new WalletError('Freighter wallet extension is not installed.', 'unsupported');
     }
 
+    if (this._txStatus().visible) {
+      this.setTxStep('signing');
+    }
+
     try {
       return await this.withTimeout(
         window.freighter!.signTransaction(xdr, { networkPassphrase }),
@@ -193,8 +227,132 @@ export class StellarWalletService {
     } catch (err) {
       const walletError = normalizeWalletError(err);
       this._error.set(walletError.message);
+      if (this._txStatus().visible) {
+        this.failTx(walletError.message);
+      }
       throw walletError;
     }
+  }
+
+  // ── Transaction Status Stepper (#1349) ────────────────────────────────────
+
+  /** Opens the transaction status modal at step 1 (Preparing Transaction). */
+  beginTx(label?: string): void {
+    this._txStatus.set({
+      visible: true,
+      step: 'preparing',
+      activeStepNumber: 1,
+      label,
+      txHash: null,
+      ledgerSeq: null,
+      errorMessage: null,
+    });
+  }
+
+  /** Advances the transaction status modal to a specific step. */
+  setTxStep(
+    step: Exclude<TxStatusStep, 'idle' | 'error'>,
+    details?: { txHash?: string; ledgerSeq?: number },
+  ): void {
+    const stepMap: Record<Exclude<TxStatusStep, 'idle' | 'error'>, 1 | 2 | 3 | 4> = {
+      preparing: 1,
+      signing: 2,
+      submitting: 3,
+      confirmed: 4,
+    };
+    this._txStatus.update((prev) => ({
+      ...prev,
+      visible: true,
+      step,
+      activeStepNumber: stepMap[step],
+      txHash: details?.txHash ?? prev.txHash ?? null,
+      ledgerSeq: details?.ledgerSeq ?? prev.ledgerSeq ?? null,
+      errorMessage: null,
+    }));
+  }
+
+  /** Marks the current transaction step as failed with an error message. */
+  failTx(errorMessage: string): void {
+    this._txStatus.update((prev) => ({
+      ...prev,
+      visible: true,
+      step: 'error',
+      errorMessage,
+    }));
+  }
+
+  /** Closes and resets the transaction status modal. */
+  closeTxModal(): void {
+    this._txStatus.set({
+      visible: false,
+      step: 'idle',
+      activeStepNumber: 1,
+      txHash: null,
+      ledgerSeq: null,
+      errorMessage: null,
+    });
+  }
+
+  /** Returns the Horizon base URL for the active wallet network. */
+  getHorizonUrl(): string {
+    return this._network() === 'mainnet'
+      ? 'https://horizon.stellar.org'
+      : 'https://horizon-testnet.stellar.org';
+  }
+
+  /** Returns the Stellar Expert explorer URL for a transaction hash. */
+  getExplorerTxUrl(txHash: string): string {
+    const net = this._network() === 'mainnet' ? 'public' : 'testnet';
+    return `https://stellar.expert/explorer/${net}/tx/${encodeURIComponent(txHash)}`;
+  }
+
+  /**
+   * Polls Horizon `/transactions/{hash}` until the transaction is confirmed on
+   * a ledger, updating `txStatus` to `confirmed` with the ledger sequence.
+   */
+  async confirmTransactionOnHorizon(
+    txHash: string,
+    opts?: { timeoutMs?: number; pollIntervalMs?: number },
+  ): Promise<{ hash: string; ledger: number; successful: boolean }> {
+    const timeoutMs = opts?.timeoutMs ?? 45_000;
+    const pollIntervalMs = opts?.pollIntervalMs ?? 2_000;
+    const deadline = Date.now() + timeoutMs;
+    const horizonUrl = this.getHorizonUrl();
+
+    this.setTxStep('submitting', { txHash });
+
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`${horizonUrl}/transactions/${encodeURIComponent(txHash)}`);
+        if (res.ok) {
+          const json = (await res.json()) as {
+            hash?: string;
+            ledger?: number;
+            successful?: boolean;
+          };
+          if (json.successful === false) {
+            const msg = 'Transaction failed on Stellar ledger.';
+            this.failTx(msg);
+            throw new Error(msg);
+          }
+          const ledger = json.ledger ?? 0;
+          this.setTxStep('confirmed', { txHash, ledgerSeq: ledger });
+          return { hash: json.hash ?? txHash, ledger, successful: true };
+        }
+        if (res.status !== 404) {
+          throw new Error(`Horizon returned HTTP ${res.status} while checking transaction.`);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('failed on Stellar ledger')) {
+          throw err;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    const timeoutErr = 'Timed out waiting for Horizon ledger confirmation.';
+    this.failTx(timeoutErr);
+    throw new Error(timeoutErr);
   }
 
   /**
