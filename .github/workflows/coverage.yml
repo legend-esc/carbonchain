@@ -47,7 +47,7 @@ jobs:
           retention-days: 7
 
       - name: Upload contracts coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: contracts/coverage/lcov.info
           flags: contracts
@@ -83,7 +83,7 @@ jobs:
           retention-days: 7
 
       - name: Upload API coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: api/coverage/lcov.info
           flags: api
@@ -119,7 +119,7 @@ jobs:
           retention-days: 7
 
       - name: Upload frontend coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: frontend/coverage/**/lcov.info
           flags: frontend
