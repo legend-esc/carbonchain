@@ -5,7 +5,14 @@
   "description": "Transparent, tamper-proof carbon credit registry on Stellar",
   "author": "weare",
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:cov": "npm run test:cov:contracts && npm run test:cov:api && npm run test:cov:frontend",
+    "test:cov:contracts": "cargo tarpaulin --workspace --out Lcov --output-dir coverage",
+    "test:cov:api": "npm --prefix api run test:cov",
+    "test:cov:frontend": "npm --prefix frontend run test:ci",
+    "load-test:marketplace": "k6 run scripts/load-tests/k6-marketplace-stress.js",
+    "migration:down": "npm --prefix api run migration:down",
+    "migration:rollback:verify": "./scripts/test-migration-rollback.sh"
   },
   "devDependencies": {
     "@commitlint/cli": "19.8.1",
