@@ -1,0 +1,17 @@
+apiVersion: v2
+name: carbonchain
+description: Helm chart for CarbonChain NestJS API and Redis Sentinel high-availability cluster
+type: application
+version: 0.6.0
+appVersion: "0.6.0"
+keywords:
+  - carbonchain
+  - stellar
+  - soroban
+  - nestjs
+  - redis-sentinel
+maintainers:
+  - name: CarbonChain Team
+home: https://github.com/legend-esc/carbonchain
+sources:
+  - https://github.com/legend-esc/carbonchain

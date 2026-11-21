@@ -1,0 +1,52 @@
+name: Reproducible Contract WASM Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - "contracts/**"
+      - "scripts/build-reproducible-wasm.sh"
+      - ".github/workflows/reproducible-build.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/**"
+      - "scripts/build-reproducible-wasm.sh"
+      - ".github/workflows/reproducible-build.yml"
+  workflow_dispatch: {}
+
+jobs:
+  reproducible-wasm:
+    name: Reproducible WASM Build & Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build deterministic WASM artifacts (Pass 1)
+        run: |
+          chmod +x scripts/build-reproducible-wasm.sh
+          ./scripts/build-reproducible-wasm.sh --manifest /tmp/wasm-checksums-pass1.json
+
+      - name: Clean target and verify bit-for-bit reproducibility (Pass 2)
+        run: |
+          rm -rf contracts/target/wasm32v1-none/release/*.wasm
+          ./scripts/build-reproducible-wasm.sh --verify /tmp/wasm-checksums-pass1.json
+
+      - name: Verify against committed release manifest (if present)
+        if: hashFiles('contracts/wasm-checksums.json') != ''
+        run: |
+          ./scripts/build-reproducible-wasm.sh --verify contracts/wasm-checksums.json
+
+      - name: Upload reproducible WASM artifacts and checksum manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reproducible-wasm-artifacts
+          path: |
+            contracts/target/wasm32v1-none/release/*.wasm
+            /tmp/wasm-checksums-pass1.json
+          retention-days: 14

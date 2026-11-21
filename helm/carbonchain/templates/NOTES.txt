@@ -1,0 +1,18 @@
+CarbonChain API has been deployed!
+
+1. Check API pod status:
+   kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=api"
+
+{{- if .Values.redisSentinel.enabled }}
+2. Check Redis HA & Sentinel cluster status:
+   kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=redis-sentinel"
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+3. API Ingress endpoints:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  https://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- end }}
