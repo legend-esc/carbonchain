@@ -37,7 +37,7 @@
     "@nestjs/typeorm": "^11.0.0",
     "@nestjs/graphql": "^12.2.0",
     "@nestjs/apollo": "^12.2.0",
-    "@apollo/server": "^4.11.0",
+    "@apollo/server": "^5.5.2",
     "dataloader": "^2.2.3",
     "graphql": "^16.9.0",
     "@stellar/stellar-sdk": "^17.2.1",
