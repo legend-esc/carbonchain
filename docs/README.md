@@ -12,3 +12,7 @@
 - [Quick Start](QUICK_START.md)
 - [Doctor Command](guides/DOCTOR_COMMAND.md)
 - [Accessibility Developer Guide](guides/A11Y_DEVELOPER_GUIDE.md)
+- [Verifier Node and MRV Oracle Handbook](guides/VERIFIER_AND_ORACLE_HANDBOOK.md) — Verifier registration, key management, webhook auth, and telemetry ingestion scripts
+
+## Compliance
+- [Carbon Accounting Primer](compliance/CARBON_ACCOUNTING_PRIMER.md) — Carbon credit taxonomy, Verra/Gold Standard/CDM standards, ICVCM CCPs, and Article 6

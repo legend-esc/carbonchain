@@ -12,7 +12,8 @@
     "test:cov:frontend": "npm --prefix frontend run test:ci",
     "load-test:marketplace": "k6 run scripts/load-tests/k6-marketplace-stress.js",
     "migration:down": "npm --prefix api run migration:down",
-    "migration:rollback:verify": "./scripts/test-migration-rollback.sh"
+    "migration:rollback:verify": "./scripts/test-migration-rollback.sh",
+    "test:chaos:redis": "TOXIPROXY_HOST=${TOXIPROXY_HOST:-localhost} npx jest api/test/chaos/redis-partition.spec.ts --testEnvironment node --forceExit"
   },
   "devDependencies": {
     "@commitlint/cli": "19.8.1",
