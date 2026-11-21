@@ -1,0 +1,55 @@
+{
+  "name": "CarbonChain Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "default"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": true
+    }
+  },
+  "forwardPorts": [3000, 4200, 5432, 6379],
+  "portsAttributes": {
+    "3000": {
+      "label": "NestJS API",
+      "onAutoForward": "notify"
+    },
+    "4200": {
+      "label": "Angular Frontend",
+      "onAutoForward": "openBrowser"
+    },
+    "5432": {
+      "label": "PostgreSQL 16",
+      "onAutoForward": "silent"
+    },
+    "6379": {
+      "label": "Redis 7",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "rustup target add wasm32-unknown-unknown && cargo install --locked stellar-cli@26.1.0 --features opt && npm ci && (cd api && npm ci) && (cd frontend && npm ci)",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "angular.ng-template",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "bierner.markdown-mermaid"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "rust-analyzer.check.command": "clippy",
+        "typescript.tsdk": "api/node_modules/typescript/lib"
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}

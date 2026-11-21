@@ -230,6 +230,10 @@ carbonchain/
 
 ## Getting Started
 
+> **New contributor?** Use our one-click [Dev Container](.devcontainer/devcontainer.json) or follow the step-by-step [Contributor Onboarding Guide](docs/guides/CONTRIBUTOR_SETUP.md) to get Rust, Soroban CLI, Node.js, PostgreSQL, and Redis running in minutes.
+>
+> For smart contract internals, see the [Soroban State-Machine & Storage Architecture Guide](docs/contracts/state-machine.md).
+
 ### 1. Clone the repository
 
 ```bash
@@ -474,6 +478,7 @@ See `docs/guides/DOCTOR_COMMAND.md` for complete documentation.
 
 ### Getting Started
 
+- `docs/guides/CONTRIBUTOR_SETUP.md` — Dev container & local onboarding guide
 - `QUICK_START.md` — Quick reference with examples
 - `CONTRIBUTING.md` — Contribution guidelines (Stellar Wave)
 - `CHANGELOG.md` — Version history
