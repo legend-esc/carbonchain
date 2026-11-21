@@ -3,8 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { VerifiersService } from './verifiers.service';
 import { VerifiersController } from './verifiers.controller';
-import { DisputesController } from './disputes.controller';
-import { DisputesService } from './disputes.service';
 import { StellarModule } from '../stellar/stellar.module';
 import { VerifierEntity } from './verifier.entity';
 import {
@@ -25,14 +23,13 @@ import {
     TypeOrmModule.forFeature([VerifierEntity, VerifierApplicationEntity]),
     AuthModule,
   ],
-  controllers: [VerifiersController, DisputesController],
+  controllers: [VerifiersController],
   providers: [
     VerifiersService,
     VerifierRepository,
     verifierRepositoryProvider,
     VerifierApplicationRepository,
     verifierApplicationRepositoryProvider,
-    DisputesService,
   ],
   exports: [VerifiersService],
 })

@@ -4,12 +4,10 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { UsersController } from './users.controller';
 import { StellarAuthStrategy } from './stellar-auth.strategy';
 import { StellarModule } from '../stellar/stellar.module';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AdminGuard } from '../admin/admin.guard';
-import { NotificationsService } from '../common/notifications.service';
 
 @Module({
   imports: [
@@ -26,8 +24,8 @@ import { NotificationsService } from '../common/notifications.service';
       }),
     }),
   ],
-  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard, AdminGuard, NotificationsService],
-  controllers: [AuthController, UsersController],
+  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard, AdminGuard],
+  controllers: [AuthController],
   exports: [AuthService, JwtAuthGuard],
 })
 export class AuthModule {}

@@ -134,16 +134,6 @@ Desktop.ini
 *.local
 *.local.*
 
-# Local .env overrides (never commit real credentials)
-.env.local
-.env.*.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Local secrets directory
-secrets/
-
 # ── PDF / generated certificate artifacts ─────────────────────────────────────
 # Retirement certificate PDFs are ephemeral; never commit generated PDFs.
 *.pdf
