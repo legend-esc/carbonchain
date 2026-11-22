@@ -1,0 +1,41 @@
+<!-- Issue #1335 — ProjectMapComponent template -->
+
+@if (loading()) {
+  <p class="map-status" role="status">Loading project locations…</p>
+} @else if (error()) {
+  <p class="map-error" role="alert">{{ error() }}</p>
+}
+
+<div
+  #mapContainer
+  class="project-map"
+  [class.project-map--loading]="loading()"
+  aria-label="Interactive map of carbon credit project locations"
+  role="region"
+></div>
+
+<!-- Popup card rendered in Angular and teleported into the Leaflet popup via
+     the popupProject() signal.  Leaflet's popup HTML is kept minimal; rich
+     content lives here and is cloned into the popup container. -->
+@if (popupProject(); as p) {
+  <div #popupTpl class="map-popup" aria-label="Project details for {{ p.name }}">
+    <strong class="map-popup__name">{{ p.name }}</strong>
+    @if (p.thumbnail_url) {
+      <img
+        class="map-popup__thumb"
+        [src]="p.thumbnail_url"
+        [alt]="p.name + ' project photo'"
+        loading="lazy"
+      />
+    }
+    <dl class="map-popup__meta">
+      <dt>Methodology</dt>
+      <dd>{{ p.methodology ?? '—' }}</dd>
+      <dt>Available tonnes</dt>
+      <dd>{{ formatTonnes(p.available_tonnes) }}</dd>
+      <dt>Price</dt>
+      <dd>{{ p.price_per_tonne_xlm ? p.price_per_tonne_xlm + ' XLM/t' : '—' }}</dd>
+    </dl>
+    <a class="map-popup__link" [href]="'/projects/' + p.id">View project →</a>
+  </div>
+}

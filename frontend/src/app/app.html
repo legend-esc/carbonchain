@@ -1,6 +1,5 @@
-@if (!onlineStatus.online()) {
-  <div class="offline-banner" role="status">You're offline — showing cached data.</div>
-}
+<!-- Issue #1333 — offline detection banner (replaces the old inline div) -->
+<app-offline-banner />
 
 <header class="app-header">
   <span class="logo">🌿 CarbonChain</span>
@@ -11,6 +10,8 @@
     <a routerLink="/admin">Admin</a>
   </nav>
   <app-network-indicator />
+  <!-- Issue #1334 — currency selector: all prices reformat app-wide -->
+  <app-currency-selector />
   <app-locale-switcher />
   <button
     class="theme-toggle"
@@ -27,6 +28,9 @@
   <router-outlet />
 </main>
 
+<!-- Issue #1336 — rich toast container with txHash explorer links -->
+<app-toast-container />
+<!-- Keep legacy ToastComponent until all callers are migrated -->
 <app-toast />
 <app-install-prompt />
 <app-tx-status-modal />
