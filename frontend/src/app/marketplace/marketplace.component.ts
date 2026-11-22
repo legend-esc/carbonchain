@@ -20,6 +20,7 @@ import { OfferDetailComponent } from './offer-detail.component';
 import { CancelOfferDialogComponent } from './cancel-offer-dialog.component';
 import { PriceHistoryChartComponent } from './price-history-chart.component';
 import { WatchlistComponent } from './watchlist.component';
+import { OrderBookComponent } from './order-book.component';
 
 interface FilterState {
   methodology: string;
@@ -47,6 +48,7 @@ const FOCUSABLE =
     PriceHistoryChartComponent,
     WatchlistComponent,
     TableSkeletonComponent,
+    OrderBookComponent,
   ],
   template: `
     <div class="marketplace">
@@ -143,6 +145,9 @@ const FOCUSABLE =
 
         <!-- Issue #958: watchlist + client-side target-price alerts -->
         <app-watchlist [offers]="visibleOffers()" (alertSelected)="onAlertSelected($event)" />
+
+        <!-- Issue #1328: live order book with depth chart -->
+        <app-order-book />
 
         <!-- Issue #958: price history fed by the indexed event log -->
         @if (historyKey()) {

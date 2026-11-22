@@ -22,6 +22,12 @@ export const routes: Routes = [
   { path: 'portfolio', component: PortfolioComponent, canActivate: [authGuard] },
   { path: 'marketplace', component: MarketplaceComponent, canActivate: [authGuard] },
   { path: 'retire', component: RetireComponent, canActivate: [authGuard] },
+  {
+    path: 'retire/wizard',
+    loadComponent: () =>
+      import('./retire/retire-wizard.component').then((m) => m.RetireWizardComponent),
+    canActivate: [authGuard],
+  },
   { path: 'credits/:id', component: CreditDetailComponent, canActivate: [authGuard] },
   {
     path: 'projects',
@@ -38,4 +44,12 @@ export const routes: Routes = [
   },
   { path: 'verifier/apply', component: VerifierApplyComponent },
   { path: 'verifier/status/:address', component: VerifierStatusComponent },
+  {
+    path: 'verifier/inspect/:projectId',
+    loadComponent: () =>
+      import('./verifier/verifier-inspection.component').then(
+        (m) => m.VerifierInspectionComponent,
+      ),
+    canActivate: [authGuard],
+  },
 ];
