@@ -5,6 +5,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@shared': resolve(__dirname, '../shared/index.ts'),
+      // Issue #1335 — stub Leaflet in tests so the dynamic import() in
+      // ProjectMapComponent resolves without the package being installed.
+      leaflet: resolve(__dirname, 'src/app/projects/__mocks__/leaflet.ts'),
     },
   },
   test: {
