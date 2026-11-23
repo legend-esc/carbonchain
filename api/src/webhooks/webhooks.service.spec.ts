@@ -5,6 +5,7 @@ import { getDataSourceToken } from '@nestjs/typeorm';
 import axios from 'axios';
 import { createHmac } from 'crypto';
 import { WebhooksService } from './webhooks.service';
+import { WebhookFilterService } from './webhook-filter.service';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -27,6 +28,7 @@ function buildMockDataSource() {
       failure_count: number;
       created_at: Date;
       last_triggered_at: Date | null;
+      filter_criteria: string | null;
     }
   > = {};
 
@@ -51,11 +53,12 @@ function buildMockDataSource() {
 
     // INSERT webhook
     if (s.startsWith('INSERT INTO webhooks')) {
-      const [id, url, events, secret] = params as [
+      const [id, url, events, secret, filter_criteria = null] = params as [
         string,
         string,
         string[],
         string,
+        string | null,
       ];
       webhooks[id] = {
         id,
@@ -66,6 +69,7 @@ function buildMockDataSource() {
         failure_count: 0,
         created_at: new Date(),
         last_triggered_at: null,
+        filter_criteria: filter_criteria ?? null,
       };
       return [];
     }
@@ -114,7 +118,6 @@ function buildMockDataSource() {
         (w) => w.active && w.events.includes(eventType),
       );
     }
-
     // INSERT delivery
     if (s.startsWith('INSERT INTO webhook_deliveries')) {
       const [id, webhook_id, event_id, event_type, payload_json] =
@@ -346,6 +349,7 @@ describe('WebhooksService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WebhooksService,
+        WebhookFilterService,
         { provide: ConfigService, useValue: mockConfigService },
         { provide: getDataSourceToken(), useValue: mockDs },
       ],
@@ -765,6 +769,115 @@ describe('WebhooksService', () => {
 
     it('getSignatureHeaderName returns x-carbonchain-signature', () => {
       expect(service.getSignatureHeaderName()).toBe('x-carbonchain-signature');
+    });
+  });
+
+  // ── #1307 — Webhook delivery filtering ──────────────────────────────────────
+
+  describe('#1307 Webhook event filtering', () => {
+    it('registerWebhook persists filter_criteria in the store', async () => {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      const filterCriteria = { methodologies: ['VCS'], min_tonnes: 50 };
+      const result = await service.registerWebhook(
+        'https://example.com/hook',
+        ['credit.retired'],
+        filterCriteria,
+      );
+
+      expect(result.filterCriteria).toEqual(filterCriteria);
+
+      // Verify the in-memory store captured the JSON.
+      const stored = Object.values(mockDs._store.webhooks)[0];
+      expect(stored.filter_criteria).toBe(JSON.stringify(filterCriteria));
+    });
+
+    it('registerWebhook sets filter_criteria to null when omitted', async () => {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      await service.registerWebhook('https://example.com/hook', ['credit.retired']);
+
+      const stored = Object.values(mockDs._store.webhooks)[0];
+      expect(stored.filter_criteria).toBeNull();
+    });
+
+    it('triggerWebhooks skips a webhook whose methodology filter does not match', async () => {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      // Register with a VCS-only filter.
+      const wh = await service.registerWebhook(
+        'https://example.com/hook',
+        ['credit.retired'],
+        { methodologies: ['VCS'] },
+      );
+      // Manually set filter_criteria in the store so the SELECT query returns it.
+      mockDs._store.webhooks[wh.id].filter_criteria = JSON.stringify({
+        methodologies: ['VCS'],
+      });
+
+      // Trigger with a CDM methodology event.
+      await service.triggerWebhooks('credit.retired', {
+        id: 'evt-filter-1',
+        methodology: 'CDM',
+      });
+
+      // No delivery should have been enqueued.
+      expect(Object.keys(mockDs._store.deliveries).length).toBe(0);
+    });
+
+    it('triggerWebhooks enqueues a delivery when methodology filter matches', async () => {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      const wh = await service.registerWebhook(
+        'https://example.com/hook',
+        ['credit.retired'],
+        { methodologies: ['VCS'] },
+      );
+      mockDs._store.webhooks[wh.id].filter_criteria = JSON.stringify({
+        methodologies: ['VCS'],
+      });
+
+      await service.triggerWebhooks('credit.retired', {
+        id: 'evt-filter-2',
+        methodology: 'VCS',
+      });
+
+      expect(Object.keys(mockDs._store.deliveries).length).toBe(1);
+    });
+
+    it('triggerWebhooks skips when min_tonnes threshold is not met', async () => {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      const wh = await service.registerWebhook(
+        'https://example.com/hook',
+        ['credit.retired'],
+        { min_tonnes: 100 },
+      );
+      mockDs._store.webhooks[wh.id].filter_criteria = JSON.stringify({
+        min_tonnes: 100,
+      });
+
+      await service.triggerWebhooks('credit.retired', {
+        id: 'evt-filter-3',
+        tonnes_retired: 10,
+      });
+
+      expect(Object.keys(mockDs._store.deliveries).length).toBe(0);
+    });
+
+    it('triggerWebhooks enqueues when no filter_criteria is set (default-allow)', async () => {
+      jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
+
+      await service.registerWebhook(
+        'https://example.com/hook',
+        ['credit.retired'],
+      );
+
+      await service.triggerWebhooks('credit.retired', {
+        id: 'evt-filter-4',
+      });
+
+      expect(Object.keys(mockDs._store.deliveries).length).toBe(1);
     });
   });
 });
