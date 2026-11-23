@@ -15,6 +15,11 @@ import { promisify } from 'util';
 import axios, { AxiosError } from 'axios';
 import ipRangeCheck from 'ip-range-check';
 import { Counter, Histogram, register } from 'prom-client';
+import {
+  WebhookFilterService,
+  type WebhookFilterCriteria,
+  type FilterableEventPayload,
+} from './webhook-filter.service';
 
 const dnsLookupAsync = promisify(dnsLookup);
 
@@ -78,6 +83,8 @@ export interface WebhookWithSecret extends Webhook {
 /** Returned once at registration so the caller can store the signing secret. */
 export interface WebhookRegistrationResult extends Webhook {
   secret: string;
+  /** #1307 — filter criteria stored with this webhook (if any). */
+  filterCriteria?: WebhookFilterCriteria | null;
 }
 
 /** Returned once when a webhook secret is rotated (#1183). */
@@ -173,6 +180,7 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly configService: ConfigService,
+    private readonly webhookFilterService: WebhookFilterService,
   ) {}
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -267,25 +275,33 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
    * #913 — A random 32-byte signing secret is generated and stored.  It is
    *         returned exactly once in WebhookRegistrationResult.secret; callers
    *         must persist it because subsequent GET responses omit it.
+   * #1307 — Optional filterCriteria (methodologies, min_tonnes, event_types)
+   *         is persisted in the filter_criteria JSON column.
    */
   async registerWebhook(
     url: string,
     events: string[],
+    filterCriteria?: WebhookFilterCriteria | null,
   ): Promise<WebhookRegistrationResult> {
     await this.validateWebhookUrl(url);
 
     const id = `webhook_${Date.now()}_${randomBytes(4).toString('hex')}`;
     const secret = randomBytes(32).toString('hex');
+    const criteriaJson =
+      filterCriteria && Object.keys(filterCriteria).length > 0
+        ? JSON.stringify(filterCriteria)
+        : null;
 
     await this.dataSource.query(
       `INSERT INTO webhooks
-         (id, url, events, active, secret, failure_count, created_at)
-       VALUES ($1, $2, $3, TRUE, $4, 0, NOW())`,
-      [id, url, events, secret],
+         (id, url, events, active, secret, failure_count, created_at, filter_criteria)
+       VALUES ($1, $2, $3, TRUE, $4, 0, NOW(), $5)`,
+      [id, url, events, secret, criteriaJson],
     );
 
     this.logger.log(
-      `Registered webhook ${id} for events: ${events.join(', ')}`,
+      `Registered webhook ${id} for events: ${events.join(', ')}` +
+        (criteriaJson ? ` with filter criteria` : ''),
     );
 
     return {
@@ -296,6 +312,7 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
       failureCount: 0,
       createdAt: new Date(),
       secret, // returned once — store it
+      filterCriteria: filterCriteria ?? null,
     };
   }
 
@@ -460,10 +477,15 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
    *
    * #910 — The full serialised payload is written to `payload_json` at this
    *         point and never reconstructed on retry.
+   * #1307 — Before enqueuing, `WebhookFilterService.shouldDeliver` checks
+   *          the webhook's optional `filter_criteria` JSON column.  Events
+   *          that do not match configured criteria are silently skipped.
    */
   async triggerWebhooks(eventType: string, eventData: unknown): Promise<void> {
-    const webhooks = await this.dataSource.query<{ id: string; url: string }[]>(
-      `SELECT id, url
+    const webhooks = await this.dataSource.query<
+      { id: string; url: string; filter_criteria: string | null }[]
+    >(
+      `SELECT id, url, filter_criteria
          FROM webhooks
         WHERE active = TRUE
           AND $1 = ANY(events)`,
@@ -471,13 +493,25 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
     );
 
     for (const webhook of webhooks) {
+      // #1307 — evaluate filter criteria before enqueuing.
+      const criteria = this.webhookFilterService.parseCriteria(
+        webhook.filter_criteria,
+      );
+      const payload = eventData as FilterableEventPayload;
+      if (!this.webhookFilterService.shouldDeliver(eventType, payload, criteria)) {
+        this.logger.debug(
+          `Webhook ${webhook.id} skipped for event "${eventType}" — filtered by criteria`,
+        );
+        continue;
+      }
+
       const deliveryId = `delivery_${Date.now()}_${randomBytes(4).toString('hex')}`;
       const eventId =
         (eventData as Record<string, unknown>)?.['id'] ?? 'unknown';
       const eventIdStr =
         typeof eventId === 'string' ? eventId : JSON.stringify(eventId);
 
-      const payload = {
+      const payloadObj = {
         id: deliveryId,
         eventId: eventIdStr,
         eventType,
@@ -495,7 +529,7 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
           webhook.id,
           eventIdStr,
           eventType,
-          JSON.stringify(payload),
+          JSON.stringify(payloadObj),
         ],
       );
 

@@ -124,6 +124,19 @@ export class MarketplaceGateway implements OnGatewayConnection, OnGatewayDisconn
   }
 
   /**
+   * #1308 — Broadcast offer.expired event when the stale-offer sync task
+   * marks an on-chain expired offer as EXPIRED in the database.
+   */
+  broadcastOfferExpired(offerId: string, seller: string): void {
+    this.server.to('marketplace:offers').emit('offer.expired', {
+      type: 'offer.expired',
+      timestamp: new Date().toISOString(),
+      data: { offerId, seller },
+    });
+    this.logger.debug(`Broadcasted offer.expired: ${offerId}`);
+  }
+
+  /**
    * Get real-time marketplace statistics
    */
   @SubscribeMessage('getStats')
@@ -163,7 +176,8 @@ export class MarketplaceGateway implements OnGatewayConnection, OnGatewayDisconn
    * Get subscribed clients by room
    */
   getSubscribersForRoom(room: string): number {
-    const sockets = this.server.to(`marketplace:${room}`).sockets;
-    return sockets ? Object.keys(sockets).length : 0;
+    const roomKey = `marketplace:${room}`;
+    const socketSet = this.server.sockets.adapter.rooms.get(roomKey);
+    return socketSet ? socketSet.size : 0;
   }
 }

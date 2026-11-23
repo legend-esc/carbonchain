@@ -68,6 +68,7 @@ describe('WebhooksController', () => {
       expect(mockWebhooksService.registerWebhook).toHaveBeenCalledWith(
         dto.url,
         dto.events,
+        undefined,
       );
       expect(result).toEqual(expectedResult);
     });

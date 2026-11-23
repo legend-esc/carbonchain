@@ -1,10 +1,12 @@
 import { Module, OnApplicationBootstrap, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitter } from 'events';
 import { RetirementService, EVENT_EMITTER } from './retirement.service';
 import { RetirementController } from './retirement.controller';
 import { CreditRetirementController } from './credit-retirement.controller';
 import { CertificatesController } from './certificates.controller';
+import { BadgeController } from './badge.controller';
 import { CertificateService } from './certificate.service';
 import { CalculatorService } from './calculator.service';
 import { CertHashReconciler } from './cert-hash-reconciler.service';
@@ -23,12 +25,16 @@ import { NonceService } from '../common/nonce.service';
     ConfigModule,
     StellarModule,
     AuthModule,
+    // Required for @InjectDataSource() used by OpenSearchService fallback.
+    TypeOrmModule.forFeature([]),
     forwardRef(() => CreditsModule),
   ],
   controllers: [
     RetirementController,
     CreditRetirementController,
     CertificatesController,
+    // #1306 — SVG badge endpoint
+    BadgeController,
   ],
   providers: [
     RetirementService,
