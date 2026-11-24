@@ -252,4 +252,61 @@ describe('ReconciliationService', () => {
       ).resolves.not.toThrow();
     });
   });
+
+  // ── reconcileOffers ───────────────────────────────────────────────────────
+
+  describe('reconcileOffers', () => {
+    it('logs a discrepancy when an offer is returned as active=false by the contract', async () => {
+      // Simulate the contract returning an offer with active=false
+      mockStellarService.readContract.mockResolvedValueOnce([
+        { id: BigInt(42), active: false, seller: 'GSELLER', price_xlm: BigInt(1000000) },
+      ]);
+      jest.spyOn(service, 'fetchChainStatus').mockResolvedValue(null);
+
+      const result = await service.reconcileOffers();
+      expect(result.detected).toBe(1);
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO reconciliation_discrepancies'),
+        expect.arrayContaining(['offer', '42', 'active', 'closed', false]),
+      );
+    });
+
+    it('returns 0 drift when all offers are active', async () => {
+      mockStellarService.readContract.mockResolvedValueOnce([
+        { id: BigInt(1), active: true },
+        { id: BigInt(2), active: true },
+      ]);
+
+      const result = await service.reconcileOffers();
+      expect(result.detected).toBe(0);
+    });
+
+    it('returns 0 and skips gracefully when MARKETPLACE_CONTRACT_ID is not set', async () => {
+      // Service constructed with empty marketplace contract id
+      const originalGet = mockConfigService.get as jest.Mock;
+      originalGet.mockImplementation((key: string) => {
+        if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return 'CCREDITREGISTRY';
+        if (key === 'MARKETPLACE_CONTRACT_ID') return '';
+        return undefined;
+      });
+
+      // Re-create service with empty marketplace contract
+      client.register.clear();
+      const module = await Test.createTestingModule({
+        providers: [
+          ReconciliationService,
+          { provide: getRepositoryToken(CreditEntity), useValue: mockCreditRepo },
+          { provide: StellarService, useValue: mockStellarService },
+          { provide: ConfigService, useValue: mockConfigService },
+          { provide: getDataSourceToken(), useValue: mockDataSource },
+          { provide: WebhooksService, useValue: mockWebhooksService },
+        ],
+      }).compile();
+
+      const svc = module.get<ReconciliationService>(ReconciliationService);
+      const result = await svc.reconcileOffers();
+      expect(result.detected).toBe(0);
+      expect(mockStellarService.readContract).not.toHaveBeenCalled();
+    });
+  });
 });
