@@ -1,16 +1,20 @@
 /**
- * #927 — ReconciliationService unit tests
+ * #1303 — ReconciliationService unit tests
  *
- * Seeds a drifted credit row (DB says Active, chain says Retired), runs
- * reconcileIds(), and asserts the row is corrected plus a drift record is
- * returned.
+ * Covers:
+ *  - drift detection and correction via reconcileIds()
+ *  - discrepancy logging to reconciliation_discrepancies
+ *  - webhook alert fired when drift > 0 in runNightlyReconciliation()
+ *  - no alert when no drift is found
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { ReconciliationService } from './reconciliation.service';
 import { CreditEntity } from '../credits/credit.entity';
 import { StellarService } from '../stellar/stellar.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { CreditStatus } from '../../../shared';
 import client from 'prom-client';
 
@@ -41,8 +45,9 @@ const mockStellarService = { readContract: jest.fn() };
 const mockConfigService = {
   get: jest.fn().mockReturnValue('CCREDITREGISTRY'),
 };
+const mockDataSource = { query: jest.fn().mockResolvedValue([]) };
+const mockWebhooksService = { triggerWebhooks: jest.fn().mockResolvedValue(undefined) };
 
-// In-memory repository mock
 let inMemoryCredits: CreditEntity[] = [];
 
 const mockCreditRepo = {
@@ -71,7 +76,7 @@ describe('ReconciliationService', () => {
   beforeEach(async () => {
     inMemoryCredits = [];
     jest.clearAllMocks();
-    client.register.clear(); // Clear prom-client registry to avoid "metric already registered" errors
+    client.register.clear();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,26 +84,21 @@ describe('ReconciliationService', () => {
         { provide: getRepositoryToken(CreditEntity), useValue: mockCreditRepo },
         { provide: StellarService, useValue: mockStellarService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: getDataSourceToken(), useValue: mockDataSource },
+        { provide: WebhooksService, useValue: mockWebhooksService },
       ],
     }).compile();
 
     service = module.get<ReconciliationService>(ReconciliationService);
   });
 
+  // ── reconcileIds ──────────────────────────────────────────────────────────
+
   describe('reconcileIds — direct-chain mutation simulation', () => {
     it('detects and corrects a drifted credit (DB=Active, chain=retired)', async () => {
       const creditId = 'deadbeef';
       inMemoryCredits.push(makeCredit(creditId, CreditStatus.Active));
 
-      // Simulate on-chain status = retired (direct contract call bypassed API).
-      mockStellarService.readContract.mockResolvedValueOnce({
-        // scValToNative is mocked via the module — we need the raw pre-parsed value.
-        // ReconciliationService calls scValToNative(retval) and reads native['status'].
-        // Since we can't import scVal types easily in tests, we fake the return by
-        // having fetchChainStatus return 'retired' — we test that path via a spy.
-      });
-
-      // Spy on fetchChainStatus to inject the chain response directly.
       jest.spyOn(service, 'fetchChainStatus').mockResolvedValueOnce('retired');
 
       const drifts = await service.reconcileIds([creditId]);
@@ -109,10 +109,22 @@ describe('ReconciliationService', () => {
         dbStatus: CreditStatus.Active,
         chainStatus: 'retired',
       });
-
-      // DB row should be corrected.
       expect(mockCreditRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ id: creditId, status: 'retired' }),
+      );
+    });
+
+    it('logs a discrepancy row for each drift', async () => {
+      const creditId = 'deadbeef';
+      inMemoryCredits.push(makeCredit(creditId, CreditStatus.Active));
+
+      jest.spyOn(service, 'fetchChainStatus').mockResolvedValueOnce('retired');
+
+      await service.reconcileIds([creditId]);
+
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO reconciliation_discrepancies'),
+        expect.arrayContaining(['credit', creditId]),
       );
     });
 
@@ -146,9 +158,38 @@ describe('ReconciliationService', () => {
     });
   });
 
+  // ── runNightlyReconciliation ──────────────────────────────────────────────
+
   describe('runNightlyReconciliation', () => {
     it('runs without throwing when there are no credits', async () => {
       await expect(service.runNightlyReconciliation()).resolves.not.toThrow();
+    });
+
+    it('fires a webhook alert when drift is detected', async () => {
+      inMemoryCredits.push(makeCredit('aa', CreditStatus.Active));
+
+      jest
+        .spyOn(service, 'fetchChainStatus')
+        .mockResolvedValueOnce('retired');
+
+      await service.runNightlyReconciliation();
+
+      expect(mockWebhooksService.triggerWebhooks).toHaveBeenCalledWith(
+        'reconciliation.drift_detected',
+        expect.objectContaining({ driftCount: 1, correctedCount: 1 }),
+      );
+    });
+
+    it('does NOT fire a webhook when there is no drift', async () => {
+      inMemoryCredits.push(makeCredit('bb', CreditStatus.Active));
+
+      jest
+        .spyOn(service, 'fetchChainStatus')
+        .mockResolvedValueOnce(CreditStatus.Active);
+
+      await service.runNightlyReconciliation();
+
+      expect(mockWebhooksService.triggerWebhooks).not.toHaveBeenCalled();
     });
 
     it('corrects drifted rows across a full DB scan', async () => {
@@ -159,16 +200,113 @@ describe('ReconciliationService', () => {
 
       jest
         .spyOn(service, 'fetchChainStatus')
-        .mockResolvedValueOnce('retired') // aa drifted
-        .mockResolvedValueOnce(CreditStatus.Active); // bb ok
+        .mockResolvedValueOnce('retired')
+        .mockResolvedValueOnce(CreditStatus.Active);
 
       await service.runNightlyReconciliation();
 
-      // Only credit 'aa' should have been saved.
       expect(mockCreditRepo.save).toHaveBeenCalledTimes(1);
       expect(mockCreditRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'aa', status: 'retired' }),
       );
+    });
+
+    it('does not throw when webhook service fails', async () => {
+      inMemoryCredits.push(makeCredit('cc', CreditStatus.Active));
+      jest.spyOn(service, 'fetchChainStatus').mockResolvedValueOnce('retired');
+      mockWebhooksService.triggerWebhooks.mockRejectedValueOnce(
+        new Error('webhook delivery failed'),
+      );
+
+      await expect(service.runNightlyReconciliation()).resolves.not.toThrow();
+    });
+  });
+
+  // ── logDiscrepancy ────────────────────────────────────────────────────────
+
+  describe('logDiscrepancy', () => {
+    it('writes an INSERT to reconciliation_discrepancies', async () => {
+      await service.logDiscrepancy({
+        entityType: 'credit',
+        entityId: 'abc123',
+        dbStatus: 'active',
+        chainStatus: 'retired',
+        corrected: true,
+      });
+
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO reconciliation_discrepancies'),
+        expect.arrayContaining(['credit', 'abc123', 'active', 'retired', true]),
+      );
+    });
+
+    it('does not throw when the DB write fails', async () => {
+      mockDataSource.query.mockRejectedValueOnce(new Error('DB unavailable'));
+      await expect(
+        service.logDiscrepancy({
+          entityType: 'offer',
+          entityId: 'offer-1',
+          dbStatus: 'open',
+          chainStatus: 'closed',
+        }),
+      ).resolves.not.toThrow();
+    });
+  });
+
+  // ── reconcileOffers ───────────────────────────────────────────────────────
+
+  describe('reconcileOffers', () => {
+    it('logs a discrepancy when an offer is returned as active=false by the contract', async () => {
+      // Simulate the contract returning an offer with active=false
+      mockStellarService.readContract.mockResolvedValueOnce([
+        { id: BigInt(42), active: false, seller: 'GSELLER', price_xlm: BigInt(1000000) },
+      ]);
+      jest.spyOn(service, 'fetchChainStatus').mockResolvedValue(null);
+
+      const result = await service.reconcileOffers();
+      expect(result.detected).toBe(1);
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO reconciliation_discrepancies'),
+        expect.arrayContaining(['offer', '42', 'active', 'closed', false]),
+      );
+    });
+
+    it('returns 0 drift when all offers are active', async () => {
+      mockStellarService.readContract.mockResolvedValueOnce([
+        { id: BigInt(1), active: true },
+        { id: BigInt(2), active: true },
+      ]);
+
+      const result = await service.reconcileOffers();
+      expect(result.detected).toBe(0);
+    });
+
+    it('returns 0 and skips gracefully when MARKETPLACE_CONTRACT_ID is not set', async () => {
+      // Service constructed with empty marketplace contract id
+      const originalGet = mockConfigService.get as jest.Mock;
+      originalGet.mockImplementation((key: string) => {
+        if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return 'CCREDITREGISTRY';
+        if (key === 'MARKETPLACE_CONTRACT_ID') return '';
+        return undefined;
+      });
+
+      // Re-create service with empty marketplace contract
+      client.register.clear();
+      const module = await Test.createTestingModule({
+        providers: [
+          ReconciliationService,
+          { provide: getRepositoryToken(CreditEntity), useValue: mockCreditRepo },
+          { provide: StellarService, useValue: mockStellarService },
+          { provide: ConfigService, useValue: mockConfigService },
+          { provide: getDataSourceToken(), useValue: mockDataSource },
+          { provide: WebhooksService, useValue: mockWebhooksService },
+        ],
+      }).compile();
+
+      const svc = module.get<ReconciliationService>(ReconciliationService);
+      const result = await svc.reconcileOffers();
+      expect(result.detected).toBe(0);
+      expect(mockStellarService.readContract).not.toHaveBeenCalled();
     });
   });
 });

@@ -475,7 +475,7 @@ export class VerifiersService implements OnApplicationBootstrap {
    * Reads the on-chain multi-sig threshold configured via `set_required_approvals`.
    * Returns 0 (treated as "unconfigured") when the contract is unreachable.
    */
-  private async getRequiredApprovals(): Promise<number> {
+  protected async getRequiredApprovals(): Promise<number> {
     try {
       const retval = await this.stellarService.readContract(
         this.contractId,
@@ -492,7 +492,7 @@ export class VerifiersService implements OnApplicationBootstrap {
   /**
    * Reads the number of distinct verifier approvals a credit has received.
    */
-  private async getCreditApprovalCount(creditId: string): Promise<number> {
+  protected async getCreditApprovalCount(creditId: string): Promise<number> {
     const args = [
       nativeToScVal(Buffer.from(creditId, 'hex'), { type: 'bytes' }),
     ];

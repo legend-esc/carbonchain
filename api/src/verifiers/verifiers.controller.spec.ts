@@ -5,6 +5,7 @@ import { CacheService } from '../common/cache.service';
 import { StellarService } from '../stellar/stellar.service';
 import { VerifiersController } from './verifiers.controller';
 import { VerifiersService } from './verifiers.service';
+import { VerifierMetricsService } from './verifier-metrics.service';
 import { VerifierReputation } from '../../../shared';
 
 // ── Minimal mock for VerifiersService ─────────────────────────────────────────
@@ -21,6 +22,10 @@ const mockVerifiersService = {
   getApprovalHistory: jest.fn(),
   approveCredit: jest.fn(),
   getReputation: jest.fn(),
+};
+
+const mockVerifierMetricsService = {
+  getMetrics: jest.fn(),
 };
 
 const mockConfigService = {
@@ -50,6 +55,7 @@ describe('VerifiersController', () => {
       controllers: [VerifiersController],
       providers: [
         { provide: VerifiersService, useValue: mockVerifiersService },
+        { provide: VerifierMetricsService, useValue: mockVerifierMetricsService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: StellarService, useValue: mockStellarService },
         { provide: CacheService, useValue: mockCacheService },

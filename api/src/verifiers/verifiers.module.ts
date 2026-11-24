@@ -15,12 +15,15 @@ import {
   VerifierApplicationRepository,
   verifierApplicationRepositoryProvider,
 } from './verifier-application.repository';
+// #1305 — SLA / turnaround metrics service.
+import { VerifierMetricsService } from './verifier-metrics.service';
+import { EventEntity } from '../events/event.entity';
 
 @Module({
   imports: [
     ConfigModule,
     StellarModule,
-    TypeOrmModule.forFeature([VerifierEntity, VerifierApplicationEntity]),
+    TypeOrmModule.forFeature([VerifierEntity, VerifierApplicationEntity, EventEntity]),
     AuthModule,
   ],
   controllers: [VerifiersController],
@@ -30,7 +33,9 @@ import {
     verifierRepositoryProvider,
     VerifierApplicationRepository,
     verifierApplicationRepositoryProvider,
+    // #1305
+    VerifierMetricsService,
   ],
-  exports: [VerifiersService],
+  exports: [VerifiersService, VerifierMetricsService],
 })
 export class VerifiersModule {}

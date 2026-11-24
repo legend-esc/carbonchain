@@ -11,6 +11,8 @@ import { AuthModule } from '../auth/auth.module';
 import { CreditEntity } from '../credits/credit.entity';
 import { RetirementEntity } from '../retirement/retirement.entity';
 import { WashTradingDetectorService } from './wash-trading-detector.service';
+// #1304 — OHLCV analytics service.
+import { MarketplaceAnalyticsService } from './marketplace-analytics.service';
 
 @Module({
   imports: [
@@ -22,7 +24,6 @@ import { WashTradingDetectorService } from './wash-trading-detector.service';
     // EventEmitterModule required by MarketplaceGateway.
     EventEmitterModule.forRoot(),
     // Note: ScheduleModule.forRoot() is already registered globally in AppModule.
-    // Registering it a second time here would cause scheduler conflicts.
   ],
   controllers: [MarketplaceController],
   providers: [

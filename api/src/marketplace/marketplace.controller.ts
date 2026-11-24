@@ -9,7 +9,7 @@ import {
   Request,
   ParseIntPipe,
   UseGuards,
-  BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { MarketplaceService, KeysetPage } from './marketplace.service';
@@ -23,6 +23,12 @@ import {
   CandleData,
   OhlcvParams,
 } from './wash-trading-detector.service';
+// #1304 — Full OHLCV analytics service.
+import {
+  MarketplaceAnalyticsService,
+  OhlcvCandle,
+  Timeframe,
+} from './marketplace-analytics.service';
 
 @ApiTags('marketplace')
 @Controller('marketplace')
@@ -30,6 +36,8 @@ export class MarketplaceController {
   constructor(
     private readonly marketplaceService: MarketplaceService,
     private readonly washTradingDetectorService: WashTradingDetectorService,
+    @Optional()
+    private readonly analyticsService?: MarketplaceAnalyticsService,
   ) {}
 
   /**
@@ -152,26 +160,67 @@ export class MarketplaceController {
   }
 
   /**
-   * Issue #1321 — OHLCV candle data endpoint.
+   * #1304 — OHLCV candlestick data endpoint.
    *
-   * GET /marketplace/candles?creditId=&from=&to=&interval=
+   * GET /marketplace/candles?creditId=&methodology=&timeframe=1d&from=&to=
    *
-   * Returns OHLCV candle data, excluding credits flagged as wash trades by
-   * WashTradingDetectorService.  The underlying data source is a stub until a
-   * price-history table is available; this endpoint returns an empty array in
-   * the current implementation.
+   * Aggregates trade executions (retirements) into OHLCV buckets per the
+   * requested timeframe, forward-fills zero-volume gaps, and caches the result
+   * in Redis for 5 minutes.  Wash-traded credits are filtered out before
+   * returning.
+   *
+   * Timeframe values: 1h, 1d (default), 1w.
+   * from / to: Unix epoch seconds.
    */
   @ApiOperation({
-    summary:
-      'Get OHLCV candle data, excluding wash-traded credits (Issue #1321)',
+    summary: 'Get OHLCV candlestick data for price charts (#1304)',
   })
   @ApiQuery({ name: 'creditId', required: false, type: String })
+  @ApiQuery({ name: 'methodology', required: false, type: String })
+  @ApiQuery({
+    name: 'timeframe',
+    required: false,
+    enum: ['1h', '1d', '1w'],
+    description: 'Candle bucket width. Defaults to 1d.',
+  })
   @ApiQuery({ name: 'from', required: false, type: Number })
   @ApiQuery({ name: 'to', required: false, type: Number })
-  @ApiQuery({ name: 'interval', required: false, type: String })
-  @ApiResponse({ status: 200, description: 'OHLCV candle data array' })
+  @ApiResponse({ status: 200, description: 'OHLCV candle array' })
+  @ApiResponse({ status: 400, description: 'Invalid timeframe or date range' })
+  @UseReplicaForRead()
   @Get('candles')
-  getCandles(@Query() query: OhlcvParams): CandleData[] {
-    return this.washTradingDetectorService.getOhlcvCandles(query);
+  async getCandles(
+    @Query('creditId') creditId?: string,
+    @Query('methodology') methodology?: string,
+    @Query('timeframe') timeframe?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<OhlcvCandle[]> {
+    if (!this.analyticsService) {
+      // Fallback to wash-trading stub when analytics service is not wired
+      // (e.g. in environments where the retirements table is not yet available).
+      return this.washTradingDetectorService.getOhlcvCandles({
+        creditId,
+        from: from ? Number(from) : undefined,
+        to: to ? Number(to) : undefined,
+        interval: timeframe,
+      }) as unknown as OhlcvCandle[];
+    }
+
+    const suspiciousIds = this.washTradingDetectorService.getSuspiciousCreditIds();
+    // If a specific creditId was requested and it's flagged, return empty.
+    if (creditId && suspiciousIds.includes(creditId)) {
+      return [];
+    }
+
+    const candles = await this.analyticsService.getCandles({
+      creditId,
+      methodology,
+      timeframe: timeframe as Timeframe | undefined,
+      from: from ? Number(from) : undefined,
+      to: to ? Number(to) : undefined,
+    });
+
+    return candles;
   }
 }
