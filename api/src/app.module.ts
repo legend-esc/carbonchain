@@ -1,7 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -9,12 +7,15 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { envValidationSchema } from './env-validation';
 import { CacheModule } from './common/cache.module';
+import { CacheWarmingService } from './common/cache-warming.service';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingMiddleware } from './common/request-logging.middleware';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 import { LoggingMiddleware } from './common/logging.middleware';
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { StructuredExceptionFilter } from './common/filters/structured-exception.filter';
+// #1302 — Tiered rate-limiting guard (anonymous / authenticated / oracle tiers).
+import { CustomThrottlerGuard } from './common/guards/custom-throttler.guard';
 import { HealthModule } from './health/health.module';
 import { StellarModule } from './stellar/stellar.module';
 import { CreditsModule } from './credits/credits.module';
@@ -93,6 +94,8 @@ import { GraphqlModule } from './graphql/graphql.module';
     // Issue #551: globally handle QueryTimeoutError → 503 and standardise all
     // error responses so clients receive consistent JSON error bodies.
     { provide: APP_FILTER, useClass: StructuredExceptionFilter },
+    // #1302 — Apply tiered rate limiting globally (anonymous / authenticated / oracle).
+    { provide: APP_GUARD, useClass: CustomThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {

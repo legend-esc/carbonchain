@@ -28,11 +28,19 @@ import {
 import { CreditMetadata, VerifierReputation } from '../../../shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../admin/admin.guard';
+// #1305 — SLA / turnaround metrics.
+import {
+  VerifierMetricsService,
+  VerifierMetrics,
+} from './verifier-metrics.service';
 
 @ApiTags('verifiers')
 @Controller('verifiers')
 export class VerifiersController {
-  constructor(private readonly verifiersService: VerifiersService) {}
+  constructor(
+    private readonly verifiersService: VerifiersService,
+    private readonly verifierMetricsService: VerifierMetricsService,
+  ) {}
 
   @ApiOperation({ summary: 'List all registered verifiers' })
   @ApiResponse({ status: 200, description: 'List of verifiers' })
@@ -159,6 +167,41 @@ export class VerifiersController {
       );
     }
     return this.verifiersService.getReputation(address);
+  }
+
+  /**
+   * #1305 — GET /verifiers/:address/metrics
+   *
+   * Returns SLA and approval turnaround metrics for the verifier:
+   *   - average_turnaround_hours  — mean hours from submission to decision
+   *   - approval_rate             — fraction of reviews that were approvals
+   *   - total_tonnes_reviewed     — sum of tonnes across all reviewed credits
+   *   - total_reviewed            — total credits where a final decision was recorded
+   *
+   * Publicly accessible endpoint with 10-minute cache TTL.
+   */
+  @ApiOperation({
+    summary: 'Get SLA and approval turnaround metrics for a verifier (#1305)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Verifier SLA metrics',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid Stellar Ed25519 public key format.',
+  })
+  @Header('Cache-Control', 'max-age=600, public')
+  @Get(':address/metrics')
+  async getMetrics(
+    @Param('address') address: string,
+  ): Promise<VerifierMetrics> {
+    if (!StrKey.isValidEd25519PublicKey(address)) {
+      throw new BadRequestException(
+        `'${address}' is not a valid Stellar Ed25519 public key.`,
+      );
+    }
+    return this.verifierMetricsService.getMetrics(address);
   }
 
   // ── Staking ────────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ describe('VerifiersService.approveCredit', () => {
   let mockStellarService: jest.Mocked<Partial<StellarService>>;
   let mockKeypairService: jest.Mocked<Partial<StellarKeypairService>>;
   let mockCacheService: jest.Mocked<Partial<CacheService>>;
+  let mockConfigService: jest.Mocked<Partial<ConfigService>>;
 
   const CONTRACT_ID = 'CABC123';
   const VERIFIER_ADDR =
