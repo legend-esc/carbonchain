@@ -15,6 +15,13 @@ import { PwaInstallService } from './core/services/pwa-install.service';
 import { LiveAnnouncerService } from './a11y/live-announcer.service';
 import { StellarWalletService, type TxStatusStep, type WalletState } from './core/services/stellar-wallet.service';
 import { MarketEventsStore } from './core/store/market-events.store';
+// Issue #1333
+import { OfflineBannerComponent } from './offline/offline-banner.component';
+// Issue #1336
+import { ToastContainerComponent } from './core/components/toast-container.component';
+// Issue #1334
+import { CurrencySelectorComponent } from './shared/components/price-display.component';
+import { CurrencyStateService } from './shared/services/currency-state.service';
 
 @Component({
   selector: 'app-root',
@@ -30,6 +37,9 @@ import { MarketEventsStore } from './core/store/market-events.store';
     BreadcrumbsComponent,
     InstallPromptComponent,
     TxStatusModalComponent,
+    OfflineBannerComponent,
+    ToastContainerComponent,
+    CurrencySelectorComponent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.css',
@@ -41,6 +51,8 @@ export class App implements OnInit {
   private readonly liveAnnouncer = inject(LiveAnnouncerService);
   private readonly wallet = inject(StellarWalletService, { optional: true });
   private readonly marketEvents = inject(MarketEventsStore, { optional: true });
+  // Issue #1334 — load exchange rates once at startup
+  private readonly currencyState = inject(CurrencyStateService);
 
   private prevWalletState: WalletState | null = null;
   private prevTxStep: TxStatusStep = 'idle';
@@ -52,6 +64,8 @@ export class App implements OnInit {
 
   ngOnInit(): void {
     this.checkForSwUpdate();
+    // Issue #1334 — kick off exchange rate fetch; falls back silently on failure
+    void this.currencyState.loadRates();
   }
 
   private setupLiveAnnouncements(): void {

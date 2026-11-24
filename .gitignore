@@ -153,6 +153,12 @@ BATCH_*.md
 FEATURES_IMPLEMENTED.md
 IMPLEMENTATION_SUMMARY.md
 PR_CHECKLIST.md
+SOROBAN_FEATURES_*.md
+FRONTEND_FEATURES_*.md
+IMPLEMENTATIONS_*.md
+TEST_INVARIANTS_*.md
+WINDOWS_SETUP.md
+QUICK_START.md
 
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env

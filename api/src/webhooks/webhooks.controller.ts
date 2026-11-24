@@ -31,6 +31,7 @@ import {
   WebhookJanitorService,
   JanitorStats,
 } from '../common/webhook-janitor.service';
+import type { WebhookFilterCriteria } from './webhook-filter.service';
 
 @ApiTags('webhooks')
 @Controller('webhooks')
@@ -45,6 +46,8 @@ export class WebhooksController {
    * #913 — A per-webhook signing secret is generated and returned exactly once
    *         in the `secret` field.  Callers must store it; it is not retrievable
    *         via any subsequent GET endpoint.
+   * #1307 — Optional `filterCriteria` restricts which events this webhook
+   *          receives.  Omit for default-allow (receives all events).
    */
   @ApiOperation({ summary: 'Register a new webhook' })
   @ApiResponse({
@@ -65,9 +68,19 @@ export class WebhooksController {
   })
   @Post()
   async registerWebhook(
-    @Body() body: { url: string; events: string[] },
+    @Body()
+    body: {
+      url: string;
+      events: string[];
+      /** #1307 — optional delivery filter criteria. */
+      filterCriteria?: WebhookFilterCriteria;
+    },
   ): Promise<WebhookRegistrationResult> {
-    return this.webhooksService.registerWebhook(body.url, body.events);
+    return this.webhooksService.registerWebhook(
+      body.url,
+      body.events,
+      body.filterCriteria,
+    );
   }
 
   @ApiOperation({ summary: 'List all registered webhooks' })

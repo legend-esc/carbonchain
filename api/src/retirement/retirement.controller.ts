@@ -32,18 +32,6 @@ import { CertificateService } from './certificate.service';
 import { CalculatorService } from './calculator.service';
 import { EstimateDto } from './dto/estimate.dto';
 import type { EstimateResult } from './calculator.service';
-
-export interface CertificateVerification {
-  id: string;
-  credit_id: string;
-  buyer: string;
-  tonnes_retired: string;
-  reason: string;
-  retired_at: number;
-  tx_hash: string;
-  verified: boolean;
-  ledger_sequence?: number;
-}
 import { CertHashReconciler } from './cert-hash-reconciler.service';
 import { CertificateResponseDto } from './dto/certificate-response.dto';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
@@ -57,6 +45,8 @@ export class RetirementController {
     private readonly retirementService: RetirementService,
     private readonly certificateService: CertificateService,
     private readonly calculatorService: CalculatorService,
+    private readonly certHashReconciler: CertHashReconciler,
+    private readonly retireTxService: RetireTxService,
   ) {}
 
   /** POST /retirement/calculator/estimate — calculate CO2e from activity inputs */
@@ -64,11 +54,6 @@ export class RetirementController {
   estimate(@Body() dto: EstimateDto): EstimateResult {
     return this.calculatorService.estimate(dto.activities as any);
   }
-
-  /** POST /retirement — protected: requires JWT */
-    private readonly certHashReconciler: CertHashReconciler,
-    private readonly retireTxService: RetireTxService,
-  ) {}
 
   @ApiOperation({ summary: 'Retire a carbon credit' })
   @ApiResponse({ status: 201, description: 'Credit retired successfully' })

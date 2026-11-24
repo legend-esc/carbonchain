@@ -7,6 +7,7 @@ import { CreditStore } from '../core/store/credit.store';
 import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
 import { ExportReceiptsButtonComponent } from './export-receipts-button.component';
+import { OffsetTimelineComponent } from './offset-timeline.component';
 
 // ── Chart helpers ─────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 @Component({
   selector: 'app-portfolio',
   standalone: true,
-  imports: [CommonModule, RouterModule, ExportReceiptsButtonComponent],
+  imports: [CommonModule, RouterModule, ExportReceiptsButtonComponent, OffsetTimelineComponent],
   template: `
     <div class="portfolio">
       <div class="portfolio__header">
@@ -177,6 +178,9 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
             <span class="summary-sub">Holdings minus retired</span>
           </div>
         </section>
+
+        <!-- Offset Timeline — #1326 -->
+        <app-offset-timeline [retirements]="retirements()" />
 
         <!-- Vintage Year Histogram -->
         <section class="card chart-card" aria-label="Vintage year distribution">
