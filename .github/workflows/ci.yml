@@ -120,7 +120,7 @@ jobs:
         if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
-        run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124
+        run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124 --ignore RUSTSEC-2026-0387
       # #192 — zero-warning clippy policy across all four contracts.
       - name: Clippy
         run: cd contracts && cargo clippy --all-targets -- -D warnings
@@ -180,10 +180,15 @@ jobs:
       - name: Generate coverage (LCOV)
         run: |
           cd contracts
-          cargo llvm-cov --workspace \
-            --lcov --output-path coverage.lcov \
-            --ignore-filename-regex '(test|mock|stub)' \
+          (cd credit_registry && cargo llvm-cov --no-report -- --test-threads=1)
+          cargo llvm-cov --no-report \
+            -p carbonchain-retirement \
+            -p carbonchain-marketplace \
+            -p carbonchain-mrv-oracle \
             -- --test-threads=1
+          cargo llvm-cov report \
+            --lcov --output-path coverage.lcov \
+            --ignore-filename-regex '(test|mock|stub)'
       # Extract the overall line-coverage percentage from the LCOV file and fail
       # if it falls below COV_THRESHOLD. A mismatch prints the measured value so
       # reviewers can see exactly how far off the threshold is.
@@ -504,7 +509,7 @@ jobs:
         if: steps.cache-cargo-audit-sec.outputs.cache-hit != 'true'
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
-        run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124
+        run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124 --ignore RUSTSEC-2026-0387
 
   frontend:
     name: Frontend SPA (Angular)

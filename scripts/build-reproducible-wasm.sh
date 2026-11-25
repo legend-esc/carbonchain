@@ -45,15 +45,26 @@ done
 
 cd "${REPO_ROOT}"
 
-echo "Building Soroban contracts reproducibly using ${SOROBAN_BUILD_IMAGE}..."
-docker run --rm \
-  -v "${REPO_ROOT}:/workspace" \
-  -w /workspace/contracts \
-  -e CARGO_INCREMENTAL=0 \
-  -e SOURCE_DATE_EPOCH=0 \
-  -e RUSTFLAGS="--remap-path-prefix=/workspace=. --remap-path-prefix=/root/.cargo=/cargo" \
-  "${SOROBAN_BUILD_IMAGE}" \
-  bash -c "cargo build --target wasm32v1-none --release --locked"
+echo "Building Soroban contracts reproducibly..."
+if [[ "${USE_DOCKER:-true}" == "true" ]]; then
+  echo "Using Docker image ${SOROBAN_BUILD_IMAGE}..."
+  docker run --rm \
+    -v "${REPO_ROOT}:/workspace" \
+    -w /workspace/contracts \
+    -e CARGO_INCREMENTAL=0 \
+    -e SOURCE_DATE_EPOCH=0 \
+    -e RUSTFLAGS="--remap-path-prefix=/workspace=. --remap-path-prefix=/root/.cargo=/cargo" \
+    "${SOROBAN_BUILD_IMAGE}" \
+    bash -c "cargo build --target wasm32v1-none --release --locked"
+else
+  (
+    cd "${REPO_ROOT}/contracts"
+    CARGO_INCREMENTAL=0 \
+    SOURCE_DATE_EPOCH=0 \
+    RUSTFLAGS="--remap-path-prefix=${REPO_ROOT}=. --remap-path-prefix=${HOME}/.cargo=/cargo" \
+      cargo build --target wasm32v1-none --release --locked
+  )
+fi
 
 WASM_DIR="contracts/target/wasm32v1-none/release"
 if [[ ! -d "${WASM_DIR}" ]]; then

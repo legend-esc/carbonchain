@@ -40,7 +40,7 @@ jobs:
             --timeout 300
 
       - name: Upload contracts LCOV artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b488c0438721a48 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: contracts-lcov
           path: contracts/coverage/lcov.info
@@ -76,7 +76,7 @@ jobs:
         run: npm run test:cov -- --coverageReporters=lcov --coverageReporters=text-summary
 
       - name: Upload API LCOV artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b488c0438721a48 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: api-lcov
           path: api/coverage/lcov.info
@@ -112,7 +112,7 @@ jobs:
         run: npx ng test --watch=false --code-coverage
 
       - name: Upload frontend LCOV artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b488c0438721a48 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: frontend-lcov
           path: frontend/coverage/**/lcov.info

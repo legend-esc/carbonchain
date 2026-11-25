@@ -27,18 +27,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (1.91.0)
+        with:
+          toolchain: "1.91.0"
+          targets: wasm32v1-none
+
       - name: Build deterministic WASM artifacts (Pass 1)
+        env:
+          USE_DOCKER: "false"
         run: |
           chmod +x scripts/build-reproducible-wasm.sh
           ./scripts/build-reproducible-wasm.sh --manifest /tmp/wasm-checksums-pass1.json
 
       - name: Clean target and verify bit-for-bit reproducibility (Pass 2)
+        env:
+          USE_DOCKER: "false"
         run: |
           rm -rf contracts/target/wasm32v1-none/release/*.wasm
           ./scripts/build-reproducible-wasm.sh --verify /tmp/wasm-checksums-pass1.json
 
       - name: Verify against committed release manifest (if present)
         if: hashFiles('contracts/wasm-checksums.json') != ''
+        env:
+          USE_DOCKER: "false"
         run: |
           ./scripts/build-reproducible-wasm.sh --verify contracts/wasm-checksums.json
 
