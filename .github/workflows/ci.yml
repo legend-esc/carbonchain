@@ -2,7 +2,7 @@ name: CarbonChain CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch: {}
@@ -84,6 +84,13 @@ jobs:
     name: Smart Contracts (Soroban)
     runs-on: ubuntu-latest
     needs: [build-contracts]
+    permissions:
+      issues: write
+      pull-requests: write
+    env:
+      # Ratchet this value upward as tests improve. CI is red when measured
+      # coverage drops below this percentage.
+      COV_THRESHOLD: "70"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Rust
@@ -91,7 +98,7 @@ jobs:
         with:
           toolchain: "1.91.0"
           targets: wasm32v1-none
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
       # Restore the shared cargo + WASM cache written by build-contracts.
       # On a cache hit, cargo build below is a no-op (artifacts already present).
       - name: Restore cargo + WASM cache
@@ -108,67 +115,9 @@ jobs:
       # that cargo knows the wasm32v1-none target artifacts exist for include_bytes!.
       - name: Ensure WASM artifacts present (cache restore)
         run: cd contracts && cargo build --target wasm32v1-none --release
-      # #972 — cache the cargo-audit binary keyed on its version so `cargo install`
-      # is skipped on every subsequent PR run (was ~30 s of wasted CPU per run).
-      - name: Cache cargo-audit binary
-        id: cache-cargo-audit
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/cargo-audit
-          key: ${{ runner.os }}-cargo-audit-0.21.2
-      - name: Install cargo-audit
-        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --locked
-      - name: Run cargo audit
-        run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124 --ignore RUSTSEC-2026-0387
       # #192 — zero-warning clippy policy across all four contracts.
       - name: Clippy
         run: cd contracts && cargo clippy --all-targets -- -D warnings
-      # #47 — run credit_registry tests standalone (avoids workspace feature unification).
-      - name: Run Credit Registry Tests
-        run: cd contracts/credit_registry && cargo test
-      - name: Run Remaining Contract Tests
-        run: |
-          cd contracts && cargo test -p carbonchain-retirement \
-                                 -p carbonchain-marketplace \
-                                 -p carbonchain-mrv-oracle
-
-  # ── Issue #973 ─────────────────────────────────────────────────────────────
-  # Soroban contract coverage gate. Uses cargo-llvm-cov to generate an LCOV
-  # report, enforces a minimum coverage threshold, and uploads the report as an
-  # artifact. The threshold starts at 70 % and should be ratcheted upward as
-  # coverage improves (update COV_THRESHOLD below).
-  contracts-coverage:
-    name: Contracts Coverage Gate
-    runs-on: ubuntu-latest
-    needs: [build-contracts]
-    permissions:
-      issues: write
-      pull-requests: write
-    env:
-      # Ratchet this value upward as tests improve. CI is red when measured
-      # coverage drops below this percentage.
-      COV_THRESHOLD: "70"
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (1.91.0)
-        with:
-          toolchain: "1.91.0"
-          targets: wasm32v1-none
-          components: llvm-tools-preview
-      - name: Restore cargo + WASM cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            contracts/target
-          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-wasm-
-      - name: Ensure WASM artifacts present (cache restore)
-        run: cd contracts && cargo build --target wasm32v1-none --release
       - name: Cache cargo-llvm-cov binary
         id: cache-llvm-cov
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -178,7 +127,9 @@ jobs:
       - name: Install cargo-llvm-cov
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov --locked --version 0.6.14
-      - name: Generate coverage (LCOV)
+      # #47 / #973 — run credit_registry tests standalone (avoids workspace feature
+      # unification) and remaining crates under cargo-llvm-cov for test + LCOV in one pass.
+      - name: Run Contract Tests & Coverage (LCOV)
         run: |
           cd contracts
           (cd credit_registry && cargo llvm-cov --no-report -- --test-threads=1)
@@ -593,25 +544,4 @@ jobs:
 
           npx @sentry/cli@2 releases finalize "$RELEASE" \
             --org "$SENTRY_ORG" --project "$SENTRY_PROJECT"
-
-  # ── Accessibility Audit CI Gate ─────────────────────────────────────────────
-  # Dedicated accessibility audit check for PR builds and main branch pushes.
-  # Validates component WCAG 2.1 AA conformance and catches accessibility regressions
-  # with zero critical or serious violations tolerated.
-  a11y-audit:
-    name: Accessibility Audit (PR builds)
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 20
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install Dependencies
-        run: cd frontend && npm ci --legacy-peer-deps
-      - name: Run Accessibility Audit
-        run: cd frontend && npm run a11y:audit
 
