@@ -61,4 +61,6 @@ pub enum CarbonChainError {
     StakeTransferFailed = 132,
     /// Query input exceeds the supported batch size.
     InvalidInput = 133,
+    /// Returned when a credit's vintage year exceeds the configured maximum calendar-year age.
+    VintageExpired = 134,
 }

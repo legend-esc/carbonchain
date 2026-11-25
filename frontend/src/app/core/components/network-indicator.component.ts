@@ -27,7 +27,7 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
     @if (wallet.network(); as network) {
       <button
         class="network-badge"
-        [class]="'network-badge--' + network"
+        [ngClass]="['network-badge--' + network, network]"
         (click)="netSvc.openModal()"
         type="button"
         [attr.aria-label]="'Network: ' + currentMeta().label + '. Click to switch.'"
@@ -116,7 +116,7 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
     <!-- ── Mismatch overlay (Freighter switched behind the scenes) ───────── -->
     @if (wallet.networkMismatch()) {
       <div
-        class="modal-backdrop modal-backdrop--mismatch"
+        class="modal-backdrop modal-backdrop--mismatch network-modal-backdrop"
         role="alertdialog"
         aria-modal="true"
         aria-label="Network mismatch warning"
@@ -126,7 +126,7 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
           <p>
             Your wallet is on <strong>{{ currentMeta().label }}</strong>
             but the app expects <strong>{{ expectedLabel() }}</strong>.
-            Please switch back in Freighter.
+            Please switch to {{ expectedLabel() }} in Freighter.
           </p>
           <div class="modal__footer">
             <button class="btn btn-primary" type="button" (click)="recheck()">
@@ -360,6 +360,13 @@ export class NetworkIndicatorComponent {
   async recheck(): Promise<void> {
     await this.wallet.checkNetworkMatch();
     this.netSvc.closeModal();
+  }
+
+  /** Handle keydown on the modal panel (closes on Escape). */
+  onKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      this.netSvc.closeModal();
+    }
   }
 
   /** Close modal on Escape key — handles both the backdrop and the panel. */

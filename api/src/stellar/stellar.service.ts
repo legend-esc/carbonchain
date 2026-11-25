@@ -112,6 +112,11 @@ export class StellarService implements OnModuleInit {
     @Inject(METRICS_EVENT_EMITTER)
     private readonly metricsEmitter?: EventEmitter,
     /**
+     * Issue #1293 — Optional MetricsService for Soroban RPC instrumentation.
+     */
+    @Optional()
+    private readonly metricsService?: MetricsService,
+    /**
      * Issue #1319 — Optional Horizon RPC circuit breaker.
      * When present, `onModuleInit` uses `getActiveUrl()` to select the initial
      * Horizon URL, and `simulateTransaction` / `sendTransaction` calls record
@@ -291,7 +296,7 @@ export class StellarService implements OnModuleInit {
       10,
     );
     const withBuffer = Math.ceil(
-      (baseFee + minResourceFee) * this.feeBufferMultiplier,
+      Math.round((baseFee + minResourceFee) * this.feeBufferMultiplier * 1e9) / 1e9,
     );
     // Ensure we always pay at least the minimum base fee (100 stroops).
     return String(Math.max(withBuffer, FALLBACK_BASE_FEE));
@@ -880,6 +885,7 @@ export class StellarService implements OnModuleInit {
         }
 
         return {
+          successful: finalStatus === 'SUCCESS',
           hash: response.hash ?? hash,
           status: finalStatus,
         } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;

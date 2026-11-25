@@ -1,11 +1,3 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Res } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
-import { AdminGuard } from './admin.guard';
-import { AdminService, AdminStats } from './admin.service';
-import { ReportsService } from './reports.service';
-import type { VerifierCapabilities } from './admin.service';
-import { CreditStatus } from '../shared';
-import type { Response as ExpressResponse } from 'express';
 import {
   Controller,
   Get,
@@ -15,14 +7,17 @@ import {
   Query,
   UseGuards,
   Request,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from './admin.guard';
 import { AdminService, AdminStats, AuditContext } from './admin.service';
 import type { VerifierCapabilities, AuditQueryOptions } from './admin.service';
+import { ReportsService } from './reports.service';
 import { AdminAuditEntity } from './admin-audit.entity';
 import { CreditStatus } from '../../../shared';
+import type { Response as ExpressResponse } from 'express';
 
 /** Pull IP + UA + request-id from the Express request for audit context. */
 function buildAuditCtx(req: {

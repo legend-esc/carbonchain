@@ -98,48 +98,46 @@ fn validate_vintage_age(env: &Env, vintage_year: u32) -> Result<(), CarbonChainE
 /// Each methodology has distinct mandatory metadata requirements
 fn validate_methodology_requirements(
     _env: &Env,
-    methodology: &str,
+    methodology: &soroban_sdk::String,
     vintage_year: u32,
-    ipfs_hash: &str,
+    ipfs_hash: &soroban_sdk::String,
 ) -> Result<(), CarbonChainError> {
-    match methodology {
-        "VCS" => {
-            // VCS requires: vintage <= current_year and non-empty ipfs_hash
-            let current_year = calendar_year(_env.ledger().timestamp()) as u32;
-            if vintage_year > current_year {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
-            if ipfs_hash.len() == 0 {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
+    let vcs = soroban_sdk::String::from_str(_env, "VCS");
+    let gold = soroban_sdk::String::from_str(_env, "Gold");
+    let cdm = soroban_sdk::String::from_str(_env, "CDM");
+    let planvivo = soroban_sdk::String::from_str(_env, "PlanVivo");
+    if *methodology == vcs {
+        // VCS requires: vintage <= current_year and non-empty ipfs_hash
+        let current_year = calendar_year(_env.ledger().timestamp()) as u32;
+        if vintage_year > current_year {
+            return Err(CarbonChainError::InvalidMetadata);
         }
-        "Gold" => {
-            // Gold requires: non-empty ipfs_hash and valid vintage
-            if ipfs_hash.len() == 0 {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
+        if ipfs_hash.len() == 0 {
+            return Err(CarbonChainError::InvalidMetadata);
         }
-        "CDM" => {
-            // CDM requires: registered project code (prefix matching)
-            // For now, just require ipfs_hash
-            if ipfs_hash.len() == 0 {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
+    } else if *methodology == gold {
+        // Gold requires: non-empty ipfs_hash and valid vintage
+        if ipfs_hash.len() == 0 {
+            return Err(CarbonChainError::InvalidMetadata);
         }
-        "PlanVivo" => {
-            // Plan Vivo requires: co-benefit index and valid vintage
-            if vintage_year < 2000 {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
-            if ipfs_hash.len() == 0 {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
+    } else if *methodology == cdm {
+        // CDM requires: registered project code (prefix matching)
+        // For now, just require ipfs_hash
+        if ipfs_hash.len() == 0 {
+            return Err(CarbonChainError::InvalidMetadata);
         }
-        _ => {
-            // Other methodologies: just require ipfs_hash
-            if ipfs_hash.len() == 0 {
-                return Err(CarbonChainError::InvalidMetadata);
-            }
+    } else if *methodology == planvivo {
+        // Plan Vivo requires: co-benefit index and valid vintage
+        if vintage_year < 2000 {
+            return Err(CarbonChainError::InvalidMetadata);
+        }
+        if ipfs_hash.len() == 0 {
+            return Err(CarbonChainError::InvalidMetadata);
+        }
+    } else {
+        // Other methodologies: just require ipfs_hash
+        if ipfs_hash.len() == 0 {
+            return Err(CarbonChainError::InvalidMetadata);
         }
     }
     Ok(())
@@ -867,6 +865,8 @@ impl CreditRegistry {
             ipfs_hash,
             status: CreditStatus::Pending,
             issued_at: env.ledger().timestamp(),
+            developer_address: None,
+            developer_royalty_bps: 0,
         };
 
         set_credit(&env, &id, &metadata);
@@ -1970,6 +1970,8 @@ impl CreditRegistry {
             ipfs_hash: ipfs_hash.unwrap(),
             status: CreditStatus::Active,
             issued_at: env.ledger().timestamp(),
+            developer_address: None,
+            developer_royalty_bps: 0,
         };
 
         set_credit(&env, &merged_id, &merged_credit);

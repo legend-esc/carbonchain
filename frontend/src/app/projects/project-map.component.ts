@@ -246,7 +246,7 @@ export class ProjectMapComponent implements OnInit, AfterViewInit, OnDestroy {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
         maxZoom: 18,
-      }).addTo(map as unknown as Parameters<typeof L.tileLayer>[1]);
+      }).addTo(map as unknown as import('leaflet').Map);
 
       // Filter to projects that have coordinates
       const geoProjects = this.projects.filter(
@@ -298,7 +298,6 @@ export class ProjectMapComponent implements OnInit, AfterViewInit, OnDestroy {
     // Use markercluster if available (optional peer dep), otherwise plain layer group
     let group: unknown;
     try {
-      // @ts-expect-error — optional peer dependency; not in devDeps
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const MC = require('leaflet.markercluster');
       group = new MC.MarkerClusterGroup();

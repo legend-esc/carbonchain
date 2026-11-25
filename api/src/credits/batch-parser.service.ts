@@ -138,7 +138,7 @@ export class BatchParserService {
   /**
    * Extract additional metadata columns
    */
-  private extractMetadata(row: Record<string, string>): Record<string, string> {
+  private extractMetadata(row: Record<string, string>): Record<string, string> | undefined {
     const standard_cols = [
       'vintage_start',
       'vintage_end',

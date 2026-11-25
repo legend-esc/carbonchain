@@ -248,15 +248,40 @@ export class MarketplaceAnalyticsService {
   ): OhlcvCandle[] {
     const stepSeconds = TIMEFRAME_STEP_SECONDS[timeframe];
     const result: OhlcvCandle[] = [];
+
+    // Build a sorted array of all expected bucket timestamps.
+    // Start from the first real candle's time (or the floored `from`) and
+    // step by `stepSeconds` through the range, then also ensure every real
+    // candle's timestamp is represented.
+    const candleTimes = new Set(candles.map((c) => c.time));
+
+    // Determine start: use the minimum of candle times and floored `from`.
+    const flooredFrom = Math.floor(from / stepSeconds) * stepSeconds;
+    const start = candles.length > 0
+      ? Math.min(flooredFrom, candles[0].time)
+      : flooredFrom;
+
+    // Build set of all timestamps to include: generated steps + real candle times.
+    const allTimes = new Set<number>();
+    // Add generated steps in the range [start, to].
+    const flooredTo = Math.floor(to / stepSeconds) * stepSeconds;
+    const rangeEnd = candles.length > 0
+      ? Math.max(flooredTo, candles[candles.length - 1].time)
+      : flooredTo;
+    for (let t = start; t <= rangeEnd; t += stepSeconds) {
+      allTimes.add(t);
+    }
+    // Ensure all real candle timestamps are included even if not on the step grid.
+    for (const c of candles) {
+      allTimes.add(c.time);
+    }
+
+    // Sort all timestamps and emit candles.
+    const sortedTimes = Array.from(allTimes).sort((a, b) => a - b);
     const candleMap = new Map(candles.map((c) => [c.time, c]));
-
-    // Align the start to the nearest bucket boundary.
-    const firstBucket = Math.floor(from / stepSeconds) * stepSeconds;
-    const lastBucket = Math.floor(to / stepSeconds) * stepSeconds;
-
     let lastClose = '0';
 
-    for (let t = firstBucket; t <= lastBucket; t += stepSeconds) {
+    for (const t of sortedTimes) {
       const existing = candleMap.get(t);
       if (existing) {
         result.push(existing);

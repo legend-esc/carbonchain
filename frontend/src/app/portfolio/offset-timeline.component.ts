@@ -4,6 +4,7 @@ import {
   signal,
   computed,
   OnChanges,
+  AfterViewInit,
   SimpleChanges,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -197,7 +198,7 @@ function rawToTonnes(raw: string): number {
               [attr.y]="SVG_H / 2"
               text-anchor="middle"
               class="axis-unit"
-              transform="rotate(-90, 8, {{ SVG_H / 2 }})"
+              [attr.transform]="'rotate(-90, 8, ' + (SVG_H / 2) + ')'"
             >
               t CO₂e
             </text>
@@ -368,7 +369,7 @@ function rawToTonnes(raw: string): number {
     `,
   ],
 })
-export class OffsetTimelineComponent implements OnChanges {
+export class OffsetTimelineComponent implements OnChanges, AfterViewInit {
   @Input() retirements: RetirementRecord[] = [];
 
   // SVG constants
@@ -388,6 +389,14 @@ export class OffsetTimelineComponent implements OnChanges {
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['retirements']) {
+      this.buildGroups();
+    }
+  }
+
+  ngAfterViewInit(): void {
+    // Ensure groups are built when retirements is set directly (e.g. in unit tests
+    // where ngOnChanges may not fire because the property was set before compilation).
+    if (this._groups().length === 0 && this.retirements.length > 0) {
       this.buildGroups();
     }
   }

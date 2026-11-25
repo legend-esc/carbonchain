@@ -28,6 +28,20 @@ function createMocks(freighterInstalled: boolean) {
     connect: vi.fn(),
     disconnect: vi.fn(),
     stopBalancePolling: vi.fn(),
+    startBalancePolling: vi.fn(),
+    xlmBalance: signal<number | null>(null),
+    state: signal('disconnected' as const),
+    selectedProvider: signal('freighter' as const),
+    getAvailableAdapters: vi.fn().mockReturnValue([
+      {
+        id: 'freighter',
+        name: 'Freighter',
+        installUrl: 'https://freighter.app',
+        isInstalled: () => freighterInstalled,
+        connect: vi.fn(),
+        signTransaction: vi.fn(),
+      },
+    ]),
   } as unknown as StellarWalletService;
 
   const authStub = {

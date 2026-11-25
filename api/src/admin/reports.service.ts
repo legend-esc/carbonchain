@@ -48,7 +48,7 @@ export class ReportsService {
         yield this.formatCsvRow(row);
       }
 
-      hasMore = result.data.length === pageSize;
+      hasMore = result.data.length > 0;
       page += 1;
     }
   }

@@ -16,7 +16,7 @@ import { Observable } from 'rxjs';
  * is not available at module load time. Callers invoke them lazily within
  * an injection context.
  */
-export type WalletNetwork = 'testnet' | 'mainnet';
+export type WalletNetwork = 'testnet' | 'mainnet' | 'futurenet';
 export const walletAddressSignal = signal<string | null>(null);
 export const networkSignal = signal<WalletNetwork | null>(null);
 export const isConnectedSignal = computed(() => walletAddressSignal() !== null);

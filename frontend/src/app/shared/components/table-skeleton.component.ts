@@ -122,7 +122,7 @@ export class TableSkeletonComponent {
   readonly rows = input<number>(6);
 
   /** Column width descriptors from left to right. */
-  readonly columns = input<SkeletonColWidth[]>(['wide', 'normal', 'normal', 'narrow', 'narrow']);
+  readonly columns = input<readonly SkeletonColWidth[]>(['wide', 'normal', 'normal', 'narrow', 'narrow']);
 
   /** Accessible label for screen readers. */
   readonly label = input<string>('Loading table data…');

@@ -8,6 +8,8 @@ import { RetirementController } from './retirement.controller';
 import { RetirementService } from './retirement.service';
 import { CertificateService } from './certificate.service';
 import { CertHashReconciler } from './cert-hash-reconciler.service';
+import { CalculatorService } from './calculator.service';
+import { RetireTxService } from './retire-tx.service';
 import { RetirementRecord } from '../../../shared';
 import { StellarAddressPipe } from '../common/pipes/stellar-address.pipe';
 
@@ -42,6 +44,8 @@ describe('RetirementController', () => {
         { provide: RetirementService, useValue: mockRetirementService },
         { provide: CertificateService, useValue: mockCertificateService },
         { provide: CertHashReconciler, useValue: mockCertHashReconciler },
+        { provide: CalculatorService, useValue: { estimate: jest.fn() } },
+        { provide: RetireTxService, useValue: { buildBatchRetireXdr: jest.fn() } },
         StellarAddressPipe,
       ],
     }).compile();

@@ -53,6 +53,8 @@ const PROJECT_WITH_COORDS: MapProject = {
   developer: 'Dev Co',
   location: 'Brazil',
   methodology: 'REDD+',
+  description: 'Test project',
+  documents_cid: '',
   lat: -10,
   lng: -55,
   available_tonnes: '5000000',
@@ -64,6 +66,8 @@ const PROJECT_NO_COORDS: MapProject = {
   developer: 'Dev B',
   location: 'Unknown',
   methodology: 'AGB',
+  description: 'No coords project',
+  documents_cid: '',
 };
 
 // ---------------------------------------------------------------------------

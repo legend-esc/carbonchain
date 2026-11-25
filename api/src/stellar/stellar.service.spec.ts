@@ -1136,6 +1136,13 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
     mockLoadAccount.mockImplementation(adapter.loadAccount);
     mockFeeStats.mockImplementation(adapter.feeStats);
     mockSubmitTransaction.mockImplementation(adapter.submitTransaction);
+    // Wire Soroban sendTransaction through the harness adapter and immediately
+    // return a SUCCESS so pollTransactionStatus resolves on the first call.
+    mockSendTransaction.mockImplementation(async (tx: { toXDR?: () => string }) => {
+      const result = await adapter.submitTransaction(tx);
+      return { status: 'PENDING', hash: result.hash };
+    });
+    mockGetTransaction.mockResolvedValue({ status: 'SUCCESS', hash: 'mock_hash' });
 
     harness.setAccount(signerKeypair.publicKey(), {
       sequence: '500',
@@ -1258,7 +1265,7 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
 
     const res = await service.submitTransaction(tx.toXDR());
     expect(res.successful).toBe(true);
-    expect(mockSubmitTransaction).toHaveBeenCalledTimes(2);
+    expect(mockSendTransaction).toHaveBeenCalledTimes(2);
   });
 
   it('propagates tx_insufficient_balance without masking the Horizon error', async () => {

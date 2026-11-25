@@ -492,6 +492,7 @@ impl MrvOracle {
             tonnes,
             recorded_at: timestamp,
             anomaly: anomaly || window_variance_exceeded,
+            disputed: false,
         };
 
         env.storage()
@@ -927,12 +928,16 @@ impl MrvOracle {
 
         // Get last 5 readings
         let start = if history.len() >= 5 { history.len() - 5 } else { 0 };
-        let last_five: Vec<i128> = (start..history.len())
-            .map(|i| history.get(i as u32).unwrap().tonnes)
-            .collect();
+        let mut last_five: soroban_sdk::Vec<i128> = soroban_sdk::Vec::new(env);
+        for i in start..history.len() {
+            last_five.push_back(history.get(i as u32).unwrap().tonnes);
+        }
 
         // Compute moving average
-        let sum: i128 = last_five.iter().fold(0i128, |acc, &x| acc.saturating_add(x));
+        let mut sum: i128 = 0i128;
+        for i in 0..last_five.len() {
+            sum = sum.saturating_add(last_five.get(i).unwrap());
+        }
         let moving_avg = sum / 5;
 
         // Check if new reading exceeds 20% variance from moving average

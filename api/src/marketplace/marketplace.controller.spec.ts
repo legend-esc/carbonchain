@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { MarketplaceController } from './marketplace.controller';
 import { MarketplaceService } from './marketplace.service';
+import { WashTradingDetectorService } from './wash-trading-detector.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { Offer } from '../../../shared';
 
@@ -30,6 +31,13 @@ describe('MarketplaceController', () => {
       controllers: [MarketplaceController],
       providers: [
         { provide: MarketplaceService, useValue: mockMarketplaceService },
+        {
+          provide: WashTradingDetectorService,
+          useValue: {
+            getOhlcvCandles: jest.fn().mockResolvedValue([]),
+            getSuspiciousCreditIds: jest.fn().mockReturnValue([]),
+          },
+        },
       ],
     }).compile();
 

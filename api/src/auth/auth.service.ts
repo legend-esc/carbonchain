@@ -68,6 +68,8 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly networkPassphrase: string;
   private readonly serverHomeDomain: string;
+  /** Optional event emitter for security telemetry (e.g. token family revocation alerts). */
+  private readonly metricsEmitter?: { emit: (event: string, data: unknown) => void };
 
   constructor(
     private readonly jwtService: JwtService,

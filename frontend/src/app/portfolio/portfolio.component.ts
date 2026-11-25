@@ -8,6 +8,7 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ApiService } from '../core/services/api.service';
 import { ExportReceiptsButtonComponent } from './export-receipts-button.component';
 import { OffsetTimelineComponent } from './offset-timeline.component';
+import { TableSkeletonComponent } from '../shared/components/table-skeleton.component';
 
 // ── Chart helpers ─────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 @Component({
   selector: 'app-portfolio',
   standalone: true,
-  imports: [CommonModule, RouterModule, ExportReceiptsButtonComponent, OffsetTimelineComponent],
+  imports: [CommonModule, RouterModule, ExportReceiptsButtonComponent, OffsetTimelineComponent, TableSkeletonComponent],
   template: `
     <div class="portfolio">
       <div class="portfolio__header">

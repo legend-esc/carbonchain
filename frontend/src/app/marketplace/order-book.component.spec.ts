@@ -11,7 +11,7 @@ class MockWebSocket {
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: ((e: Event) => void) | null = null;
   onclose: ((e: CloseEvent) => void) | null = null;
-  readyState = WebSocket.CONNECTING;
+  readyState: number = WebSocket.CONNECTING;
 
   constructor(public url: string) {
     MockWebSocket.instance = this;

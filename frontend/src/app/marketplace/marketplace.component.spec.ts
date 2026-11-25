@@ -9,6 +9,21 @@ import { StellarWalletService } from '../core/services/stellar-wallet.service';
 import { ToastService } from '../core/services/toast.service';
 import { Offer } from '@shared';
 
+/** Stub WebSocket so OrderBookComponent inside MarketplaceComponent does not
+ *  create a real connection in jsdom, which would leave open timer tasks and
+ *  cause fixture.whenStable() to time out. */
+class StubWebSocket {
+  static instance: StubWebSocket | null = null;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror: ((e: Event) => void) | null = null;
+  onclose: ((e: CloseEvent) => void) | null = null;
+  readyState: number = 3; // CLOSED — prevents reconnect timers
+  constructor(public url: string) { StubWebSocket.instance = this; }
+  close(): void { /* no-op */ }
+  send(_data: unknown): void { /* no-op */ }
+}
+
 const makeOffer = (overrides: Partial<Offer> = {}): Offer => ({
   id: '1',
   seller: 'GSELLER1234567890',
@@ -41,8 +56,11 @@ describe('MarketplaceComponent', () => {
         );
         return of({ data, next_cursor: null });
       }),
+      getListings: vi.fn().mockReturnValue(of({ data: MOCK_OFFERS, total: MOCK_OFFERS.length, page: 1, limit: 20 })),
+      getEvents: vi.fn().mockReturnValue(of({ events: [] })),
       createOffer: vi.fn().mockReturnValue(of({ offerId: 'new-offer' })),
       buyOffer: vi.fn().mockReturnValue(of(undefined)),
+      cancelOffer: vi.fn().mockReturnValue(of(undefined)),
     };
   }
 
@@ -65,11 +83,13 @@ describe('MarketplaceComponent', () => {
     getNetworkDetails: vi
       .fn()
       .mockResolvedValue({ networkPassphrase: 'Test SDF Network ; September 2015' }),
+    getAvailableAdapters: vi.fn().mockReturnValue([]),
   };
 
   beforeEach(async () => {
     apiMock = buildApiMock();
     toastMock = { show: vi.fn() };
+    vi.stubGlobal('WebSocket', StubWebSocket);
 
     TestBed.resetTestingModule();
     await TestBed.configureTestingModule({
@@ -85,6 +105,10 @@ describe('MarketplaceComponent', () => {
 
     fixture = TestBed.createComponent(MarketplaceComponent);
     component = fixture.componentInstance;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('creates the component', () => {
@@ -105,7 +129,7 @@ describe('MarketplaceComponent', () => {
     fixture.detectChanges();
 
     const rows = fixture.nativeElement.querySelectorAll(
-      'tbody tr',
+      'table[aria-label="Marketplace listings"] tbody tr',
     ) as NodeListOf<HTMLTableRowElement>;
     expect(rows.length).toBe(3);
   });
@@ -116,7 +140,8 @@ describe('MarketplaceComponent', () => {
     fixture.detectChanges();
 
     const headerText =
-      (fixture.nativeElement.querySelector('thead') as HTMLElement).textContent ?? '';
+      ((fixture.nativeElement.querySelector('table[aria-label="Marketplace listings"] thead') ??
+        fixture.nativeElement.querySelector('thead')) as HTMLElement).textContent ?? '';
     expect(headerText).toContain('Credit ID');
     expect(headerText).toContain('Tonnes');
     expect(headerText).toContain('Methodology');

@@ -39,6 +39,8 @@ struct CreditMetadata {
     pub ipfs_hash: String,
     pub status: CreditStatus,
     pub issued_at: u64,
+    pub developer_address: Option<Address>,
+    pub developer_royalty_bps: u32,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -153,6 +155,10 @@ pub enum DataKey {
     FeeBps,
     /// Treasury receiving fees in the offer payment asset.
     FeeRecipient,
+    /// Cursor position for sweep_expired_offers pagination.
+    SweepCursor,
+    /// Marks an expired offer whose escrow return failed; seller can reclaim later.
+    ReclaimableEscrow(u64),
 }
 
 /// Stable error codes for the CarbonChain marketplace contract.
@@ -207,6 +213,10 @@ pub enum MarketplaceError {
     InvalidFee = 318,
     /// Issue #1286: Offer is locked during grace period - cancellation blocked
     OfferLocked = 319,
+    /// Requested quantity is below the offer's minimum purchase quantity.
+    BelowMinimumQuantity = 320,
+    /// The offer ID does not correspond to any known offer.
+    InvalidOfferId = 321,
 }
 
 #[contractevent]
@@ -288,6 +298,9 @@ fn run_migrations(_env: &Env) {
     // Add field back-fills or index rebuilds here in future versions.
 }
 
+/// Nonce window size for replay-protection. Exposed at module level for tests.
+pub const NONCE_WINDOW: u64 = 16;
+
 #[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl Marketplace {
@@ -368,7 +381,7 @@ impl Marketplace {
         nonce: u64,
     ) -> Result<(), MarketplaceError> {
         Self::require_admin(&env, &admin)?;
-        if !consume_nonce(&env, &admin, nonce) {
+        if !Self::consume_nonce(&env, &admin, nonce) {
             return Err(MarketplaceError::InvalidNonce);
         }
 
@@ -386,7 +399,13 @@ impl Marketplace {
                 }
             } else {
                 // Remove token
-                allowed.retain(&env, |t| t != token);
+                let mut filtered = Vec::new(&env);
+                for t in allowed.iter() {
+                    if t != token {
+                        filtered.push_back(t);
+                    }
+                }
+                allowed = filtered;
             }
         }
 
@@ -735,6 +754,7 @@ impl Marketplace {
             created_at: env.ledger().timestamp(),
             expires_at,
             min_purchase_tonnes,
+            lockup_until: None,
         };
 
         env.storage()
@@ -869,7 +889,7 @@ impl Marketplace {
         // Issue #1286: Check lockup period - prevent front-running cancellations
         if let Some(lockup_until) = offer.lockup_until {
             let current_ledger = env.ledger().sequence();
-            if current_ledger < lockup_until {
+            if u64::from(current_ledger) < lockup_until {
                 return Err(MarketplaceError::OfferLocked);
             }
         }
@@ -1886,7 +1906,8 @@ impl Marketplace {
         if !fields.contains_key(key.clone()) {
             fields.set(key, Option::<i128>::None.into_val(env));
         }
-        Some(Offer::try_from_val(env, &fields.into_val(env)).unwrap())
+        let val: Val = fields.into_val(env);
+        Some(Offer::try_from_val(env, &val).unwrap())
     }
 
     /// Increment `ActiveOffersCount` by one. Called when a new active offer is created.
@@ -2093,6 +2114,7 @@ impl Marketplace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::events::Event as _;
     use carbonchain_credit_registry::test_helpers::RegistryHelper;
     use soroban_sdk::testutils::{Address as _, Events, Ledger};
     use soroban_sdk::{BytesN, Env, String};
@@ -2551,11 +2573,7 @@ mod tests {
             reclaimable: false,
         };
         let events = env.events().all();
-        assert!(events
-            .iter()
-            .any(|(address, topics, data)| address == client.address
-                && topics == event.topics(&env)
-                && data == event.data(&env)));
+        assert!(events.events().contains(&event.to_xdr(&env, &client.address)));
         env.as_contract(&client.address, || {
             assert!(!env.storage().persistent().has(&DataKey::EscrowedAmount(id)));
         });
@@ -2588,6 +2606,7 @@ mod tests {
                         Some(now - 1)
                     },
                     min_purchase_tonnes: None,
+                    lockup_until: None,
                 };
                 env.storage().persistent().set(&DataKey::Offer(id), &offer);
                 ids.push_back(id);

@@ -97,7 +97,7 @@ pub struct BatchRetireFailure {
 /// Invalid credits are skipped and their IDs (plus error codes) are in `failed`.
 /// An empty `succeeded` list is never returned — the call fails with `InvalidInput`
 /// if no credits in the batch are valid.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
 pub struct BatchRetireResult {
     /// Retirement IDs for credits that were successfully retired.

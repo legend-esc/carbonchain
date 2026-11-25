@@ -385,7 +385,8 @@ fn test_buy_offer_fee_calculation_does_not_overflow_near_i128_max() {
 
     // Enable max allowed fee (10% = 1000 bps)
     let fee_recipient = Address::generate(&env);
-    f.marketplace.update_fee(&f.admin, &1_000, &fee_recipient);
+    let admin_nonce = f.marketplace.get_nonce(&f.admin);
+    f.marketplace.update_fee(&f.admin, &1_000, &fee_recipient, &admin_nonce);
 
     let huge_price = i128::MAX - 10_000;
     let seller_nonce = f.marketplace.get_nonce(&f.seller);

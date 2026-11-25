@@ -250,7 +250,9 @@ export class ReconciliationService {
       );
       if (!retval) return { detected: 0 };
 
-      const offers = scValToNative(retval) as Array<{
+      const offers = (Array.isArray(retval)
+        ? retval
+        : scValToNative(retval)) as Array<{
         id: bigint;
         active: boolean;
         [key: string]: unknown;

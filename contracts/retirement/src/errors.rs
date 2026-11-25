@@ -24,4 +24,6 @@ pub enum RetirementError {
     RecordNotFound = 210,
     /// Attempted to downgrade the contract to an older schema version.
     DowngradeNotAllowed = 211,
+    /// No retirement record found for the given ID (alias for RecordNotFound).
+    NotFound = 212,
 }

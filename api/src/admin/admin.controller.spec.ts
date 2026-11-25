@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminGuard } from './admin.guard';
+import { ReportsService } from './reports.service';
 import { CreditStatus } from '../../../shared';
 import { NotImplementedException } from '@nestjs/common';
 
@@ -62,13 +63,13 @@ describe('AdminController', () => {
               verifier: 'GVER1',
               creditId: 'cid1',
             }),
-            registerVerifier: jest
-              .fn()
-              .mockResolvedValue({ registered: true, address: 'GVER1' }),
-            configureVerifier: jest
-              .fn()
-              .mockResolvedValue({ configured: true, verifierId: 'GVER1' }),
             getAuditLog: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+          },
+        },
+        {
+          provide: ReportsService,
+          useValue: {
+            generateComplianceCsv: jest.fn(),
           },
         },
       ],
