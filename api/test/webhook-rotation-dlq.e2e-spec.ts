@@ -4,6 +4,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { WebhooksController } from '../src/webhooks/webhooks.controller';
 import { WebhooksService } from '../src/webhooks/webhooks.service';
+import { WebhookFilterService } from '../src/webhooks/webhook-filter.service';
 import { JwtAuthGuard } from '../src/auth/jwt-auth.guard';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { AdminGuard } from '../src/admin/admin.guard';
@@ -45,6 +46,7 @@ describe('Webhook rotation & DLQ (e2e)', () => {
       controllers: [WebhooksController],
       providers: [
         WebhooksService,
+        WebhookFilterService,
         { provide: DataSource, useValue: dataSource },
         {
           provide: ConfigService,
