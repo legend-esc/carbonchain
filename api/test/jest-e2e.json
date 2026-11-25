@@ -4,11 +4,17 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "allowJs": true
+        }
+      }
+    ]
   },
   "transformIgnorePatterns": [
-    "^../node_modules/pg/.*",
-    "^../node_modules/(?!@stellar/|uint8array-extras/).+"
+    "/node_modules/(?!.*(uint8array-extras|@exodus|@stellar|@nestjs/event-emitter|eventsource|@noble|ip-range-check|jsvu|@ledgerhq|@cosmjs|base32-decode|bech32|ripemd160|sha256-uint8array|bip39|elliptic|hash.js|bn.js|readable-stream|bufferutil|utf-8-validate|node-fetch|data-uri-to-buffer|fetch-blob|formdata-polyfill|web-streams-polyfill|blakejs|bs58|js-sha3|aes-js|tiny-secp256k1|secp256k1|@scroll-tech|superstruct|isows|stellar-sdk)/)"
   ],
   "setupFiles": ["<rootDir>/setup.ts"]
 }
