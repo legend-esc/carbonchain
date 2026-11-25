@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WebhooksService } from './webhooks.service';
+import { WebhookFilterService } from './webhook-filter.service';
 import { WebhooksController } from './webhooks.controller';
 import { WebhookIpGuard } from './webhook-ip.guard';
 import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
@@ -42,6 +43,7 @@ import { AdminGuard } from '../admin/admin.guard';
   ],
   providers: [
     WebhooksService,
+    WebhookFilterService,
     WebhookJanitorService,
     WebhookIpGuard,
     WebhookIpAllowlistGuard,
@@ -51,6 +53,11 @@ import { AdminGuard } from '../admin/admin.guard';
     AdminGuard,
   ],
   controllers: [WebhooksController, WebhookIpAllowlistController],
-  exports: [WebhooksService, WebhookJanitorService, WebhookIpAllowlistService],
+  exports: [
+    WebhooksService,
+    WebhookFilterService,
+    WebhookJanitorService,
+    WebhookIpAllowlistService,
+  ],
 })
 export class WebhooksModule {}

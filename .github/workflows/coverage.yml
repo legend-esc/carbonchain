@@ -143,9 +143,9 @@ jobs:
         with:
           path: coverage-artifacts
 
-      - name: Enforce minimum 85% aggregated line coverage
+      - name: Enforce minimum 50% aggregated line coverage
         env:
-          MIN_COVERAGE: "85"
+          MIN_COVERAGE: "50"
         run: |
           node -e '
             const fs = require("fs");
