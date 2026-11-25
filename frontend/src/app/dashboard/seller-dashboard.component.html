@@ -6,12 +6,7 @@
 
     <div class="seller-dashboard__actions">
       @if (wallet.isConnected()) {
-        <button
-          type="button"
-          class="btn btn--ghost"
-          (click)="refresh()"
-          [disabled]="loading()"
-        >
+        <button type="button" class="btn btn--ghost" (click)="refresh()" [disabled]="loading()">
           {{ loading() ? 'Refreshing…' : 'Refresh' }}
         </button>
         <a routerLink="/marketplace" class="btn btn--primary">Go to Marketplace</a>
@@ -33,7 +28,9 @@
   }
 
   @if (!wallet.isConnected()) {
-    <p class="empty-state">Connect your Stellar wallet to view your active listings, escrow, and sales analytics.</p>
+    <p class="empty-state">
+      Connect your Stellar wallet to view your active listings, escrow, and sales analytics.
+    </p>
   } @else {
     <!-- Metrics Cards -->
     <section class="metrics-grid" aria-label="Seller metrics">
@@ -45,17 +42,13 @@
 
       <article class="metric-card" tabindex="0">
         <span class="metric-card__label">Escrowed Tonnes</span>
-        <span class="metric-card__value">
-          {{ escrowedTonnes() | number: '1.0-4' }} t
-        </span>
+        <span class="metric-card__value"> {{ escrowedTonnes() | number: '1.0-4' }} t </span>
         <span class="metric-card__sub">Locked in open marketplace offers</span>
       </article>
 
       <article class="metric-card" tabindex="0">
         <span class="metric-card__label">Total Sales Volume (XLM / USDC)</span>
-        <span class="metric-card__value">
-          {{ salesVolumeXlm() | number: '1.0-2' }} XLM
-        </span>
+        <span class="metric-card__value"> {{ salesVolumeXlm() | number: '1.0-2' }} XLM </span>
         <span class="metric-card__sub">
           {{ salesVolumeUsdc() | number: '1.0-2' }} USDC · {{ filledOffers().length }} filled orders
         </span>
@@ -91,7 +84,10 @@
               ></div>
             </div>
             <span class="mono">
-              {{ point.volume | number: '1.0-2' }} {{ point.asset }} ({{ point.tonnes | number: '1.0-2' }} t)
+              {{ point.volume | number: '1.0-2' }} {{ point.asset }} ({{
+                point.tonnes | number: '1.0-2'
+              }}
+              t)
             </span>
           </div>
         }

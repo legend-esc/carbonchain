@@ -61,7 +61,12 @@ const API_KEY_HEADER = 'x-api-key';
  */
 function loadOracleApiKeys(): Set<string> {
   const raw = process.env['ORACLE_API_KEYS'] ?? '';
-  return new Set(raw.split(',').map((k) => k.trim()).filter(Boolean));
+  return new Set(
+    raw
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean),
+  );
 }
 
 // ── In-memory fallback ────────────────────────────────────────────────────────
@@ -90,7 +95,11 @@ export class CustomThrottlerGuard implements CanActivate {
     const ip = this.extractIp(req);
     const key = `tiered-throttle:${tier}:${ip}`;
 
-    const result = await this.increment(key, config.limit, config.windowSeconds);
+    const result = await this.increment(
+      key,
+      config.limit,
+      config.windowSeconds,
+    );
 
     // Set informational rate-limit headers on every response.
     if (typeof res.set === 'function') {
@@ -137,9 +146,9 @@ export class CustomThrottlerGuard implements CanActivate {
   resolveTier(req: Request): RateLimitTier {
     const apiKey =
       typeof req.headers[API_KEY_HEADER] === 'string'
-        ? (req.headers[API_KEY_HEADER] as string)
+        ? req.headers[API_KEY_HEADER]
         : Array.isArray(req.headers[API_KEY_HEADER])
-          ? (req.headers[API_KEY_HEADER] as string[])[0]
+          ? req.headers[API_KEY_HEADER][0]
           : undefined;
 
     if (apiKey) {
@@ -172,7 +181,8 @@ export class CustomThrottlerGuard implements CanActivate {
     if (this.cache?.isConnected) {
       try {
         const count = await (this.cache as any).client?.incr(key);
-        const countNum: number = typeof count === 'number' ? count : Number(count ?? 1);
+        const countNum: number =
+          typeof count === 'number' ? count : Number(count ?? 1);
 
         if (countNum === 1) {
           await (this.cache as any).client?.expire(key, windowSeconds);

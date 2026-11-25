@@ -62,7 +62,10 @@ import { TranslatePipe } from '../pipes/translate.pipe';
                     [disabled]="auth.authState() === 'authenticating'"
                     (click)="login(adapter.id)"
                   >
-                    @if (auth.authState() === 'authenticating' && wallet.selectedProvider() === adapter.id) {
+                    @if (
+                      auth.authState() === 'authenticating' &&
+                      wallet.selectedProvider() === adapter.id
+                    ) {
                       {{ 'wallet.connecting' | translate }}
                     } @else {
                       {{ 'wallet.connect' | translate }}

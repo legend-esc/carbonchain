@@ -105,19 +105,30 @@ export class ExchangeRateService implements OnModuleInit {
 
   private toUsdRate(currency: SupportedCurrency, rates: ExchangeRates): number {
     switch (currency) {
-      case 'USD':  return 1;
-      case 'XLM':  return rates.XLM_USD;
-      case 'USDC': return rates.USDC_USD;
-      case 'EUR':  return rates.EUR_USD;
+      case 'USD':
+        return 1;
+      case 'XLM':
+        return rates.XLM_USD;
+      case 'USDC':
+        return rates.USDC_USD;
+      case 'EUR':
+        return rates.EUR_USD;
     }
   }
 
-  private fromUsdRate(currency: SupportedCurrency, rates: ExchangeRates): number {
+  private fromUsdRate(
+    currency: SupportedCurrency,
+    rates: ExchangeRates,
+  ): number {
     switch (currency) {
-      case 'USD':  return 1;
-      case 'XLM':  return 1 / rates.XLM_USD;
-      case 'USDC': return 1 / rates.USDC_USD;
-      case 'EUR':  return 1 / rates.EUR_USD;
+      case 'USD':
+        return 1;
+      case 'XLM':
+        return 1 / rates.XLM_USD;
+      case 'USDC':
+        return 1 / rates.USDC_USD;
+      case 'EUR':
+        return 1 / rates.EUR_USD;
     }
   }
 
@@ -133,9 +144,9 @@ export class ExchangeRateService implements OnModuleInit {
       const data = (await res.json()) as Record<string, { usd?: number }>;
 
       const rates: ExchangeRates = {
-        XLM_USD:  data['stellar']?.usd    ?? 0,
-        USDC_USD: data['usd-coin']?.usd   ?? 1,
-        EUR_USD:  data['euros']?.usd      ?? 0,
+        XLM_USD: data['stellar']?.usd ?? 0,
+        USDC_USD: data['usd-coin']?.usd ?? 1,
+        EUR_USD: data['euros']?.usd ?? 0,
         fetched_at: Date.now(),
       };
 

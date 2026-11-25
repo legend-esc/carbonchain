@@ -166,7 +166,7 @@ describe('VerifierMetricsService', () => {
       const t0 = 1700000000;
       inMemoryEvents = [
         makeEvent('CreditSubmitted', 'c1', t0),
-        makeEvent('CreditApproved', 'c1', t0 + 3600),  // +1 h
+        makeEvent('CreditApproved', 'c1', t0 + 3600), // +1 h
         makeEvent('CreditSubmitted', 'c2', t0),
         makeEvent('CreditApproved', 'c2', t0 + 10800), // +3 h
       ];
@@ -222,9 +222,7 @@ describe('VerifierMetricsService', () => {
     it('skips credits with no matching submission event when computing turnaround', async () => {
       const t0 = 1700000000;
       // Only an approval — no matching submission.
-      inMemoryEvents = [
-        makeEvent('CreditApproved', 'orphan', t0 + 3600),
-      ];
+      inMemoryEvents = [makeEvent('CreditApproved', 'orphan', t0 + 3600)];
 
       // Should still count the review but not blow up turnaround.
       const result = await service.getMetrics(VERIFIER);

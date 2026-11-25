@@ -54,7 +54,11 @@ interface ToxiproxyProxy {
 }
 
 interface ToxiproxyClient {
-  createProxy(attrs: { name: string; listen: string; upstream: string }): Promise<ToxiproxyProxy>;
+  createProxy(attrs: {
+    name: string;
+    listen: string;
+    upstream: string;
+  }): Promise<ToxiproxyProxy>;
   getProxy(name: string): Promise<ToxiproxyProxy>;
   reset(): Promise<void>;
 }
@@ -129,7 +133,13 @@ async function getNextSeqViaChaosRedis(
     let lockAcquired = false;
 
     while (Date.now() < deadline) {
-      const result = await client.set(lockKey, lockValue, 'NX', 'PX', LOCK_TTL_MS);
+      const result = await client.set(
+        lockKey,
+        lockValue,
+        'NX',
+        'PX',
+        LOCK_TTL_MS,
+      );
       if (result === 'OK') {
         lockAcquired = true;
         break;
@@ -207,9 +217,7 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
     // Generous timeout: proxy creation can be slow if Toxiproxy is just starting.
     jest.setTimeout(60_000);
 
-    toxiproxy = new Toxiproxy(
-      `http://${TOXIPROXY_HOST}:${TOXIPROXY_API_PORT}`,
-    );
+    toxiproxy = new Toxiproxy(`http://${TOXIPROXY_HOST}:${TOXIPROXY_API_PORT}`);
 
     // Reset any leftover state from a previous aborted run.
     await toxiproxy.reset();
@@ -228,7 +236,9 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
       chaosClient.disconnect();
     }
     if (proxy) {
-      await proxy.remove().catch(() => { /* already gone */ });
+      await proxy.remove().catch(() => {
+        /* already gone */
+      });
     }
   });
 
@@ -322,9 +332,7 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
 
     // All calls should resolve — either with a valid sequence or the -1 sentinel.
     const results = await Promise.allSettled(
-      Array.from({ length: 5 }, () =>
-        getNextSeqViaChaosRedis(chaosClient, pk),
-      ),
+      Array.from({ length: 5 }, () => getNextSeqViaChaosRedis(chaosClient, pk)),
     );
 
     // No promise should have rejected.
@@ -333,7 +341,9 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
 
     // Every fulfilled result is either a positive sequence or the -1 fallback.
     const values = results
-      .filter((r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled')
+      .filter(
+        (r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled',
+      )
       .map((r) => r.value);
 
     for (const v of values) {
@@ -371,7 +381,9 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
     expect(rejected).toHaveLength(0);
 
     const values = results
-      .filter((r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled')
+      .filter(
+        (r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled',
+      )
       .map((r) => r.value);
 
     for (const v of values) {
@@ -390,9 +402,7 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
     // Three calls during the partition: Redis is unreachable so all should
     // return the -1 fallback sentinel.
     const partitionResults = await Promise.all(
-      Array.from({ length: 3 }, () =>
-        getNextSeqViaChaosRedis(chaosClient, pk),
-      ),
+      Array.from({ length: 3 }, () => getNextSeqViaChaosRedis(chaosClient, pk)),
     );
 
     // All must have resolved (not thrown).
@@ -419,9 +429,7 @@ suiteDescribe('Redis sequence manager — chaos (Toxiproxy)', () => {
 
     // Three calls after recovery should succeed via Redis (positive integers).
     const recoveryResults = await Promise.all(
-      Array.from({ length: 3 }, () =>
-        getNextSeqViaChaosRedis(chaosClient, pk),
-      ),
+      Array.from({ length: 3 }, () => getNextSeqViaChaosRedis(chaosClient, pk)),
     );
 
     expect(recoveryResults).toHaveLength(3);

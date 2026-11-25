@@ -37,7 +37,9 @@ export class ComplianceController {
    * `rawBody` is populated on the request. The @Body() Buffer approach requires
    * the NestJS app to be bootstrapped with `rawBody: true`.
    */
-  @ApiOperation({ summary: 'Receive KYC status webhook from compliance provider' })
+  @ApiOperation({
+    summary: 'Receive KYC status webhook from compliance provider',
+  })
   @ApiResponse({ status: 201, description: 'KYC record updated' })
   @ApiResponse({ status: 400, description: 'Invalid payload' })
   @ApiResponse({ status: 401, description: 'Invalid webhook signature' })
@@ -107,9 +109,7 @@ export class ComplianceController {
   @ApiResponse({ status: 404, description: 'KYC record not found' })
   @UseGuards(JwtAuthGuard)
   @Get('kyc/:userId')
-  async getKycRecord(
-    @Param('userId') userId: string,
-  ): Promise<KycRecord> {
+  async getKycRecord(@Param('userId') userId: string): Promise<KycRecord> {
     const record = await this.complianceService.getKycRecord(userId);
     if (!record) {
       throw new NotFoundException(`KYC record not found for user ${userId}`);

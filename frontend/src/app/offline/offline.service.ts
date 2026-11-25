@@ -19,9 +19,7 @@ export class OfflineService {
   private readonly onlineStatus = inject(OnlineStatusService);
 
   /** Internal banner phase. */
-  private readonly _state = signal<BannerState>(
-    this.onlineStatus.online() ? 'hidden' : 'offline',
-  );
+  private readonly _state = signal<BannerState>(this.onlineStatus.online() ? 'hidden' : 'offline');
 
   /** Public read-only state consumed by OfflineBannerComponent. */
   readonly state = this._state.asReadonly();

@@ -3,12 +3,25 @@ import { CacheService } from './cache.service';
 import { ConfigService } from '@nestjs/config';
 
 const makeCacheStub = (): jest.Mocked<CacheService> =>
-  ({ get: jest.fn(), set: jest.fn(), del: jest.fn(), delPattern: jest.fn(), isConnected: false } as unknown as jest.Mocked<CacheService>);
+  ({
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    delPattern: jest.fn(),
+    isConnected: false,
+  }) as unknown as jest.Mocked<CacheService>;
 
 const makeConfigStub = (): jest.Mocked<ConfigService> =>
-  ({ get: jest.fn((key: string, def: unknown) => def) } as unknown as jest.Mocked<ConfigService>);
+  ({
+    get: jest.fn((key: string, def: unknown) => def),
+  }) as unknown as jest.Mocked<ConfigService>;
 
-const MOCK_RATES = { XLM_USD: 0.12, USDC_USD: 1.0, EUR_USD: 1.08, fetched_at: Date.now() };
+const MOCK_RATES = {
+  XLM_USD: 0.12,
+  USDC_USD: 1.0,
+  EUR_USD: 1.08,
+  fetched_at: Date.now(),
+};
 
 describe('ExchangeRateService', () => {
   let service: ExchangeRateService;

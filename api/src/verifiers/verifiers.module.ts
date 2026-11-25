@@ -23,7 +23,11 @@ import { EventEntity } from '../events/event.entity';
   imports: [
     ConfigModule,
     StellarModule,
-    TypeOrmModule.forFeature([VerifierEntity, VerifierApplicationEntity, EventEntity]),
+    TypeOrmModule.forFeature([
+      VerifierEntity,
+      VerifierApplicationEntity,
+      EventEntity,
+    ]),
     AuthModule,
   ],
   controllers: [VerifiersController],

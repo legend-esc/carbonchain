@@ -498,7 +498,9 @@ export class WebhooksService implements OnModuleInit, OnModuleDestroy {
         webhook.filter_criteria,
       );
       const payload = eventData as FilterableEventPayload;
-      if (!this.webhookFilterService.shouldDeliver(eventType, payload, criteria)) {
+      if (
+        !this.webhookFilterService.shouldDeliver(eventType, payload, criteria)
+      ) {
         this.logger.debug(
           `Webhook ${webhook.id} skipped for event "${eventType}" — filtered by criteria`,
         );

@@ -14,13 +14,21 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 /** Minimal OpenSearch _search response. */
 function buildOsResponse(
-  hits: { id: string; name: string; description: string; country: string; methodology: string; developer: string }[],
+  hits: {
+    id: string;
+    name: string;
+    description: string;
+    country: string;
+    methodology: string;
+    developer: string;
+  }[],
   scores: number[] = [],
 ) {
   const methodologyCounts: Record<string, number> = {};
   const countryCounts: Record<string, number> = {};
   for (const h of hits) {
-    methodologyCounts[h.methodology] = (methodologyCounts[h.methodology] ?? 0) + 1;
+    methodologyCounts[h.methodology] =
+      (methodologyCounts[h.methodology] ?? 0) + 1;
     countryCounts[h.country] = (countryCounts[h.country] ?? 0) + 1;
   }
 
@@ -36,10 +44,15 @@ function buildOsResponse(
       },
       aggregations: {
         by_methodology: {
-          buckets: Object.entries(methodologyCounts).map(([key, doc_count]) => ({ key, doc_count })),
+          buckets: Object.entries(methodologyCounts).map(
+            ([key, doc_count]) => ({ key, doc_count }),
+          ),
         },
         by_country: {
-          buckets: Object.entries(countryCounts).map(([key, doc_count]) => ({ key, doc_count })),
+          buckets: Object.entries(countryCounts).map(([key, doc_count]) => ({
+            key,
+            doc_count,
+          })),
         },
       },
     },
@@ -47,7 +60,16 @@ function buildOsResponse(
 }
 
 /** Minimal SQL fallback DataSource mock. */
-function buildMockDataSource(rows: { id: string; name: string; description: string; location: string; methodology: string; developer: string }[] = []) {
+function buildMockDataSource(
+  rows: {
+    id: string;
+    name: string;
+    description: string;
+    location: string;
+    methodology: string;
+    developer: string;
+  }[] = [],
+) {
   return {
     query: jest.fn(async (sql: string, _params?: unknown[]) => {
       const s = sql.replace(/\s+/g, ' ').trim();
@@ -82,7 +104,11 @@ const mockConfigService = {
 
 describe('OpenSearchService', () => {
   let service: OpenSearchService;
-  let axiosInstance: jest.Mocked<{ get: jest.Mock; post: jest.Mock; put: jest.Mock }>;
+  let axiosInstance: jest.Mocked<{
+    get: jest.Mock;
+    post: jest.Mock;
+    put: jest.Mock;
+  }>;
 
   const sampleProject = {
     id: 'proj-1',
@@ -103,7 +129,9 @@ describe('OpenSearchService', () => {
       put: jest.fn(),
     };
     mockedAxios.create = jest.fn().mockReturnValue(axiosInstance);
-    mockedAxios.isAxiosError = jest.fn().mockReturnValue(false) as jest.MockedFunction<typeof axios.isAxiosError>;
+    mockedAxios.isAxiosError = jest
+      .fn()
+      .mockReturnValue(false) as jest.MockedFunction<typeof axios.isAxiosError>;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -131,7 +159,9 @@ describe('OpenSearchService', () => {
     });
 
     it('creates the index when OpenSearch returns 404', async () => {
-      const error = Object.assign(new Error('Not Found'), { response: { status: 404 } });
+      const error = Object.assign(new Error('Not Found'), {
+        response: { status: 404 },
+      });
       (mockedAxios.isAxiosError as jest.Mock).mockReturnValueOnce(true);
       axiosInstance.get.mockRejectedValueOnce(error);
       axiosInstance.put.mockResolvedValueOnce({ status: 200 });
@@ -139,12 +169,17 @@ describe('OpenSearchService', () => {
       await expect(service.ensureIndex()).resolves.toBeUndefined();
       expect(axiosInstance.put).toHaveBeenCalledWith(
         '/projects',
-        expect.objectContaining({ settings: expect.any(Object), mappings: expect.any(Object) }),
+        expect.objectContaining({
+          settings: expect.any(Object),
+          mappings: expect.any(Object),
+        }),
       );
     });
 
     it('re-throws non-404 errors', async () => {
-      const error = Object.assign(new Error('Server Error'), { response: { status: 500 } });
+      const error = Object.assign(new Error('Server Error'), {
+        response: { status: 500 },
+      });
       (mockedAxios.isAxiosError as jest.Mock).mockReturnValueOnce(true);
       axiosInstance.get.mockRejectedValueOnce(error);
 
@@ -169,7 +204,9 @@ describe('OpenSearchService', () => {
     it('does not throw when the PUT fails (non-fatal)', async () => {
       axiosInstance.put.mockRejectedValueOnce(new Error('timeout'));
 
-      await expect(service.indexProject(sampleProject)).resolves.toBeUndefined();
+      await expect(
+        service.indexProject(sampleProject),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -177,7 +214,9 @@ describe('OpenSearchService', () => {
 
   describe('search — OpenSearch path', () => {
     it('returns hits and facets from a successful OpenSearch response', async () => {
-      axiosInstance.post.mockResolvedValueOnce(buildOsResponse([sampleProject], [1.5]));
+      axiosInstance.post.mockResolvedValueOnce(
+        buildOsResponse([sampleProject], [1.5]),
+      );
 
       const result = await service.search({ q: 'amazon' });
 
@@ -198,7 +237,10 @@ describe('OpenSearchService', () => {
 
       await service.search({ q: '', methodology: 'VCS', country: 'Brazil' });
 
-      const [, body] = axiosInstance.post.mock.calls[0] as [string, { query: { bool: { filter: unknown[] } } }];
+      const [, body] = axiosInstance.post.mock.calls[0] as [
+        string,
+        { query: { bool: { filter: unknown[] } } },
+      ];
       expect(body.query.bool.filter).toEqual(
         expect.arrayContaining([
           { term: { methodology: 'VCS' } },
@@ -212,12 +254,17 @@ describe('OpenSearchService', () => {
 
       await service.search({ q: '' });
 
-      const [, body] = axiosInstance.post.mock.calls[0] as [string, { query: { bool: { must: unknown[] } } }];
+      const [, body] = axiosInstance.post.mock.calls[0] as [
+        string,
+        { query: { bool: { must: unknown[] } } },
+      ];
       expect(body.query.bool.must[0]).toEqual({ match_all: {} });
     });
 
     it('reports total and page metadata', async () => {
-      axiosInstance.post.mockResolvedValueOnce(buildOsResponse([sampleProject]));
+      axiosInstance.post.mockResolvedValueOnce(
+        buildOsResponse([sampleProject]),
+      );
 
       const result = await service.search({ q: 'test', page: 2, pageSize: 5 });
 
@@ -247,13 +294,17 @@ describe('OpenSearchService', () => {
         providers: [
           OpenSearchService,
           { provide: ConfigService, useValue: mockConfigService },
-          { provide: getDataSourceToken(), useValue: buildMockDataSource([dbRow]) },
+          {
+            provide: getDataSourceToken(),
+            useValue: buildMockDataSource([dbRow]),
+          },
         ],
       }).compile();
 
       serviceWithRows = module.get<OpenSearchService>(OpenSearchService);
       // Inject the same mocked axios instance.
-      (serviceWithRows as unknown as { client: typeof axiosInstance }).client = axiosInstance;
+      (serviceWithRows as unknown as { client: typeof axiosInstance }).client =
+        axiosInstance;
     });
 
     it('returns fallback=true on OpenSearch failure', async () => {

@@ -284,9 +284,7 @@ export class SellerDashboardComponent implements OnInit {
   readonly statusFilter = signal<OfferStatusFilter>('all');
   readonly cancellingOfferId = signal<string | null>(null);
 
-  readonly activeOffers = computed(() =>
-    this.offers().filter((offer) => offer.status === 'open'),
-  );
+  readonly activeOffers = computed(() => this.offers().filter((offer) => offer.status === 'open'));
 
   readonly filledOffers = computed(() =>
     this.offers().filter((offer) => offer.status === 'filled'),
@@ -295,19 +293,12 @@ export class SellerDashboardComponent implements OnInit {
   readonly totalActiveOffers = computed(() => this.activeOffers().length);
 
   readonly escrowedTonnes = computed(() =>
-    this.activeOffers().reduce(
-      (sum, offer) => sum + this.rawToTonnes(offer.tonnes_available),
-      0,
-    ),
+    this.activeOffers().reduce((sum, offer) => sum + this.rawToTonnes(offer.tonnes_available), 0),
   );
 
-  readonly salesVolumeXlm = computed(() =>
-    this.sumSalesVolumeByAsset('XLM'),
-  );
+  readonly salesVolumeXlm = computed(() => this.sumSalesVolumeByAsset('XLM'));
 
-  readonly salesVolumeUsdc = computed(() =>
-    this.sumSalesVolumeByAsset('USDC'),
-  );
+  readonly salesVolumeUsdc = computed(() => this.sumSalesVolumeByAsset('USDC'));
 
   readonly filteredOffers = computed(() => {
     const filter = this.statusFilter();

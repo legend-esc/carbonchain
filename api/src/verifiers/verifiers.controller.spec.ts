@@ -55,7 +55,10 @@ describe('VerifiersController', () => {
       controllers: [VerifiersController],
       providers: [
         { provide: VerifiersService, useValue: mockVerifiersService },
-        { provide: VerifierMetricsService, useValue: mockVerifierMetricsService },
+        {
+          provide: VerifierMetricsService,
+          useValue: mockVerifierMetricsService,
+        },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: StellarService, useValue: mockStellarService },
         { provide: CacheService, useValue: mockCacheService },

@@ -25,17 +25,13 @@ describe('CalculatorService', () => {
   });
 
   it('calculates electricity emissions', () => {
-    const result = service.estimate([
-      { type: 'electricity', quantity: 1000 },
-    ]);
+    const result = service.estimate([{ type: 'electricity', quantity: 1000 }]);
     // 1000 kWh × 0.000233 = 0.233 → 0.2
     expect(result.total_tonnes_co2e).toBeCloseTo(0.2, 1);
   });
 
   it('calculates server-hour emissions', () => {
-    const result = service.estimate([
-      { type: 'server_hours', quantity: 1000 },
-    ]);
+    const result = service.estimate([{ type: 'server_hours', quantity: 1000 }]);
     expect(result.total_tonnes_co2e).toBeGreaterThanOrEqual(0);
   });
 
@@ -49,9 +45,7 @@ describe('CalculatorService', () => {
   });
 
   it('recommends at least 0.1 credits', () => {
-    const result = service.estimate([
-      { type: 'train', quantity: 1 },
-    ]);
+    const result = service.estimate([{ type: 'train', quantity: 1 }]);
     expect(result.recommended_credits).toBeGreaterThanOrEqual(0.1);
   });
 

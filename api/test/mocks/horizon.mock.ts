@@ -158,7 +158,9 @@ export class MockHorizonHarness {
   /** Base URL of the running mock Horizon HTTP server (set after `start()`). */
   get url(): string {
     if (!this.baseUrl) {
-      throw new Error('MockHorizonHarness has not been started. Call start() first.');
+      throw new Error(
+        'MockHorizonHarness has not been started. Call start() first.',
+      );
     }
     return this.baseUrl;
   }
@@ -323,13 +325,21 @@ export class MockHorizonHarness {
   createServerAdapter(): {
     loadAccount: (publicKey: string) => Promise<MockHorizonAccount>;
     feeStats: () => Promise<MockHorizonFeeStats>;
-    submitTransaction: (tx: { toXDR?: () => string }) => Promise<MockHorizonTxSuccess>;
+    submitTransaction: (tx: {
+      toXDR?: () => string;
+    }) => Promise<MockHorizonTxSuccess>;
   } {
     return {
-      loadAccount: async (publicKey: string) => this.handleLoadAccount(publicKey),
+      loadAccount: async (publicKey: string) =>
+        this.handleLoadAccount(publicKey),
       feeStats: async () => structuredClone(this.feeStats),
       submitTransaction: async (tx: { toXDR?: () => string }) => {
-        const xdr = typeof tx?.toXDR === 'function' ? tx.toXDR() : String(tx ?? '');
+        const xdr =
+          typeof tx?.toXDR === 'function'
+            ? tx.toXDR()
+            : typeof tx === 'string'
+              ? tx
+              : '';
         return this.handleSubmitTransaction(xdr);
       },
     };

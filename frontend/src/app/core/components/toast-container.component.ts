@@ -57,11 +57,7 @@ import { ToastService, STELLAR_EXPERT_TX_BASE, Toast } from '../services/toast.s
                   {{ toast.action.label }}
                 </a>
               } @else {
-                <button
-                  class="toast__action-btn"
-                  type="button"
-                  (click)="toast.action?.onClick?.()"
-                >
+                <button class="toast__action-btn" type="button" (click)="toast.action.onClick?.()">
                   {{ toast.action.label }}
                 </button>
               }

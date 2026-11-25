@@ -16,7 +16,7 @@ function makeRequest(overrides: {
   'x-api-key'?: string;
 }): Partial<Request> {
   return {
-    headers: { ...overrides } as any,
+    headers: { ...overrides },
     socket: { remoteAddress: '127.0.0.1' } as any,
     path: '/test',
   };
@@ -239,8 +239,16 @@ describe('CustomThrottlerGuard', () => {
     });
 
     it('different IPs use independent counters', async () => {
-      const req1 = { headers: {}, socket: { remoteAddress: '1.2.3.4' } as any, path: '/a' };
-      const req2 = { headers: {}, socket: { remoteAddress: '5.6.7.8' } as any, path: '/a' };
+      const req1 = {
+        headers: {},
+        socket: { remoteAddress: '1.2.3.4' } as any,
+        path: '/a',
+      };
+      const req2 = {
+        headers: {},
+        socket: { remoteAddress: '5.6.7.8' } as any,
+        path: '/a',
+      };
       const res = makeResponse();
 
       const ctx1 = makeContext(req1, res);

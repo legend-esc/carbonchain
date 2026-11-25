@@ -28,15 +28,25 @@ export class BatchParserService {
   parseCSV(csvContent: string): BatchParseResult {
     const lines = csvContent.split('\n').filter((l) => l.trim());
     if (lines.length < 2) {
-      throw new BadRequestException('CSV must include header row and at least one data row');
+      throw new BadRequestException(
+        'CSV must include header row and at least one data row',
+      );
     }
 
     const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-    const required = ['vintage_start', 'vintage_end', 'tonnes', 'project_id', 'methodology'];
+    const required = [
+      'vintage_start',
+      'vintage_end',
+      'tonnes',
+      'project_id',
+      'methodology',
+    ];
 
     const missing = required.filter((r) => !headers.includes(r));
     if (missing.length > 0) {
-      throw new BadRequestException(`Missing required columns: ${missing.join(', ')}`);
+      throw new BadRequestException(
+        `Missing required columns: ${missing.join(', ')}`,
+      );
     }
 
     const valid_rows: BatchCreditRow[] = [];
@@ -73,26 +83,37 @@ export class BatchParserService {
   parseXLSX(xlsxContent: Buffer): BatchParseResult {
     // Simplified: convert to CSV first
     // In production: use xlsx.parse() and iterate rows
-    throw new BadRequestException('XLSX parsing requires xlsx library installation');
+    throw new BadRequestException(
+      'XLSX parsing requires xlsx library installation',
+    );
   }
 
   /**
    * Validate a single row
    */
-  private validateRow(row: Record<string, string>, rowNum: number): BatchCreditRow {
+  private validateRow(
+    row: Record<string, string>,
+    rowNum: number,
+  ): BatchCreditRow {
     // Validate vintage dates
     const vintage_start = row['vintage_start'];
     const vintage_end = row['vintage_end'];
 
     if (!this.isValidDate(vintage_start)) {
-      throw new Error(`Row ${rowNum}: Invalid vintage_start date format (YYYY-MM-DD)`);
+      throw new Error(
+        `Row ${rowNum}: Invalid vintage_start date format (YYYY-MM-DD)`,
+      );
     }
     if (!this.isValidDate(vintage_end)) {
-      throw new Error(`Row ${rowNum}: Invalid vintage_end date format (YYYY-MM-DD)`);
+      throw new Error(
+        `Row ${rowNum}: Invalid vintage_end date format (YYYY-MM-DD)`,
+      );
     }
 
     if (new Date(vintage_start) >= new Date(vintage_end)) {
-      throw new Error(`Row ${rowNum}: vintage_start must be before vintage_end`);
+      throw new Error(
+        `Row ${rowNum}: vintage_start must be before vintage_end`,
+      );
     }
 
     // Validate tonnes
@@ -138,7 +159,9 @@ export class BatchParserService {
   /**
    * Extract additional metadata columns
    */
-  private extractMetadata(row: Record<string, string>): Record<string, string> | undefined {
+  private extractMetadata(
+    row: Record<string, string>,
+  ): Record<string, string> | undefined {
     const standard_cols = [
       'vintage_start',
       'vintage_end',

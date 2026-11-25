@@ -38,11 +38,7 @@ describe('PricePipe', () => {
     const httpSpy = { get: vi.fn().mockReturnValue(of(null)) };
 
     TestBed.configureTestingModule({
-      providers: [
-        PricePipe,
-        CurrencyStateService,
-        { provide: HttpClient, useValue: httpSpy },
-      ],
+      providers: [PricePipe, CurrencyStateService, { provide: HttpClient, useValue: httpSpy }],
     });
 
     currencyState = TestBed.inject(CurrencyStateService);
@@ -114,10 +110,7 @@ describe('CurrencyStateService', () => {
   beforeEach(() => {
     httpSpy = { get: vi.fn() };
     TestBed.configureTestingModule({
-      providers: [
-        CurrencyStateService,
-        { provide: HttpClient, useValue: httpSpy },
-      ],
+      providers: [CurrencyStateService, { provide: HttpClient, useValue: httpSpy }],
     });
     service = TestBed.inject(CurrencyStateService);
   });
@@ -168,6 +161,6 @@ describe('CurrencyStateService', () => {
       }),
     );
     await service.loadRates();
-    expect(service.rates().USDC).toBeCloseTo(0.20);
+    expect(service.rates().USDC).toBeCloseTo(0.2);
   });
 });

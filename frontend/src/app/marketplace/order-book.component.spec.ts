@@ -40,7 +40,8 @@ describe('OrderBookComponent', () => {
 
   beforeEach(async () => {
     OrigWS = window.WebSocket;
-    (window as unknown as Record<string, unknown>)['WebSocket'] = MockWebSocket as unknown as typeof WebSocket;
+    (window as unknown as Record<string, unknown>)['WebSocket'] =
+      MockWebSocket as unknown as typeof WebSocket;
     MockWebSocket.instance = null;
 
     await TestBed.configureTestingModule({

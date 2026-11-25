@@ -227,7 +227,9 @@ const FOCUSABLE =
                           type="button"
                           [disabled]="cancelling() && offerToCancel()?.id === offer.id"
                           (click)="openCancelDialog(offer)"
-                          [attr.aria-label]="'Cancel offer ' + offer.id + ' for credit ' + offer.credit_id"
+                          [attr.aria-label]="
+                            'Cancel offer ' + offer.id + ' for credit ' + offer.credit_id
+                          "
                         >
                           Cancel
                         </button>
@@ -632,7 +634,7 @@ export class MarketplaceComponent implements OnInit {
   readonly PAGE_SIZE = 20;
   /** Column layout passed to <app-table-skeleton> — mirrors the marketplace table headers. */
   readonly marketplaceSkeletonCols = [
-    'wide',   // Credit ID
+    'wide', // Credit ID
     'normal', // Project
     'narrow', // Tonnes
     'normal', // Methodology

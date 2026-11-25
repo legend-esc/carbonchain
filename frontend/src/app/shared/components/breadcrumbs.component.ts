@@ -1,7 +1,13 @@
 import { CommonModule, DOCUMENT } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, ActivatedRouteSnapshot, NavigationEnd, Router, RouterLink } from '@angular/router';
+import {
+  ActivatedRoute,
+  ActivatedRouteSnapshot,
+  NavigationEnd,
+  Router,
+  RouterLink,
+} from '@angular/router';
 import { filter } from 'rxjs';
 
 export interface BreadcrumbItem {
@@ -41,11 +47,7 @@ const JSONLD_SCRIPT_ID = 'cc-breadcrumb-jsonld';
   template: `
     @if (breadcrumbs().length > 0) {
       <nav class="breadcrumbs" aria-label="Breadcrumb">
-        <ol
-          class="breadcrumbs__list"
-          itemscope
-          itemtype="https://schema.org/BreadcrumbList"
-        >
+        <ol class="breadcrumbs__list" itemscope itemtype="https://schema.org/BreadcrumbList">
           @for (crumb of breadcrumbs(); track crumb.url; let idx = $index) {
             <li
               class="breadcrumbs__item"
@@ -54,20 +56,12 @@ const JSONLD_SCRIPT_ID = 'cc-breadcrumb-jsonld';
               itemtype="https://schema.org/ListItem"
             >
               @if (!crumb.isCurrent) {
-                <a
-                  class="breadcrumbs__link"
-                  [routerLink]="crumb.url"
-                  itemprop="item"
-                >
+                <a class="breadcrumbs__link" [routerLink]="crumb.url" itemprop="item">
                   <span itemprop="name">{{ crumb.label }}</span>
                 </a>
                 <span class="breadcrumbs__sep" aria-hidden="true">/</span>
               } @else {
-                <span
-                  class="breadcrumbs__current"
-                  aria-current="page"
-                  itemprop="item"
-                >
+                <span class="breadcrumbs__current" aria-current="page" itemprop="item">
                   <span itemprop="name">{{ crumb.label }}</span>
                 </span>
               }
@@ -201,7 +195,12 @@ export class BreadcrumbsComponent implements OnInit, OnDestroy {
     // where /credits doesn't have its own list route.
     const normalized = crumbs.map((item, idx) => ({
       ...item,
-      url: item.url === '/credits' ? '/dashboard' : item.url === '/certificates' ? '/dashboard' : item.url,
+      url:
+        item.url === '/credits'
+          ? '/dashboard'
+          : item.url === '/certificates'
+            ? '/dashboard'
+            : item.url,
       isCurrent: idx === crumbs.length - 1,
     }));
 

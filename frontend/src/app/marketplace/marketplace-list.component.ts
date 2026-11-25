@@ -268,8 +268,8 @@ export class MarketplaceListComponent implements OnInit {
   /** Column layout for <app-table-skeleton> — mirrors the 7 list table columns. */
   readonly listSkeletonCols = [
     'normal', // ID
-    'wide',   // Credit
-    'wide',   // Seller
+    'wide', // Credit
+    'wide', // Seller
     'narrow', // Tonnes
     'narrow', // Price
     'narrow', // Asset

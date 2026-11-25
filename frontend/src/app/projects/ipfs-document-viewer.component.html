@@ -2,12 +2,7 @@
   <div class="viewer-header">
     <div class="viewer-title-group">
       <h3>{{ title() }}</h3>
-      <a
-        class="gateway-link"
-        [href]="documentUrl()"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <a class="gateway-link" [href]="documentUrl()" target="_blank" rel="noopener noreferrer">
         Open on IPFS Gateway ({{ cid() | slice: 0 : 16 }}…)
       </a>
     </div>
@@ -21,19 +16,13 @@
           <span class="badge badge--pending">Computing SHA-256…</span>
         }
         @case ('verified') {
-          <span class="badge badge--verified" role="status">
-            ✓ Cryptographically Verified
-          </span>
+          <span class="badge badge--verified" role="status"> ✓ Cryptographically Verified </span>
         }
         @case ('mismatch') {
-          <span class="badge badge--mismatch" role="alert">
-            ✕ Hash Mismatch
-          </span>
+          <span class="badge badge--mismatch" role="alert"> ✕ Hash Mismatch </span>
         }
         @case ('error') {
-          <span class="badge badge--error" role="alert">
-            ⚠ Verification Failed
-          </span>
+          <span class="badge badge--error" role="alert"> ⚠ Verification Failed </span>
         }
       }
     </div>
@@ -67,11 +56,7 @@
   } @else if (status() === 'verified' && previewUrl(); as safeUrl) {
     <div class="preview-container">
       @if (isPdf()) {
-        <iframe
-          class="preview-frame"
-          [src]="safeUrl"
-          [title]="title()"
-        ></iframe>
+        <iframe class="preview-frame" [src]="safeUrl" [title]="title()"></iframe>
       } @else if (isImage()) {
         <img class="preview-image" [src]="safeUrl" [alt]="title()" />
       } @else {

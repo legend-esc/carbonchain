@@ -87,7 +87,7 @@ export interface MapProject extends ProjectProfile {
         }
         <dl class="map-popup__meta">
           <dt>Methodology</dt>
-          <dd>{{ p.methodology ?? '—' }}</dd>
+          <dd>{{ p.methodology || '—' }}</dd>
           <dt>Available tonnes</dt>
           <dd>{{ formatTonnes(p.available_tonnes) }}</dd>
           <dt>Price</dt>
@@ -296,14 +296,13 @@ export class ProjectMapComponent implements OnInit, AfterViewInit, OnDestroy {
     map: LeafletMap,
   ): unknown {
     // Use markercluster if available (optional peer dep), otherwise plain layer group
-    let group: unknown;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const MC = require('leaflet.markercluster');
-      group = new MC.MarkerClusterGroup();
-    } catch {
-      group = L.layerGroup();
-    }
+    const LWithCluster = L as typeof import('leaflet') & {
+      markerClusterGroup?: () => unknown;
+    };
+    const group: unknown =
+      typeof LWithCluster.markerClusterGroup === 'function'
+        ? LWithCluster.markerClusterGroup()
+        : L.layerGroup();
 
     for (const project of projects) {
       const marker = L.circleMarker([project.lat!, project.lng!], {
@@ -336,9 +335,7 @@ export class ProjectMapComponent implements OnInit, AfterViewInit, OnDestroy {
   private buildPopupHtml(project: MapProject): string {
     const name = this.escapeHtml(project.name ?? 'Unnamed project');
     const methodology = this.escapeHtml(project.methodology ?? '—');
-    const tonnes = project.available_tonnes
-      ? this.formatTonnes(project.available_tonnes)
-      : '—';
+    const tonnes = project.available_tonnes ? this.formatTonnes(project.available_tonnes) : '—';
     const price = project.price_per_tonne_xlm
       ? this.escapeHtml(project.price_per_tonne_xlm) + ' XLM/t'
       : '—';

@@ -1,12 +1,4 @@
-import {
-  Component,
-  inject,
-  signal,
-  computed,
-  OnInit,
-  ElementRef,
-  viewChild,
-} from '@angular/core';
+import { Component, inject, signal, computed, OnInit, ElementRef, viewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterModule } from '@angular/router';
@@ -23,11 +15,11 @@ export interface ProjectBounds {
 }
 
 export interface ImageryPair {
-  baselineUrl: string;   // before (baseline year)
-  currentUrl: string;    // after  (vintage year)
+  baselineUrl: string; // before (baseline year)
+  currentUrl: string; // after  (vintage year)
   baselineYear: number;
   vintageYear: number;
-  geoJson?: string;      // project polygon GeoJSON (optional)
+  geoJson?: string; // project polygon GeoJSON (optional)
   projectBounds?: ProjectBounds;
 }
 
@@ -40,7 +32,6 @@ type RejectStep = 'idle' | 'open' | 'submitting';
   imports: [CommonModule, FormsModule, RouterModule],
   template: `
     <div class="workbench" aria-label="Verifier inspection workbench">
-
       <!-- Header -->
       <div class="wb-header">
         <div class="wb-title-row">
@@ -59,7 +50,6 @@ type RejectStep = 'idle' | 'open' | 'submitting';
       } @else if (!imagery()) {
         <p class="status">No imagery available for this project.</p>
       } @else {
-
         <!-- Year labels -->
         <div class="year-labels" aria-hidden="true">
           <span class="year-label">{{ imagery()!.baselineYear }} (Baseline)</span>
@@ -101,10 +91,7 @@ type RejectStep = 'idle' | 'open' | 'submitting';
           </div>
 
           <!-- Baseline image — clipped by slider -->
-          <div
-            class="imagery-layer imagery-baseline"
-            [style.clip-path]="baselineClip()"
-          >
+          <div class="imagery-layer imagery-baseline" [style.clip-path]="baselineClip()">
             @if (imagery()!.baselineUrl) {
               <img
                 [src]="imagery()!.baselineUrl"
@@ -128,11 +115,7 @@ type RejectStep = 'idle' | 'open' | 'submitting';
           }
 
           <!-- Divider handle -->
-          <div
-            class="divider"
-            [style.left]="sliderPct() + '%'"
-            aria-hidden="true"
-          >
+          <div class="divider" [style.left]="sliderPct() + '%'" aria-hidden="true">
             <div class="divider-line"></div>
             <div class="divider-handle">⟺</div>
           </div>
@@ -203,7 +186,9 @@ type RejectStep = 'idle' | 'open' | 'submitting';
               rows="4"
               placeholder="Describe the issue…"
               [(ngModel)]="rejectReason"
-              [attr.aria-invalid]="!rejectReason.trim() && rejectStep() === 'submitting' ? 'true' : null"
+              [attr.aria-invalid]="
+                !rejectReason.trim() && rejectStep() === 'submitting' ? 'true' : null
+              "
             ></textarea>
 
             @if (!rejectReason.trim() && rejectStep() === 'submitting') {
@@ -607,9 +592,7 @@ export class VerifierInspectionComponent implements OnInit {
   readonly rejectStep = signal<RejectStep>('idle');
   rejectReason = '';
 
-  readonly baselineClip = computed(
-    () => `inset(0 ${100 - this._sliderPct()}% 0 0)`,
-  );
+  readonly baselineClip = computed(() => `inset(0 ${100 - this._sliderPct()}% 0 0)`);
 
   async ngOnInit(): Promise<void> {
     const id = this.route.snapshot.paramMap.get('projectId');
@@ -638,7 +621,11 @@ export class VerifierInspectionComponent implements OnInit {
         currentUrl: this.buildTileUrl(project.location, vintageYear),
         baselineYear: baseYear,
         vintageYear,
-        geoJson: JSON.stringify({ type: 'Feature', properties: { name: project.name }, geometry: null }),
+        geoJson: JSON.stringify({
+          type: 'Feature',
+          properties: { name: project.name },
+          geometry: null,
+        }),
         projectBounds: this.parseBounds(project.location),
       });
     } catch {

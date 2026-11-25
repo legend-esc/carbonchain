@@ -159,27 +159,24 @@ export class StellarService implements OnModuleInit {
     try {
       const result = await fn();
       const durationSeconds = (Date.now() - startMs) / 1000;
-      this.metricsService?.sorobanRpcDurationSeconds?.labels(
-        methodName,
-        'success',
-      ).observe(durationSeconds);
+      this.metricsService?.sorobanRpcDurationSeconds
+        ?.labels(methodName, 'success')
+        .observe(durationSeconds);
       return result;
     } catch (error) {
       const durationSeconds = (Date.now() - startMs) / 1000;
-      this.metricsService?.sorobanRpcDurationSeconds?.labels(
-        methodName,
-        'error',
-      ).observe(durationSeconds);
+      this.metricsService?.sorobanRpcDurationSeconds
+        ?.labels(methodName, 'error')
+        .observe(durationSeconds);
 
       let errorType = 'other';
       if (error instanceof Error) {
         if (error.message.includes('rate')) errorType = 'rate_limit';
         else if (error.message.includes('timed out')) errorType = 'timeout';
       }
-      this.metricsService?.sorobanRpcErrorsTotal?.labels(
-        methodName,
-        errorType,
-      ).inc();
+      this.metricsService?.sorobanRpcErrorsTotal
+        ?.labels(methodName, errorType)
+        .inc();
       throw error;
     }
   }
@@ -296,7 +293,8 @@ export class StellarService implements OnModuleInit {
       10,
     );
     const withBuffer = Math.ceil(
-      Math.round((baseFee + minResourceFee) * this.feeBufferMultiplier * 1e9) / 1e9,
+      Math.round((baseFee + minResourceFee) * this.feeBufferMultiplier * 1e9) /
+        1e9,
     );
     // Ensure we always pay at least the minimum base fee (100 stroops).
     return String(Math.max(withBuffer, FALLBACK_BASE_FEE));

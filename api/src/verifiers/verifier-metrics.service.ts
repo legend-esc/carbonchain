@@ -95,11 +95,11 @@ export class VerifierMetricsService {
     }
 
     // Partition events by credit_id.
-    const submitMap = new Map<string, EventEntity>();   // creditId → submitted event
+    const submitMap = new Map<string, EventEntity>(); // creditId → submitted event
     const decisionMap = new Map<string, EventEntity>(); // creditId → approved/rejected event
 
     for (const ev of events) {
-      const payload = ev.data as Record<string, unknown>;
+      const payload = ev.data;
       const creditId =
         typeof payload['credit_id'] === 'string' ? payload['credit_id'] : null;
       const verifier =
@@ -134,7 +134,8 @@ export class VerifierMetricsService {
       const submitEvent = submitMap.get(creditId);
 
       if (submitEvent) {
-        const deltaSeconds = Number(decisionEvent.timestamp) - Number(submitEvent.timestamp);
+        const deltaSeconds =
+          Number(decisionEvent.timestamp) - Number(submitEvent.timestamp);
         // Clamp negative deltas (clock skew / data issues) to zero.
         totalTurnaroundSeconds += Math.max(0, deltaSeconds);
       }
@@ -146,11 +147,15 @@ export class VerifierMetricsService {
       }
 
       // Accumulate tonnes from the submission event payload when available.
-      const submitPayload = submitEvent?.data as Record<string, unknown> | undefined;
+      const submitPayload = submitEvent?.data;
       const rawTonnes = submitPayload?.['tonnes'];
-      if (rawTonnes !== undefined) {
+      if (
+        typeof rawTonnes === 'string' ||
+        typeof rawTonnes === 'number' ||
+        typeof rawTonnes === 'bigint'
+      ) {
         try {
-          totalTonnesBigInt += BigInt(String(rawTonnes));
+          totalTonnesBigInt += BigInt(rawTonnes);
         } catch {
           // Non-parseable tonnes — skip.
         }
@@ -159,12 +164,9 @@ export class VerifierMetricsService {
 
     const totalReviewed = approvedCount + rejectedCount;
     const averageTurnaroundHours =
-      totalReviewed > 0
-        ? totalTurnaroundSeconds / totalReviewed / 3600
-        : 0;
+      totalReviewed > 0 ? totalTurnaroundSeconds / totalReviewed / 3600 : 0;
 
-    const approvalRate =
-      totalReviewed > 0 ? approvedCount / totalReviewed : 0;
+    const approvalRate = totalReviewed > 0 ? approvedCount / totalReviewed : 0;
 
     return {
       address,

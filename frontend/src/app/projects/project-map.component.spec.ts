@@ -91,8 +91,10 @@ describe('ProjectMapComponent', () => {
     component = fixture.componentInstance;
 
     // Override the dynamic import so the test never tries to resolve 'leaflet'
-    vi.spyOn(component as unknown as { loadLeaflet(): Promise<unknown> }, 'loadLeaflet')
-      .mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
+    vi.spyOn(
+      component as unknown as { loadLeaflet(): Promise<unknown> },
+      'loadLeaflet',
+    ).mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
   });
 
   it('creates the component', () => {
@@ -114,8 +116,10 @@ describe('ProjectMapComponent', () => {
     apiSpy.listProjects.mockReturnValue(throwError(() => new Error('network error')));
     fixture = TestBed.createComponent(ProjectMapComponent);
     component = fixture.componentInstance;
-    vi.spyOn(component as unknown as { loadLeaflet(): Promise<unknown> }, 'loadLeaflet')
-      .mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
+    vi.spyOn(
+      component as unknown as { loadLeaflet(): Promise<unknown> },
+      'loadLeaflet',
+    ).mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
     fixture.detectChanges();
     await fixture.whenStable();
     expect(component.error()).toContain('network error');
@@ -137,8 +141,10 @@ describe('ProjectMapComponent', () => {
     apiSpy.listProjects.mockReturnValue(throwError(() => new Error('boom')));
     fixture = TestBed.createComponent(ProjectMapComponent);
     component = fixture.componentInstance;
-    vi.spyOn(component as unknown as { loadLeaflet(): Promise<unknown> }, 'loadLeaflet')
-      .mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
+    vi.spyOn(
+      component as unknown as { loadLeaflet(): Promise<unknown> },
+      'loadLeaflet',
+    ).mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -169,8 +175,10 @@ describe('ProjectMapComponent', () => {
     apiSpy.listProjects.mockReturnValue(of([PROJECT_NO_COORDS]));
     fixture = TestBed.createComponent(ProjectMapComponent);
     component = fixture.componentInstance;
-    vi.spyOn(component as unknown as { loadLeaflet(): Promise<unknown> }, 'loadLeaflet')
-      .mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
+    vi.spyOn(
+      component as unknown as { loadLeaflet(): Promise<unknown> },
+      'loadLeaflet',
+    ).mockResolvedValue(mockLeaflet as unknown as typeof import('leaflet'));
     fixture.detectChanges();
     await fixture.whenStable();
     expect(component.error()).toBeNull();

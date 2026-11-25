@@ -26,7 +26,13 @@ import { ComplianceController } from './compliance.controller';
       }),
     }),
   ],
-  providers: [AuthService, StellarAuthStrategy, JwtAuthGuard, AdminGuard, ComplianceService],
+  providers: [
+    AuthService,
+    StellarAuthStrategy,
+    JwtAuthGuard,
+    AdminGuard,
+    ComplianceService,
+  ],
   controllers: [AuthController, ComplianceController],
   exports: [AuthService, JwtAuthGuard, ComplianceService],
 })

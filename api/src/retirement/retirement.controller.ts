@@ -87,9 +87,15 @@ export class RetirementController {
     return this.retirementService.batchRetire(dto);
   }
 
-  @ApiOperation({ summary: 'Build unsigned XDR for batch credit retirement (up to 20 credits)' })
+  @ApiOperation({
+    summary:
+      'Build unsigned XDR for batch credit retirement (up to 20 credits)',
+  })
   @ApiResponse({ status: 201, description: 'Unsigned XDR built successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid request or too many credits' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request or too many credits',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtAuthGuard)
   @Idempotent()

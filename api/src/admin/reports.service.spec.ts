@@ -5,7 +5,7 @@ import { ForbiddenException } from '@nestjs/common';
 const makeRetirementServiceStub = (): jest.Mocked<RetirementService> =>
   ({
     listRetirements: jest.fn(),
-  } as unknown as jest.Mocked<RetirementService>);
+  }) as unknown as jest.Mocked<RetirementService>;
 
 const SAMPLE_RECORD = {
   id: 'abc123',
@@ -76,19 +76,29 @@ describe('ReportsService', () => {
 
   it('formats ISO 8601 date and 0.1-resolution tonnes', async () => {
     retirementService.listRetirements
-      .mockResolvedValueOnce({ data: [SAMPLE_RECORD], total: 1, page: 1, limit: 500 })
+      .mockResolvedValueOnce({
+        data: [SAMPLE_RECORD],
+        total: 1,
+        page: 1,
+        limit: 500,
+      })
       .mockResolvedValue({ data: [], total: 0, page: 2, limit: 500 });
 
     const lines = await collectLines(service.generateComplianceCsv('admin'));
     const dataLine = lines[1];
     expect(dataLine).toContain('2023-11-14'); // retired_at 1700000000 ≈ 2023-11-14
-    expect(dataLine).toContain('1.0');         // 1000000 / 1_000_000 = 1.0
+    expect(dataLine).toContain('1.0'); // 1000000 / 1_000_000 = 1.0
     expect(dataLine).toContain('GBUYER123');
   });
 
   it('streams in pages and stops when page is not full', async () => {
     retirementService.listRetirements
-      .mockResolvedValueOnce({ data: [SAMPLE_RECORD], total: 1, page: 1, limit: 500 })
+      .mockResolvedValueOnce({
+        data: [SAMPLE_RECORD],
+        total: 1,
+        page: 1,
+        limit: 500,
+      })
       .mockResolvedValue({ data: [], total: 0, page: 2, limit: 500 });
 
     await collectLines(service.generateComplianceCsv('admin'));
@@ -101,7 +111,12 @@ describe('ReportsService', () => {
       buyer: 'Buyer, Inc.',
     };
     retirementService.listRetirements
-      .mockResolvedValueOnce({ data: [recordWithComma], total: 1, page: 1, limit: 500 })
+      .mockResolvedValueOnce({
+        data: [recordWithComma],
+        total: 1,
+        page: 1,
+        limit: 500,
+      })
       .mockResolvedValue({ data: [], total: 0, page: 2, limit: 500 });
 
     const lines = await collectLines(service.generateComplianceCsv('admin'));

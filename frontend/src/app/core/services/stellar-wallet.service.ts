@@ -24,7 +24,11 @@ interface XBullApi {
 
 interface AlbedoApi {
   publicKey(params?: object): Promise<{ pubkey: string; network: string }>;
-  tx(params: { xdr: string; network?: string; submit?: boolean }): Promise<{ signed_envelope_xdr: string; network: string }>;
+  tx(params: {
+    xdr: string;
+    network?: string;
+    submit?: boolean;
+  }): Promise<{ signed_envelope_xdr: string; network: string }>;
 }
 
 declare global {
@@ -50,13 +54,7 @@ export type WalletState = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type WalletNetwork = 'testnet' | 'mainnet' | 'futurenet';
 
 /** Step-by-step transaction lifecycle for TxStatusModalComponent (#1349). */
-export type TxStatusStep =
-  | 'idle'
-  | 'preparing'
-  | 'signing'
-  | 'submitting'
-  | 'confirmed'
-  | 'error';
+export type TxStatusStep = 'idle' | 'preparing' | 'signing' | 'submitting' | 'confirmed' | 'error';
 
 export interface TxStatusState {
   visible: boolean;
@@ -740,9 +738,7 @@ export class StellarWalletService {
     if (typeof localStorage === 'undefined') return 'freighter';
     const stored = localStorage.getItem(STORAGE_PROVIDER_KEY);
     const valid: WalletProvider[] = ['freighter', 'xbull', 'albedo', 'lobstr'];
-    return valid.includes(stored as WalletProvider)
-      ? (stored as WalletProvider)
-      : 'freighter';
+    return valid.includes(stored as WalletProvider) ? (stored as WalletProvider) : 'freighter';
   }
 }
 

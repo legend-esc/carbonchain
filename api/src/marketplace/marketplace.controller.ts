@@ -207,7 +207,8 @@ export class MarketplaceController {
       }) as unknown as OhlcvCandle[];
     }
 
-    const suspiciousIds = this.washTradingDetectorService.getSuspiciousCreditIds();
+    const suspiciousIds =
+      this.washTradingDetectorService.getSuspiciousCreditIds();
     // If a specific creditId was requested and it's flagged, return empty.
     if (creditId && suspiciousIds.includes(creditId)) {
       return [];

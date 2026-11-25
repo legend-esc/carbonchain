@@ -19,7 +19,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
   cors: { origin: process.env.CORS_ORIGIN || 'http://localhost:3000' },
 })
 @Injectable()
-export class MarketplaceGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class MarketplaceGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -162,7 +164,9 @@ export class MarketplaceGateway implements OnGatewayConnection, OnGatewayDisconn
         newPrice,
       },
     });
-    this.logger.debug(`Broadcasted price update for credit ${creditId}: ${newPrice}`);
+    this.logger.debug(
+      `Broadcasted price update for credit ${creditId}: ${newPrice}`,
+    );
   }
 
   /**

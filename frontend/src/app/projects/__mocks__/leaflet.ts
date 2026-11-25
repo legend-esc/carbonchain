@@ -15,14 +15,24 @@ export const map = () => ({
 export const tileLayer = () => ({ addTo: () => {} });
 
 export const circleMarker = () => ({
-  bindPopup: function () { return this; },
-  on: function () { return this; },
-  addTo: function () { return this; },
+  bindPopup: function () {
+    return this;
+  },
+  on: function () {
+    return this;
+  },
+  addTo: function () {
+    return this;
+  },
 });
 
 export const layerGroup = () => ({
-  addLayer: function () { return this; },
-  addTo: function () { return this; },
+  addLayer: function () {
+    return this;
+  },
+  addTo: function () {
+    return this;
+  },
 });
 
 export default { map, tileLayer, circleMarker, layerGroup };

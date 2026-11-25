@@ -47,9 +47,7 @@ export const routes: Routes = [
   {
     path: 'verifier/inspect/:projectId',
     loadComponent: () =>
-      import('./verifier/verifier-inspection.component').then(
-        (m) => m.VerifierInspectionComponent,
-      ),
+      import('./verifier/verifier-inspection.component').then((m) => m.VerifierInspectionComponent),
     canActivate: [authGuard],
   },
 ];

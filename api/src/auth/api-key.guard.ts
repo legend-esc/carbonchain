@@ -42,9 +42,8 @@ export class ApiKeyGuard implements CanActivate {
 
     // Attach key record to request for downstream use
     request.apiKey = keyRecord;
-    request.bypassIpThrottling = this.apiKeyService
-      .getTier(keyRecord)
-      .bypassIpThrottling;
+    request.bypassIpThrottling =
+      this.apiKeyService.getTier(keyRecord).bypassIpThrottling;
 
     return true;
   }

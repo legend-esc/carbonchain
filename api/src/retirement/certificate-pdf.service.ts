@@ -67,7 +67,9 @@ export class CertificatePdfService {
    */
   formatCertificatePreview(data: CertificateData): string {
     const dateStr = data.issue_date.toISOString().split('T')[0];
-    const tonnageStr = data.tonnes.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    const tonnageStr = data.tonnes.toLocaleString('en-US', {
+      maximumFractionDigits: 2,
+    });
 
     return `
 ===============================================
@@ -108,7 +110,10 @@ verify the transaction.
   /**
    * Validate certificate data before generation
    */
-  validateCertificateData(data: CertificateData): { valid: boolean; errors: string[] } {
+  validateCertificateData(data: CertificateData): {
+    valid: boolean;
+    errors: string[];
+  } {
     const errors: string[] = [];
 
     if (!data.certificate_id) errors.push('Certificate ID required');

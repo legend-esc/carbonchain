@@ -1,11 +1,4 @@
-import {
-  Component,
-  inject,
-  signal,
-  computed,
-  OnInit,
-  OnDestroy,
-} from '@angular/core';
+import { Component, inject, signal, computed, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormControl, Validators } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
@@ -30,7 +23,6 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
   imports: [CommonModule, FormsModule, ReactiveFormsModule, RouterModule],
   template: `
     <div class="wizard" aria-label="Credit retirement wizard">
-
       <!-- Progress bar -->
       <nav class="wizard-progress" aria-label="Wizard steps">
         @for (s of steps; track s.n) {
@@ -41,7 +33,11 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
             [attr.aria-current]="currentStep() === s.n ? 'step' : null"
           >
             <span class="step-circle">
-              @if (currentStep() > s.n) { ✓ } @else { {{ s.n }} }
+              @if (currentStep() > s.n) {
+                ✓
+              } @else {
+                {{ s.n }}
+              }
             </span>
             <span class="step-label">{{ s.label }}</span>
           </div>
@@ -75,9 +71,7 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
                     <span class="credit-meta">
                       {{ credit.vintage_year }} · {{ credit.methodology }} · {{ credit.geography }}
                     </span>
-                    <span class="credit-tonnes">
-                      {{ tonnesDisplay(credit.tonnes) }} t CO₂e
-                    </span>
+                    <span class="credit-tonnes"> {{ tonnesDisplay(credit.tonnes) }} t CO₂e </span>
                   </div>
                 </label>
               }
@@ -139,11 +133,7 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
 
           <div class="step-actions">
             <button class="btn btn-outline" type="button" (click)="goToStep(1)">← Back</button>
-            <button
-              class="btn btn-primary"
-              type="button"
-              (click)="submitStep2()"
-            >
+            <button class="btn btn-primary" type="button" (click)="submitStep2()">
               Next: Preview &amp; Fees →
             </button>
           </div>
@@ -185,7 +175,9 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
                 </tr>
                 <tr class="fee-total">
                   <td><strong>Total</strong></td>
-                  <td class="fee-val"><strong>{{ totalCost() | number: '1.4-4' }} XLM</strong></td>
+                  <td class="fee-val">
+                    <strong>{{ totalCost() | number: '1.4-4' }} XLM</strong>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -228,16 +220,15 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
             <span class="celebrate-icon" aria-hidden="true">🌿</span>
             <h2 id="step4-title">Retirement Successful!</h2>
             <p class="celebrate-msg">
-              You've retired <strong>{{ tonnesDisplay(totalSelectedTonnesRaw()) }} t CO₂e</strong>
-              on behalf of <strong>{{ beneficiary }}</strong>.
+              You've retired
+              <strong>{{ tonnesDisplay(totalSelectedTonnesRaw()) }} t CO₂e</strong> on behalf of
+              <strong>{{ beneficiary }}</strong
+              >.
             </p>
 
             @if (retirementId()) {
               <div class="cert-actions">
-                <a
-                  class="btn btn-primary"
-                  [routerLink]="['/certificates', retirementId()]"
-                >
+                <a class="btn btn-primary" [routerLink]="['/certificates', retirementId()]">
                   📄 View Certificate
                 </a>
                 <button
@@ -290,7 +281,9 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
         justify-content: center;
         font-weight: 700;
         font-size: 0.85rem;
-        transition: background 0.2s, color 0.2s;
+        transition:
+          background 0.2s,
+          color 0.2s;
       }
 
       .step-indicator.active .step-circle {
@@ -519,7 +512,9 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
         font-size: 0.9rem;
         cursor: pointer;
         border: 1px solid transparent;
-        transition: background 0.15s, opacity 0.15s;
+        transition:
+          background 0.15s,
+          opacity 0.15s;
         text-decoration: none;
         display: inline-flex;
         align-items: center;
@@ -601,8 +596,14 @@ const PLATFORM_FEE_PCT = 0.015; // 1.5% platform fee
       }
 
       @keyframes confettiFall {
-        0% { transform: translateY(0) rotate(0deg); opacity: 1; }
-        100% { transform: translateY(380px) rotate(540deg); opacity: 0; }
+        0% {
+          transform: translateY(0) rotate(0deg);
+          opacity: 1;
+        }
+        100% {
+          transform: translateY(380px) rotate(540deg);
+          opacity: 0;
+        }
       }
 
       .celebrate-content {
@@ -704,7 +705,13 @@ export class RetireWizardComponent implements OnInit {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   stepAnnouncement(): string {
-    const labels = ['', 'Select Credits', 'Beneficiary & Reason', 'Preview & Fees', 'Sign & Celebrate'];
+    const labels = [
+      '',
+      'Select Credits',
+      'Beneficiary & Reason',
+      'Preview & Fees',
+      'Sign & Celebrate',
+    ];
     return `Step ${this.currentStep()} of 4: ${labels[this.currentStep()]}`;
   }
 

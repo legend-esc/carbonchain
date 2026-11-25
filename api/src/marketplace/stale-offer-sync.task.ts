@@ -54,9 +54,10 @@ export class StaleOfferSyncTask {
       );
 
       // node-postgres raw queries return [rows[], rowCount] — take index 0.
-      expired = Array.isArray(result) && Array.isArray(result[0])
-        ? (result[0] as StaleOfferRow[])
-        : (result as StaleOfferRow[]);
+      expired =
+        Array.isArray(result) && Array.isArray(result[0])
+          ? (result[0] as StaleOfferRow[])
+          : result;
     } catch (err) {
       this.logger.error(
         `StaleOfferSyncTask: DB update failed — ${(err as Error).message}`,

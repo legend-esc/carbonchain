@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, BadGatewayException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  BadGatewayException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StellarService } from '../stellar/stellar.service';
 import { CacheService } from '../common/cache.service';
@@ -78,9 +82,8 @@ export class RetireTxService {
       let readBytes = 0;
 
       try {
-        const { rpc: RpcModule, Transaction } = await import(
-          '@stellar/stellar-sdk'
-        );
+        const { rpc: RpcModule, Transaction } =
+          await import('@stellar/stellar-sdk');
 
         // Decode the assembled XDR to simulate it.
         const tx = new Transaction(xdr, await this.getNetworkPassphrase());

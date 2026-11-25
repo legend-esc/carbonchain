@@ -127,7 +127,13 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 @Component({
   selector: 'app-portfolio',
   standalone: true,
-  imports: [CommonModule, RouterModule, ExportReceiptsButtonComponent, OffsetTimelineComponent, TableSkeletonComponent],
+  imports: [
+    CommonModule,
+    RouterModule,
+    ExportReceiptsButtonComponent,
+    OffsetTimelineComponent,
+    TableSkeletonComponent,
+  ],
   template: `
     <div class="portfolio">
       <div class="portfolio__header">

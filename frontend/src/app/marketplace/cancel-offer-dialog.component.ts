@@ -46,7 +46,9 @@ const DEFAULT_RESOURCE_FEE_STROOPS = 100_000;
           <dd>{{ formatXlm(baseFeeStroops) }} ({{ baseFeeStroops }} stroops)</dd>
 
           <dt>Estimated Resource Fee</dt>
-          <dd>{{ formatXlm(resourceFeeStroops()) }} ({{ resourceFeeStroops() | number }} stroops)</dd>
+          <dd>
+            {{ formatXlm(resourceFeeStroops()) }} ({{ resourceFeeStroops() | number }} stroops)
+          </dd>
 
           <dt class="total-label">Total Estimated Fee</dt>
           <dd class="total-value">
@@ -60,12 +62,7 @@ const DEFAULT_RESOURCE_FEE_STROOPS = 100_000;
       }
 
       <div class="actions">
-        <button
-          class="btn btn-ghost"
-          type="button"
-          [disabled]="busy()"
-          (click)="cancelled.emit()"
-        >
+        <button class="btn btn-ghost" type="button" [disabled]="busy()" (click)="cancelled.emit()">
           Keep Offer
         </button>
         <button
@@ -202,10 +199,12 @@ export class CancelOfferDialogComponent {
   }
 
   formatXlm(stroops: number): string {
-    return (stroops / 10_000_000).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 5,
-    }) + ' XLM';
+    return (
+      (stroops / 10_000_000).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 5,
+      }) + ' XLM'
+    );
   }
 
   formatPrice(offer: Offer): string {

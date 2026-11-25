@@ -90,9 +90,7 @@ export class OpenSearchService {
       baseURL: this.baseUrl,
       timeout: 5_000,
       headers: { 'Content-Type': 'application/json' },
-      ...(username && password
-        ? { auth: { username, password } }
-        : {}),
+      ...(username && password ? { auth: { username, password } } : {}),
     });
   }
 
@@ -154,7 +152,10 @@ export class OpenSearchService {
    */
   async search(query: ProjectSearchQuery): Promise<ProjectSearchResult> {
     const page = Math.max(1, query.page ?? 1);
-    const pageSize = Math.min(MAX_PAGE_SIZE, query.pageSize ?? DEFAULT_PAGE_SIZE);
+    const pageSize = Math.min(
+      MAX_PAGE_SIZE,
+      query.pageSize ?? DEFAULT_PAGE_SIZE,
+    );
     const from = (page - 1) * pageSize;
 
     // Build the filter array for methodology / country facets.
@@ -176,7 +177,12 @@ export class OpenSearchService {
                 {
                   multi_match: {
                     query: query.q,
-                    fields: ['name^3', 'description', 'country', 'methodology^2'],
+                    fields: [
+                      'name^3',
+                      'description',
+                      'country',
+                      'methodology^2',
+                    ],
                     fuzziness: 'AUTO',
                     type: 'best_fields',
                   },
@@ -201,10 +207,16 @@ export class OpenSearchService {
       const response = await this.client.post<{
         hits: {
           total: { value: number };
-          hits: Array<{ _id: string; _score: number; _source: ProjectDocument }>;
+          hits: Array<{
+            _id: string;
+            _score: number;
+            _source: ProjectDocument;
+          }>;
         };
         aggregations: {
-          by_methodology: { buckets: Array<{ key: string; doc_count: number }> };
+          by_methodology: {
+            buckets: Array<{ key: string; doc_count: number }>;
+          };
           by_country: { buckets: Array<{ key: string; doc_count: number }> };
         };
       }>(`/${INDEX_NAME}/_search`, osQuery);
@@ -319,10 +331,16 @@ export class OpenSearchService {
     const countryMap = new Map<string, number>();
     for (const r of facetRows) {
       if (r.methodology) {
-        methodologyMap.set(r.methodology, (methodologyMap.get(r.methodology) ?? 0) + Number(r.cnt));
+        methodologyMap.set(
+          r.methodology,
+          (methodologyMap.get(r.methodology) ?? 0) + Number(r.cnt),
+        );
       }
       if (r.location) {
-        countryMap.set(r.location, (countryMap.get(r.location) ?? 0) + Number(r.cnt));
+        countryMap.set(
+          r.location,
+          (countryMap.get(r.location) ?? 0) + Number(r.cnt),
+        );
       }
     }
 
@@ -339,8 +357,13 @@ export class OpenSearchService {
       page,
       pageSize,
       facets: {
-        methodology: Array.from(methodologyMap.entries()).map(([key, count]) => ({ key, count })),
-        country: Array.from(countryMap.entries()).map(([key, count]) => ({ key, count })),
+        methodology: Array.from(methodologyMap.entries()).map(
+          ([key, count]) => ({ key, count }),
+        ),
+        country: Array.from(countryMap.entries()).map(([key, count]) => ({
+          key,
+          count,
+        })),
       },
       fallback: true,
     };

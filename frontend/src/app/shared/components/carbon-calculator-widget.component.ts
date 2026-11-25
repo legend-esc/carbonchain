@@ -163,19 +163,13 @@ export class CarbonCalculatorWidgetComponent {
   readonly flightHoursYr = signal<number>(12);
   readonly commuteKmWk = signal<number>(120);
 
-  readonly energyTonnes = computed(
-    () => this.homeEnergyKwh() * 12 * ENERGY_FACTOR_T_PER_KWH,
-  );
+  readonly energyTonnes = computed(() => this.homeEnergyKwh() * 12 * ENERGY_FACTOR_T_PER_KWH);
   readonly flightsTonnes = computed(() => this.flightHoursYr() * FLIGHT_FACTOR_T_PER_HR);
-  readonly commuteTonnes = computed(
-    () => this.commuteKmWk() * 52 * COMMUTE_FACTOR_T_PER_KM,
-  );
+  readonly commuteTonnes = computed(() => this.commuteKmWk() * 52 * COMMUTE_FACTOR_T_PER_KM);
 
   readonly totalTonnes = computed(
     () =>
-      Math.round(
-        (this.energyTonnes() + this.flightsTonnes() + this.commuteTonnes()) * 100,
-      ) / 100,
+      Math.round((this.energyTonnes() + this.flightsTonnes() + this.commuteTonnes()) * 100) / 100,
   );
 
   /** Rounded up to 0.1 tonne resolution (matching TONNES_SCALE = 1_000_000n). */

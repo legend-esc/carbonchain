@@ -45,7 +45,10 @@ describe('RetirementController', () => {
         { provide: CertificateService, useValue: mockCertificateService },
         { provide: CertHashReconciler, useValue: mockCertHashReconciler },
         { provide: CalculatorService, useValue: { estimate: jest.fn() } },
-        { provide: RetireTxService, useValue: { buildBatchRetireXdr: jest.fn() } },
+        {
+          provide: RetireTxService,
+          useValue: { buildBatchRetireXdr: jest.fn() },
+        },
         StellarAddressPipe,
       ],
     }).compile();

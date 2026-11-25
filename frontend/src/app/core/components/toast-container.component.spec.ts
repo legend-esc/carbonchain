@@ -169,8 +169,7 @@ describe('ToastContainerComponent', () => {
   it('dismiss button removes the toast from the DOM', () => {
     service.show('temporary', 'success');
     render();
-    const closeBtn: HTMLButtonElement =
-      fixture.nativeElement.querySelector('.toast__close');
+    const closeBtn: HTMLButtonElement = fixture.nativeElement.querySelector('.toast__close');
     closeBtn.click();
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelectorAll('.toast').length).toBe(0);

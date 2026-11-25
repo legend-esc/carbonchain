@@ -30,7 +30,7 @@ export interface ExchangeRates {
 export const FALLBACK_RATES: ExchangeRates = {
   USD: 0.11,
   USDC: 0.11,
-  EUR: 0.10,
+  EUR: 0.1,
 };
 
 /** Coinbase /exchange-rates endpoint shape (public, no auth required). */
@@ -42,8 +42,7 @@ interface CoinbaseRateResponse {
 }
 
 /** URL used for live rate lookups — can be overridden in tests. */
-export const COINBASE_RATES_URL =
-  'https://api.coinbase.com/v2/exchange-rates?currency=XLM';
+export const COINBASE_RATES_URL = 'https://api.coinbase.com/v2/exchange-rates?currency=XLM';
 
 @Injectable({ providedIn: 'root' })
 export class CurrencyStateService {
@@ -73,9 +72,7 @@ export class CurrencyStateService {
    */
   async loadRates(): Promise<void> {
     try {
-      const resp = await firstValueFrom(
-        this.http.get<CoinbaseRateResponse>(COINBASE_RATES_URL),
-      );
+      const resp = await firstValueFrom(this.http.get<CoinbaseRateResponse>(COINBASE_RATES_URL));
       const r = resp.data.rates;
       this._rates.set({
         USD: parseFloat(r['USD'] ?? String(FALLBACK_RATES.USD)),

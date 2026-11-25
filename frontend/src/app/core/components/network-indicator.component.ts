@@ -61,9 +61,7 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
 
           <!-- Warning banner for active non-production network -->
           @if (currentMeta().warning) {
-            <div class="warning-banner" role="status">
-              ⚠ {{ currentMeta().warning }}
-            </div>
+            <div class="warning-banner" role="status">⚠ {{ currentMeta().warning }}</div>
           }
 
           <p class="modal__hint">
@@ -105,9 +103,7 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
             <button class="btn btn-primary" type="button" (click)="recheck()">
               I've switched — recheck
             </button>
-            <button class="btn btn-ghost" type="button" (click)="netSvc.closeModal()">
-              Close
-            </button>
+            <button class="btn btn-ghost" type="button" (click)="netSvc.closeModal()">Close</button>
           </div>
         </div>
       </div>
@@ -124,14 +120,12 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
         <div class="modal modal--mismatch">
           <h3 class="modal__title">Wrong network</h3>
           <p>
-            Your wallet is on <strong>{{ currentMeta().label }}</strong>
-            but the app expects <strong>{{ expectedLabel() }}</strong>.
-            Please switch to {{ expectedLabel() }} in Freighter.
+            Your wallet is on <strong>{{ currentMeta().label }}</strong> but the app expects
+            <strong>{{ expectedLabel() }}</strong
+            >. Please switch to {{ expectedLabel() }} in Freighter.
           </p>
           <div class="modal__footer">
-            <button class="btn btn-primary" type="button" (click)="recheck()">
-              I've switched
-            </button>
+            <button class="btn btn-primary" type="button" (click)="recheck()">I've switched</button>
           </div>
         </div>
       </div>
@@ -188,8 +182,12 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
       }
 
       @keyframes fade-in {
-        from { opacity: 0; }
-        to   { opacity: 1; }
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
       }
 
       /* ── Modal panel ──────────────────────────────────────────────────── */
@@ -207,8 +205,14 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
       }
 
       @keyframes slide-up {
-        from { transform: translateY(12px); opacity: 0; }
-        to   { transform: translateY(0);    opacity: 1; }
+        from {
+          transform: translateY(12px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
       }
 
       .modal__header {
@@ -297,9 +301,15 @@ import { NetworkService, ALL_NETWORKS, NetworkMeta } from '../services/network.s
         border-radius: 50%;
         flex-shrink: 0;
       }
-      .network-dot--mainnet  { background: #2e7d32; }
-      .network-dot--testnet  { background: #e65100; }
-      .network-dot--futurenet { background: #6a1b9a; }
+      .network-dot--mainnet {
+        background: #2e7d32;
+      }
+      .network-dot--testnet {
+        background: #e65100;
+      }
+      .network-dot--futurenet {
+        background: #6a1b9a;
+      }
 
       /* ── Faucet ───────────────────────────────────────────────────────── */
       .faucet-row {
@@ -353,8 +363,8 @@ export class NetworkIndicatorComponent {
 
   protected readonly currentMeta = computed(() => this.netSvc.metaFor(this.wallet.network()));
 
-  protected readonly expectedLabel = computed(() =>
-    this.netSvc.metaFor(this.wallet.network()).label,
+  protected readonly expectedLabel = computed(
+    () => this.netSvc.metaFor(this.wallet.network()).label,
   );
 
   async recheck(): Promise<void> {

@@ -409,7 +409,9 @@ impl Marketplace {
             }
         }
 
-        env.storage().instance().set(&DataKey::AllowedTokens, &allowed);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedTokens, &allowed);
         Ok(())
     }
 
@@ -2071,11 +2073,18 @@ impl Marketplace {
     /// - [`MarketplaceError::Unauthorized`] — caller is not the admin.
     /// - [`MarketplaceError::InvalidNonce`] — `nonce` does not match the current admin nonce.
     /// Buy at Dutch auction with decreasing price over time
-    pub fn buy_auction(env: Env, buyer: Address, listing_id: u64) -> Result<i128, MarketplaceError> {
+    pub fn buy_auction(
+        env: Env,
+        buyer: Address,
+        listing_id: u64,
+    ) -> Result<i128, MarketplaceError> {
         buyer.require_auth();
         let key = DataKey::Offer(listing_id);
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
-        let _auction: DutchAuction = env.storage()
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, MIN_TTL);
+        let _auction: DutchAuction = env
+            .storage()
             .persistent()
             .get(&key)
             .ok_or(MarketplaceError::InvalidOfferId)?;
@@ -2114,8 +2123,8 @@ impl Marketplace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::events::Event as _;
     use carbonchain_credit_registry::test_helpers::RegistryHelper;
+    use soroban_sdk::events::Event as _;
     use soroban_sdk::testutils::{Address as _, Events, Ledger};
     use soroban_sdk::{BytesN, Env, String};
 
@@ -2531,7 +2540,7 @@ mod tests {
             env.storage().persistent().set(&DataKey::Offer(id), &fields);
         });
         assert_eq!(client.get_offer(&id).min_purchase_tonnes, None);
-        assert!(client.list_active_offers(&0, &25).contains(&id));
+        assert!(client.list_active_offers(&0, &25).contains(id));
         client.buy_offer(&buyer, &id, &registry.id, &token.address, &0);
         assert_eq!(registry.get_credit(&credit_id).owner, buyer);
         assert!(!client.get_offer(&id).active);
@@ -2559,6 +2568,16 @@ mod tests {
         env.ledger().set_timestamp(expires_at + 1);
         assert_eq!(client.sweep_expired_offers(&caller, &0), 0);
         assert_eq!(client.sweep_expired_offers(&caller, &1), 1);
+        let event = OfferExpired {
+            caller: caller.clone(),
+            offer_id: id,
+            seller: seller.clone(),
+            reclaimable: false,
+        };
+        let events = env.events().all();
+        assert!(events
+            .events()
+            .contains(&event.to_xdr(&env, &client.address)));
         assert!(client.get_active_offers().is_empty());
         assert!(!client.get_offer(&id).active);
         assert_eq!(registry.get_credit(&credit_id).owner, seller);
@@ -2566,14 +2585,6 @@ mod tests {
         assert!(!client.is_escrow_reclaimable(&id));
         assert_eq!(active_offer_count(&env, &client), 0);
         assert_eq!(client.sweep_expired_offers(&caller, &25), 0);
-        let event = OfferExpired {
-            caller,
-            offer_id: id,
-            seller,
-            reclaimable: false,
-        };
-        let events = env.events().all();
-        assert!(events.events().contains(&event.to_xdr(&env, &client.address)));
         env.as_contract(&client.address, || {
             assert!(!env.storage().persistent().has(&DataKey::EscrowedAmount(id)));
         });
@@ -2583,6 +2594,7 @@ mod tests {
     fn test_sweep_bounds_inspections_and_reaches_expired_offers() {
         let env = Env::default();
         env.mock_all_auths();
+        env.cost_estimate().disable_resource_limits();
         let (client, seller, _, _, credit_id) = setup_with_registry(&env);
         let now = env.ledger().timestamp();
         // Seed a large index without paying for unrelated credit issuance.

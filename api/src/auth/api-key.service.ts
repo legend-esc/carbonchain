@@ -67,7 +67,11 @@ export class ApiKeyService {
 
     // Check if monthly quota has been reset
     const now = new Date();
-    const monthsAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    const monthsAgo = new Date(
+      now.getFullYear(),
+      now.getMonth() - 1,
+      now.getDate(),
+    );
     if (record.lastResetDate < monthsAgo) {
       record.usageThisMonth = 0;
       record.lastResetDate = now;
@@ -81,7 +85,7 @@ export class ApiKeyService {
    */
   hasAvailableQuota(record: ApiKeyRecord, requestCount = 1): boolean {
     const tier = this.tiers[record.tier];
-    return (record.usageThisMonth + requestCount) <= tier.monthlyQuota;
+    return record.usageThisMonth + requestCount <= tier.monthlyQuota;
   }
 
   /**

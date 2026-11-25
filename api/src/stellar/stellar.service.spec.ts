@@ -1138,11 +1138,16 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
     mockSubmitTransaction.mockImplementation(adapter.submitTransaction);
     // Wire Soroban sendTransaction through the harness adapter and immediately
     // return a SUCCESS so pollTransactionStatus resolves on the first call.
-    mockSendTransaction.mockImplementation(async (tx: { toXDR?: () => string }) => {
-      const result = await adapter.submitTransaction(tx);
-      return { status: 'PENDING', hash: result.hash };
+    mockSendTransaction.mockImplementation(
+      async (tx: { toXDR?: () => string }) => {
+        const result = await adapter.submitTransaction(tx);
+        return { status: 'PENDING', hash: result.hash };
+      },
+    );
+    mockGetTransaction.mockResolvedValue({
+      status: 'SUCCESS',
+      hash: 'mock_hash',
     });
-    mockGetTransaction.mockResolvedValue({ status: 'SUCCESS', hash: 'mock_hash' });
 
     harness.setAccount(signerKeypair.publicKey(), {
       sequence: '500',
@@ -1202,9 +1207,9 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
       signerKeypair.publicKey(),
     );
 
-    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+    const actual = jest.requireActual<{
       TransactionBuilder: typeof TransactionBuilder;
-    };
+    }>('@stellar/stellar-sdk');
     const tx = actual.TransactionBuilder.fromXDR(
       xdr,
       service.getNetworkPassphrase(),
@@ -1214,10 +1219,10 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
   });
 
   it('submits a signed transaction and records it in MockHorizonHarness', async () => {
-    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+    const actual = jest.requireActual<{
       TransactionBuilder: typeof TransactionBuilder;
       Operation: typeof Operation;
-    };
+    }>('@stellar/stellar-sdk');
     const tx = new actual.TransactionBuilder(
       {
         accountId: () => signerKeypair.publicKey(),
@@ -1243,10 +1248,10 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
   it('retries on tx_bad_seq and succeeds on the subsequent attempt', async () => {
     harness.queueTransactionError('tx_bad_seq');
 
-    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+    const actual = jest.requireActual<{
       TransactionBuilder: typeof TransactionBuilder;
       Operation: typeof Operation;
-    };
+    }>('@stellar/stellar-sdk');
     const tx = new actual.TransactionBuilder(
       {
         accountId: () => signerKeypair.publicKey(),
@@ -1271,10 +1276,10 @@ describe('StellarService - MockHorizonHarness integration (#1379)', () => {
   it('propagates tx_insufficient_balance without masking the Horizon error', async () => {
     harness.queueTransactionError('tx_insufficient_balance');
 
-    const actual = jest.requireActual('@stellar/stellar-sdk') as {
+    const actual = jest.requireActual<{
       TransactionBuilder: typeof TransactionBuilder;
       Operation: typeof Operation;
-    };
+    }>('@stellar/stellar-sdk');
     const tx = new actual.TransactionBuilder(
       {
         accountId: () => signerKeypair.publicKey(),

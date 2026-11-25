@@ -14,15 +14,14 @@
  * Returns 200 image/svg+xml for a known, verified retirement.
  * Returns 404 with a gray 'Unverified' SVG badge for unknown certificate IDs.
  */
+import { Controller, Get, Param, Query, Res, HttpStatus } from '@nestjs/common';
 import {
-  Controller,
-  Get,
-  Param,
-  Query,
-  Res,
-  HttpStatus,
-} from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Response } from 'express';
 import { RetirementService } from './retirement.service';
 
@@ -156,7 +155,8 @@ export class BadgeController {
   })
   @ApiParam({
     name: 'id',
-    description: 'Retirement certificate ID (hex-encoded 32-byte retirement ID)',
+    description:
+      'Retirement certificate ID (hex-encoded 32-byte retirement ID)',
   })
   @ApiQuery({
     name: 'style',

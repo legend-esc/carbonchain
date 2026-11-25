@@ -3,21 +3,21 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 /** DEFRA / GHG-Protocol emission factors (kgCO2e per unit) */
 const EMISSION_FACTORS = {
   // Flights — DEFRA 2023 (economy class, radiative forcing included)
-  flight_short_haul_km: 0.000255,   // <3700 km
-  flight_long_haul_km: 0.000195,    // ≥3700 km
+  flight_short_haul_km: 0.000255, // <3700 km
+  flight_long_haul_km: 0.000195, // ≥3700 km
 
   // Ground travel
-  car_petrol_km: 0.000170,          // average petrol car
-  car_diesel_km: 0.000156,          // average diesel car
-  train_km: 0.0000037,              // UK national rail average
+  car_petrol_km: 0.00017, // average petrol car
+  car_diesel_km: 0.000156, // average diesel car
+  train_km: 0.0000037, // UK national rail average
 
   // Energy — DEFRA / EPA
-  electricity_kwh: 0.000233,        // UK grid average 2023 (tCO2e/kWh)
+  electricity_kwh: 0.000233, // UK grid average 2023 (tCO2e/kWh)
   natural_gas_kwh: 0.000203,
 
   // Data-centre / cloud
-  data_center_kwh: 0.000000475,     // AWS global average PUE 1.2 × 0.000396 tCO2e/kWh
-  server_hour: 0.0000000988,        // 400 W typical server × data_center factor
+  data_center_kwh: 0.000000475, // AWS global average PUE 1.2 × 0.000396 tCO2e/kWh
+  server_hour: 0.0000000988, // 400 W typical server × data_center factor
 } as const;
 
 export type ActivityType =
@@ -120,7 +120,7 @@ export class CalculatorService {
           break;
         default:
           throw new BadRequestException(
-            `Unknown activity type: "${(activity as ActivityInput).type}"`,
+            `Unknown activity type: "${activity.type}"`,
           );
       }
 

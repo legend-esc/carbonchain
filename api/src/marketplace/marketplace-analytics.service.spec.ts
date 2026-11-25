@@ -24,8 +24,24 @@ const mockCacheService: jest.Mocked<Partial<CacheService>> = {
 
 // ── Sample DB rows ─────────────────────────────────────────────────────────────
 
-function makeDbRow(time: number, open = '100', high = '110', low = '90', close = '105', volume = '1000', tradeCount = 2) {
-  return { time: String(time), open, high, low, close, volume, trade_count: String(tradeCount) };
+function makeDbRow(
+  time: number,
+  open = '100',
+  high = '110',
+  low = '90',
+  close = '105',
+  volume = '1000',
+  tradeCount = 2,
+) {
+  return {
+    time: String(time),
+    open,
+    high,
+    low,
+    close,
+    volume,
+    trade_count: String(tradeCount),
+  };
 }
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
@@ -46,7 +62,9 @@ describe('MarketplaceAnalyticsService', () => {
       ],
     }).compile();
 
-    service = module.get<MarketplaceAnalyticsService>(MarketplaceAnalyticsService);
+    service = module.get<MarketplaceAnalyticsService>(
+      MarketplaceAnalyticsService,
+    );
   });
 
   // ── getCandles — cache miss path ───────────────────────────────────────────
@@ -115,12 +133,29 @@ describe('MarketplaceAnalyticsService', () => {
     const ONE_DAY = 86400;
 
     it('inserts zero-volume gap candles between real candles', () => {
-      const t0 = Math.floor(Date.now() / 1000 / ONE_DAY) * ONE_DAY - 3 * ONE_DAY;
+      const t0 =
+        Math.floor(Date.now() / 1000 / ONE_DAY) * ONE_DAY - 3 * ONE_DAY;
       const t1 = t0 + 2 * ONE_DAY; // skip one day
 
       const real: OhlcvCandle[] = [
-        { time: t0, open: '10', high: '15', low: '8', close: '12', volume: '500', tradeCount: 1 },
-        { time: t1, open: '12', high: '20', low: '11', close: '18', volume: '800', tradeCount: 2 },
+        {
+          time: t0,
+          open: '10',
+          high: '15',
+          low: '8',
+          close: '12',
+          volume: '500',
+          tradeCount: 1,
+        },
+        {
+          time: t1,
+          open: '12',
+          high: '20',
+          low: '11',
+          close: '18',
+          volume: '800',
+          tradeCount: 2,
+        },
       ];
 
       const filled = service.fillGaps(real, '1d', t0, t1);
@@ -140,8 +175,24 @@ describe('MarketplaceAnalyticsService', () => {
       const t1 = t0 + ONE_DAY;
 
       const real: OhlcvCandle[] = [
-        { time: t0, open: '10', high: '12', low: '9', close: '11', volume: '100', tradeCount: 1 },
-        { time: t1, open: '11', high: '13', low: '10', close: '12', volume: '200', tradeCount: 1 },
+        {
+          time: t0,
+          open: '10',
+          high: '12',
+          low: '9',
+          close: '11',
+          volume: '100',
+          tradeCount: 1,
+        },
+        {
+          time: t1,
+          open: '11',
+          high: '13',
+          low: '10',
+          close: '12',
+          volume: '200',
+          tradeCount: 1,
+        },
       ];
 
       const filled = service.fillGaps(real, '1d', t0, t1);
@@ -163,17 +214,23 @@ describe('MarketplaceAnalyticsService', () => {
   describe('timeframe validation', () => {
     it('accepts 1h', async () => {
       mockDataSource.query.mockResolvedValueOnce([]);
-      await expect(service.getCandles({ timeframe: '1h' })).resolves.toBeDefined();
+      await expect(
+        service.getCandles({ timeframe: '1h' }),
+      ).resolves.toBeDefined();
     });
 
     it('accepts 1d', async () => {
       mockDataSource.query.mockResolvedValueOnce([]);
-      await expect(service.getCandles({ timeframe: '1d' })).resolves.toBeDefined();
+      await expect(
+        service.getCandles({ timeframe: '1d' }),
+      ).resolves.toBeDefined();
     });
 
     it('accepts 1w', async () => {
       mockDataSource.query.mockResolvedValueOnce([]);
-      await expect(service.getCandles({ timeframe: '1w' })).resolves.toBeDefined();
+      await expect(
+        service.getCandles({ timeframe: '1w' }),
+      ).resolves.toBeDefined();
     });
 
     it('throws BadRequestException for an unsupported timeframe', async () => {

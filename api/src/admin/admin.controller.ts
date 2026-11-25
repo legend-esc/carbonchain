@@ -271,9 +271,7 @@ export class AdminController {
    * Streams UNFCCC/SEC-format CSV. Restricted to Admin or Auditor roles.
    */
   @Get('reports/export/compliance-csv')
-  async exportComplianceCsv(
-    @Res() res: ExpressResponse,
-  ): Promise<void> {
+  async exportComplianceCsv(@Res() res: ExpressResponse): Promise<void> {
     // Role comes from JWT; AdminGuard already checks for 'admin', but
     // ReportsService also gates on 'admin' | 'auditor' at the service level.
     const req = (res as unknown as { req: { user?: { role?: string } } }).req;

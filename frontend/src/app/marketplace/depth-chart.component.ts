@@ -98,9 +98,15 @@ interface Point {
           [style.top.px]="10"
           role="tooltip"
         >
-          <div class="tt-line">Price: <strong>{{ hoverTooltip()!.price | number: '1.2-2' }}</strong></div>
-          <div class="tt-line">Cum. Vol: <strong>{{ hoverTooltip()!.volume | number: '1.2-2' }} t</strong></div>
-          <div class="tt-line">Side: <strong [class]="hoverTooltip()!.side">{{ hoverTooltip()!.side }}</strong></div>
+          <div class="tt-line">
+            Price: <strong>{{ hoverTooltip()!.price | number: '1.2-2' }}</strong>
+          </div>
+          <div class="tt-line">
+            Cum. Vol: <strong>{{ hoverTooltip()!.volume | number: '1.2-2' }} t</strong>
+          </div>
+          <div class="tt-line">
+            Side: <strong [class]="hoverTooltip()!.side">{{ hoverTooltip()!.side }}</strong>
+          </div>
         </div>
       }
     </div>
@@ -259,7 +265,8 @@ export class DepthChartComponent implements OnChanges {
 
     // Find closest price level
     const svgX = relX * (this.W / rect.width);
-    const price = this.minPrice + ((svgX - this.PAD_LEFT) / this.plotW) * (this.maxPrice - this.minPrice);
+    const price =
+      this.minPrice + ((svgX - this.PAD_LEFT) / this.plotW) * (this.maxPrice - this.minPrice);
 
     // Determine which side and volume
     const allEntries = [...this.bids, ...this.asks];

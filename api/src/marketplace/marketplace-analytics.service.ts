@@ -89,7 +89,9 @@ export class MarketplaceAnalyticsService {
    * TTL: 5 minutes.
    */
   async getCandles(query: CandlesQueryDto): Promise<OhlcvCandle[]> {
-    const timeframe = this.validateTimeframe(query.timeframe ?? DEFAULT_TIMEFRAME);
+    const timeframe = this.validateTimeframe(
+      query.timeframe ?? DEFAULT_TIMEFRAME,
+    );
     const now = Math.floor(Date.now() / 1000);
     const from = query.from ?? now - DEFAULT_LOOKBACK_DAYS * 86400;
     const to = query.to ?? now;
@@ -98,8 +100,7 @@ export class MarketplaceAnalyticsService {
       throw new BadRequestException('"from" must be before "to"');
     }
 
-    const cacheKey =
-      `candles:${timeframe}:${query.creditId ?? 'all'}:${query.methodology ?? 'all'}:${from}:${to}`;
+    const cacheKey = `candles:${timeframe}:${query.creditId ?? 'all'}:${query.methodology ?? 'all'}:${from}:${to}`;
 
     const cached = await this.cacheService.get<OhlcvCandle[]>(cacheKey);
     if (cached) {
@@ -107,7 +108,13 @@ export class MarketplaceAnalyticsService {
       return cached;
     }
 
-    const raw = await this.fetchRaw(query.creditId, query.methodology, timeframe, from, to);
+    const raw = await this.fetchRaw(
+      query.creditId,
+      query.methodology,
+      timeframe,
+      from,
+      to,
+    );
     const candles = this.fillGaps(raw, timeframe, from, to);
 
     await this.cacheService.set(cacheKey, candles, CACHE_TTL_SECONDS);
@@ -140,10 +147,7 @@ export class MarketplaceAnalyticsService {
 
     // Build dynamic WHERE clauses without SQL injection risk.
     const params: (string | number)[] = [from, to];
-    const conditions: string[] = [
-      'r.retired_at >= $1',
-      'r.retired_at <= $2',
-    ];
+    const conditions: string[] = ['r.retired_at >= $1', 'r.retired_at <= $2'];
 
     if (creditId) {
       params.push(creditId);
@@ -224,9 +228,7 @@ export class MarketplaceAnalyticsService {
         tradeCount: Number(r.trade_count),
       }));
     } catch (err) {
-      this.logger.error(
-        `Candle query failed: ${(err as Error).message}`,
-      );
+      this.logger.error(`Candle query failed: ${(err as Error).message}`);
       return [];
     }
   }
@@ -257,17 +259,17 @@ export class MarketplaceAnalyticsService {
 
     // Determine start: use the minimum of candle times and floored `from`.
     const flooredFrom = Math.floor(from / stepSeconds) * stepSeconds;
-    const start = candles.length > 0
-      ? Math.min(flooredFrom, candles[0].time)
-      : flooredFrom;
+    const start =
+      candles.length > 0 ? Math.min(flooredFrom, candles[0].time) : flooredFrom;
 
     // Build set of all timestamps to include: generated steps + real candle times.
     const allTimes = new Set<number>();
     // Add generated steps in the range [start, to].
     const flooredTo = Math.floor(to / stepSeconds) * stepSeconds;
-    const rangeEnd = candles.length > 0
-      ? Math.max(flooredTo, candles[candles.length - 1].time)
-      : flooredTo;
+    const rangeEnd =
+      candles.length > 0
+        ? Math.max(flooredTo, candles[candles.length - 1].time)
+        : flooredTo;
     for (let t = start; t <= rangeEnd; t += stepSeconds) {
       allTimes.add(t);
     }

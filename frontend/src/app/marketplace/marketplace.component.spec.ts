@@ -19,9 +19,15 @@ class StubWebSocket {
   onerror: ((e: Event) => void) | null = null;
   onclose: ((e: CloseEvent) => void) | null = null;
   readyState: number = 3; // CLOSED — prevents reconnect timers
-  constructor(public url: string) { StubWebSocket.instance = this; }
-  close(): void { /* no-op */ }
-  send(_data: unknown): void { /* no-op */ }
+  constructor(public url: string) {
+    StubWebSocket.instance = this;
+  }
+  close(): void {
+    /* no-op */
+  }
+  send(_data: unknown): void {
+    /* no-op */
+  }
 }
 
 const makeOffer = (overrides: Partial<Offer> = {}): Offer => ({
@@ -56,7 +62,9 @@ describe('MarketplaceComponent', () => {
         );
         return of({ data, next_cursor: null });
       }),
-      getListings: vi.fn().mockReturnValue(of({ data: MOCK_OFFERS, total: MOCK_OFFERS.length, page: 1, limit: 20 })),
+      getListings: vi
+        .fn()
+        .mockReturnValue(of({ data: MOCK_OFFERS, total: MOCK_OFFERS.length, page: 1, limit: 20 })),
       getEvents: vi.fn().mockReturnValue(of({ events: [] })),
       createOffer: vi.fn().mockReturnValue(of({ offerId: 'new-offer' })),
       buyOffer: vi.fn().mockReturnValue(of(undefined)),
@@ -140,8 +148,10 @@ describe('MarketplaceComponent', () => {
     fixture.detectChanges();
 
     const headerText =
-      ((fixture.nativeElement.querySelector('table[aria-label="Marketplace listings"] thead') ??
-        fixture.nativeElement.querySelector('thead')) as HTMLElement).textContent ?? '';
+      (
+        (fixture.nativeElement.querySelector('table[aria-label="Marketplace listings"] thead') ??
+          fixture.nativeElement.querySelector('thead')) as HTMLElement
+      ).textContent ?? '';
     expect(headerText).toContain('Credit ID');
     expect(headerText).toContain('Tonnes');
     expect(headerText).toContain('Methodology');

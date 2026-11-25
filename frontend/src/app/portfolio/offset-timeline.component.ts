@@ -198,7 +198,7 @@ function rawToTonnes(raw: string): number {
               [attr.y]="SVG_H / 2"
               text-anchor="middle"
               class="axis-unit"
-              [attr.transform]="'rotate(-90, 8, ' + (SVG_H / 2) + ')'"
+              [attr.transform]="'rotate(-90, 8, ' + SVG_H / 2 + ')'"
             >
               t CO₂e
             </text>
@@ -212,12 +212,8 @@ function rawToTonnes(raw: string): number {
               [style.top.px]="tooltip()!.y - 20"
               role="tooltip"
             >
-              <div class="tt-row">
-                <strong>Vintage</strong> {{ tooltip()!.vintageYear }}
-              </div>
-              <div class="tt-row">
-                <strong>Methodology</strong> {{ tooltip()!.methodology }}
-              </div>
+              <div class="tt-row"><strong>Vintage</strong> {{ tooltip()!.vintageYear }}</div>
+              <div class="tt-row"><strong>Methodology</strong> {{ tooltip()!.methodology }}</div>
               <div class="tt-row">
                 <strong>Tonnes</strong> {{ tooltip()!.tonnes | number: '1.2-2' }} t CO₂e
               </div>

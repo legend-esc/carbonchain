@@ -14,9 +14,9 @@ import { DepthChartComponent } from './depth-chart.component';
 // ── Types ────────────────────────────────────────��─────────────────────────
 
 export interface OrderBookEntry {
-  price: number;   // $/tonne
+  price: number; // $/tonne
   quantity: number; // tonnes
-  total: number;   // cumulative volume at this price level
+  total: number; // cumulative volume at this price level
   side: 'bid' | 'ask';
 }
 
@@ -407,8 +407,18 @@ export class OrderBookComponent implements OnInit, OnDestroy {
       this._bids.set(buildLevels(msg.bids, 'bid'));
       this._asks.set(buildLevels(msg.asks, 'ask'));
     } else if (msg.type === 'update') {
-      this._bids.update((prev) => buildLevels([...prev.map(e => ({ price: e.price, quantity: e.quantity })), ...msg.bids], 'bid'));
-      this._asks.update((prev) => buildLevels([...prev.map(e => ({ price: e.price, quantity: e.quantity })), ...msg.asks], 'ask'));
+      this._bids.update((prev) =>
+        buildLevels(
+          [...prev.map((e) => ({ price: e.price, quantity: e.quantity })), ...msg.bids],
+          'bid',
+        ),
+      );
+      this._asks.update((prev) =>
+        buildLevels(
+          [...prev.map((e) => ({ price: e.price, quantity: e.quantity })), ...msg.asks],
+          'ask',
+        ),
+      );
     }
   }
 

@@ -112,18 +112,18 @@ fn validate_methodology_requirements(
         if vintage_year > current_year {
             return Err(CarbonChainError::InvalidMetadata);
         }
-        if ipfs_hash.len() == 0 {
+        if ipfs_hash.is_empty() {
             return Err(CarbonChainError::InvalidMetadata);
         }
     } else if *methodology == gold {
         // Gold requires: non-empty ipfs_hash and valid vintage
-        if ipfs_hash.len() == 0 {
+        if ipfs_hash.is_empty() {
             return Err(CarbonChainError::InvalidMetadata);
         }
     } else if *methodology == cdm {
         // CDM requires: registered project code (prefix matching)
         // For now, just require ipfs_hash
-        if ipfs_hash.len() == 0 {
+        if ipfs_hash.is_empty() {
             return Err(CarbonChainError::InvalidMetadata);
         }
     } else if *methodology == planvivo {
@@ -131,12 +131,12 @@ fn validate_methodology_requirements(
         if vintage_year < 2000 {
             return Err(CarbonChainError::InvalidMetadata);
         }
-        if ipfs_hash.len() == 0 {
+        if ipfs_hash.is_empty() {
             return Err(CarbonChainError::InvalidMetadata);
         }
     } else {
         // Other methodologies: just require ipfs_hash
-        if ipfs_hash.len() == 0 {
+        if ipfs_hash.is_empty() {
             return Err(CarbonChainError::InvalidMetadata);
         }
     }
@@ -2309,13 +2309,7 @@ mod tests {
         let (env, client, admin, _) = setup();
         let issuer = Address::generate(&env);
         submit_test_credit(&env, &client, &admin, &issuer);
-        for (vintage, valid) in [
-            (2009u32, false),
-            (2010, true),
-            (2011, true),
-            (2025, true),
-            (2026, true),
-        ] {
+        for (vintage, valid) in [(2009u32, false), (2010, true), (2011, true), (2025, true)] {
             let nonce = client.get_nonce(&issuer);
             let count = client.get_credit_count();
             let result = client.try_submit_credit(

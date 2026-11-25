@@ -1,7 +1,11 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import { ExchangeRateService } from '../common/exchange-rate.service';
-import type { SupportedCurrency, ExchangeRates, ConvertResult } from '../common/exchange-rate.service';
+import type {
+  SupportedCurrency,
+  ExchangeRates,
+  ConvertResult,
+} from '../common/exchange-rate.service';
 
 @ApiTags('rates')
 @Controller('rates')

@@ -39,17 +39,20 @@ export class DrawdownForecastService {
     const avg180 = this.calculateMovingAverage(retirementHistory, 180, now);
 
     // Project depletion timeline
-    const projection30 = currentInventory > 0 && avg30 > 0
-      ? { months: currentInventory / avg30, confidence: 0.85 }
-      : { months: Infinity, confidence: 0 };
+    const projection30 =
+      currentInventory > 0 && avg30 > 0
+        ? { months: currentInventory / avg30, confidence: 0.85 }
+        : { months: Infinity, confidence: 0 };
 
-    const projection90 = currentInventory > 0 && avg90 > 0
-      ? { months: currentInventory / avg90, confidence: 0.70 }
-      : { months: Infinity, confidence: 0 };
+    const projection90 =
+      currentInventory > 0 && avg90 > 0
+        ? { months: currentInventory / avg90, confidence: 0.7 }
+        : { months: Infinity, confidence: 0 };
 
-    const projection180 = currentInventory > 0 && avg180 > 0
-      ? { months: currentInventory / avg180, confidence: 0.65 }
-      : { months: Infinity, confidence: 0 };
+    const projection180 =
+      currentInventory > 0 && avg180 > 0
+        ? { months: currentInventory / avg180, confidence: 0.65 }
+        : { months: Infinity, confidence: 0 };
 
     return {
       creditId,
@@ -80,6 +83,8 @@ export class DrawdownForecastService {
       .filter((r) => r.date >= cutoffDate && r.date <= referenceDate)
       .reduce((sum, r) => sum + r.tonnesRetired, 0);
 
-    return relevantRetirements > 0 ? relevantRetirements / (windowDays / 30) : 0;
+    return relevantRetirements > 0
+      ? relevantRetirements / (windowDays / 30)
+      : 0;
   }
 }

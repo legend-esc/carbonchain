@@ -1,22 +1,9 @@
-import {
-  Component,
-  computed,
-  effect,
-  inject,
-  input,
-  OnDestroy,
-  signal,
-} from '@angular/core';
+import { Component, computed, effect, inject, input, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 
 export type VerificationStatus =
-  | 'idle'
-  | 'downloading'
-  | 'hashing'
-  | 'verified'
-  | 'mismatch'
-  | 'error';
+  'idle' | 'downloading' | 'hashing' | 'verified' | 'mismatch' | 'error';
 
 const SHA256_WORKER_SOURCE = `
 self.onmessage = async (event) => {

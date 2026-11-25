@@ -106,11 +106,7 @@ export class LiveAnnouncerService implements OnDestroy {
   }
 
   /** Announce wallet connection, disconnection, or network state changes. */
-  announceWalletState(
-    state: WalletState,
-    address?: string | null,
-    network?: string | null,
-  ): void {
+  announceWalletState(state: WalletState, address?: string | null, network?: string | null): void {
     switch (state) {
       case 'connecting':
         this.announce('Connecting Stellar wallet.', 'polite');

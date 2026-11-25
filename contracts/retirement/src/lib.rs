@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 pub mod errors;
 pub mod events;
 pub mod types;
@@ -654,7 +655,7 @@ impl Retirement {
         // Scope the batch ID to this contract and buyer's consumed nonce. The
         // successful IDs also tie the summary to the records actually processed.
         let mut batch_preimage = env.current_contract_address().to_xdr(&env);
-        batch_preimage.append(&buyer.to_xdr(&env));
+        batch_preimage.append(&buyer.clone().to_xdr(&env));
         batch_preimage.append(&nonce.to_xdr(&env));
         batch_preimage.append(&succeeded.clone().to_xdr(&env));
         RetirementBatchProcessed {
@@ -949,7 +950,8 @@ impl Retirement {
         retirement_id: BytesN<32>,
     ) -> Result<BytesN<32>, RetirementError> {
         let key = DataKey::Retirement(retirement_id);
-        let mut record: RetirementRecord = env.storage()
+        let mut record: RetirementRecord = env
+            .storage()
             .persistent()
             .get(&key)
             .ok_or(RetirementError::NotFound)?;
@@ -957,9 +959,9 @@ impl Retirement {
         // Build a Bytes buffer by concatenating the XDR representations of the
         // identity fields: buyer, tonnes_retired, credit_id, retired_at.
         let mut hasher_input = soroban_sdk::Bytes::new(&env);
-        hasher_input.append(&record.buyer.to_xdr(&env));
+        hasher_input.append(&record.buyer.clone().to_xdr(&env));
         hasher_input.append(&record.tonnes_retired.to_xdr(&env));
-        hasher_input.append(&record.credit_id.to_xdr(&env));
+        hasher_input.append(&record.credit_id.clone().to_xdr(&env));
         hasher_input.append(&record.retired_at.to_xdr(&env));
 
         let hash = env.crypto().sha256(&hasher_input);
@@ -977,12 +979,16 @@ impl Retirement {
         fingerprint: BytesN<32>,
     ) -> Result<bool, RetirementError> {
         let key = DataKey::Retirement(retirement_id);
-        let record: RetirementRecord = env.storage()
+        let record: RetirementRecord = env
+            .storage()
             .persistent()
             .get(&key)
             .ok_or(RetirementError::NotFound)?;
 
-        Ok(record.certificate_fingerprint.map(|fp| fp == fingerprint).unwrap_or(false))
+        Ok(record
+            .certificate_fingerprint
+            .map(|fp| fp == fingerprint)
+            .unwrap_or(false))
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
@@ -1035,7 +1041,11 @@ impl Retirement {
     /// Issue #1288 — Mint a Soulbound Token (SBT) badge for the given buyer/retirement pair.
     /// Non-transferable proof of retirement: the badge is simply stored under the buyer's
     /// address so they (and auditors) can enumerate their retirement badges on-chain.
-    fn mint_sbt_badge(env: &Env, buyer: &Address, retirement_id: &BytesN<32>) -> Result<(), RetirementError> {
+    fn mint_sbt_badge(
+        env: &Env,
+        buyer: &Address,
+        retirement_id: &BytesN<32>,
+    ) -> Result<(), RetirementError> {
         let key = DataKey::SBTBadges(buyer.clone());
         let mut badges: Vec<BytesN<32>> = env
             .storage()
@@ -1086,7 +1096,6 @@ mod tests {
     use carbonchain_credit_registry::test_helpers::RegistryHelper;
     use soroban_sdk::testutils::{Address as _, Events, Ledger};
     use soroban_sdk::{Env, String, TryFromVal};
-    use soroban_sdk::Event as _;
 
     fn assert_batch_event(
         env: &Env,
@@ -1107,42 +1116,30 @@ mod tests {
         // Walk raw events to find one matching the contract and topic symbol.
         for raw in raw_events {
             // Filter to events from our contract
-            if let soroban_sdk::xdr::ContractEventBody::V0(body) = &raw.body {
-                if body.topics.len() < 3 {
-                    continue;
-                }
-                // Try to decode the first topic as a Symbol
-                let sym_val = soroban_sdk::Val::try_from_xdr(env, &body.topics[0]);
-                if sym_val.is_err() {
-                    continue;
-                }
-                let sym = Symbol::try_from_val(env, &sym_val.unwrap());
-                if sym.is_err() {
-                    continue;
-                }
-                if sym.unwrap() != Symbol::new(env, "retirement_batch_processed") {
-                    continue;
-                }
-                // Try to decode topics[1] as a BytesN<32> (batch_id)
-                let batch_val = soroban_sdk::Val::try_from_xdr(env, &body.topics[1]);
-                if batch_val.is_err() {
-                    continue;
-                }
-                let batch_id = BytesN::<32>::try_from_val(env, &batch_val.unwrap());
-                if batch_id.is_err() {
-                    continue;
-                }
-                let batch_id = batch_id.unwrap();
-                // Now construct the expected event and verify it appears in events
-                let event = RetirementBatchProcessed {
-                    batch_id: batch_id.clone(),
-                    total_tonnes,
-                    credit_count,
-                    retiree: buyer.clone(),
-                };
-                if raw_events.contains(&event.to_xdr(env, contract_id)) {
-                    return batch_id;
-                }
+            let soroban_sdk::xdr::ContractEventBody::V0(body) = &raw.body;
+            if body.topics.len() < 3 {
+                continue;
+            }
+            // Try to decode the first topic as a Symbol
+            let Ok(sym) = Symbol::try_from_val(env, &body.topics[0]) else {
+                continue;
+            };
+            if sym != Symbol::new(env, "retirement_batch_processed") {
+                continue;
+            }
+            // Try to decode topics[1] as a BytesN<32> (batch_id)
+            let Ok(batch_id) = BytesN::<32>::try_from_val(env, &body.topics[1]) else {
+                continue;
+            };
+            // Now construct the expected event and verify it appears in events
+            let event = RetirementBatchProcessed {
+                batch_id: batch_id.clone(),
+                total_tonnes,
+                credit_count,
+                retiree: buyer.clone(),
+            };
+            if raw_events.contains(&event.to_xdr(env, contract_id)) {
+                return batch_id;
             }
         }
         panic!("RetirementBatchProcessed event not emitted");
@@ -1457,7 +1454,7 @@ mod tests {
         tonnes.push_back(1_000_000);
         for (suffix, vintage) in [
             ("b1", 2025u32),
-            ("b2", 2026u32),
+            ("b2", 2021u32),
             ("b3", 2022u32),
             ("b4", 2023u32),
         ] {
@@ -1594,7 +1591,7 @@ mod tests {
 
         // Two valid credits
         let cid2 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2025, "p1");
-        let cid3 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2026, "p2");
+        let cid3 = submit_credit_for_batch(&env, &registry, &issuer, &issuer, 2023, "p2");
 
         // Transfer only the first two to buyer; cid3 stays with issuer → ownership check fails
         let n1 = registry.get_nonce(&issuer);
@@ -1670,12 +1667,14 @@ mod tests {
 
         // All credits failed → treated as InvalidInput
         assert_eq!(err, RetirementError::InvalidInput);
-        let topic = Symbol::new(&env, "retirement_batch_processed").into_val(&env);
-        assert!(!env
-            .events()
-            .all()
-            .iter()
-            .any(|(id, topics, _)| { id == contract_id && topics.get(0) == Some(topic) }));
+        let expected_sym = Symbol::new(&env, "retirement_batch_processed");
+        assert!(!env.events().all().events().iter().any(|ev| {
+            let soroban_sdk::xdr::ContractEventBody::V0(body) = &ev.body;
+            if let Some(first_topic) = body.topics.first() {
+                return Symbol::try_from_val(&env, first_topic).ok() == Some(expected_sym.clone());
+            }
+            false
+        }));
     }
 
     // ── Issue #233: get_total_retired_by_account ──────────────────────────────
@@ -2430,7 +2429,7 @@ mod tests {
         let cid3 = registry.submit_credit(
             &issuer,
             &String::from_str(&env, "PROJ-001"),
-            2026,
+            2023,
             &String::from_str(&env, "VCS"),
             &String::from_str(&env, "NG"),
             300_000,
@@ -3035,8 +3034,6 @@ mod tests {
                 &registry.id,
                 &0,
             );
-            let record = client.get_retirement(&retirement).unwrap();
-            assert_eq!(record.beneficiary, beneficiary);
             use soroban_sdk::events::Event;
             let events = env.events().all();
             assert!(events.events().contains(
@@ -3044,7 +3041,7 @@ mod tests {
                     buyer: owner.clone(),
                     credit_id: credit.clone(),
                     retirement_id: retirement.clone(),
-                    beneficiary,
+                    beneficiary: beneficiary.clone(),
                 }
                 .to_xdr(&env, &id)
             ));
@@ -3052,10 +3049,12 @@ mod tests {
                 &Retire {
                     buyer: owner,
                     credit_id: credit,
-                    retirement_id: retirement,
+                    retirement_id: retirement.clone(),
                 }
                 .to_xdr(&env, &id)
             ));
+            let record = client.get_retirement(&retirement).unwrap();
+            assert_eq!(record.beneficiary, beneficiary);
         }
     }
 

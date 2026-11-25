@@ -178,9 +178,7 @@ export class ExportReceiptsButtonComponent {
     const yr = this.selectedYear();
     const list = this.retirements();
     if (yr === 'all') return list;
-    return list.filter(
-      (r) => String(new Date(toEpochMs(r.retired_at)).getUTCFullYear()) === yr,
-    );
+    return list.filter((r) => String(new Date(toEpochMs(r.retired_at)).getUTCFullYear()) === yr);
   });
 
   readonly totalFilteredTonnes = computed(() => {
@@ -314,7 +312,8 @@ export class ExportReceiptsButtonComponent {
 </body>
 </html>`;
 
-    const printWindow = typeof window !== 'undefined' ? window.open('', '_blank', 'noopener') : null;
+    const printWindow =
+      typeof window !== 'undefined' ? window.open('', '_blank', 'noopener') : null;
     if (printWindow) {
       printWindow.document.open();
       printWindow.document.write(html);

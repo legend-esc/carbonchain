@@ -2,7 +2,10 @@ import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { ProjectsService, VerifyResult } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { OpenSearchService, type ProjectSearchResult } from './opensearch.service';
+import {
+  OpenSearchService,
+  type ProjectSearchResult,
+} from './opensearch.service';
 import type { ProjectProfile } from '../../../shared';
 import { Idempotent } from '../common/idempotency.interceptor';
 
@@ -29,11 +32,31 @@ export class ProjectsController {
    * relevance scores and facet counts.
    */
   @ApiOperation({ summary: 'Natural language search across projects' })
-  @ApiQuery({ name: 'q', required: false, description: 'Free-text search query' })
-  @ApiQuery({ name: 'methodology', required: false, description: 'Filter by exact methodology' })
-  @ApiQuery({ name: 'country', required: false, description: 'Filter by country / location' })
-  @ApiQuery({ name: 'page', required: false, description: 'Page number (1-based, default 1)' })
-  @ApiQuery({ name: 'pageSize', required: false, description: 'Results per page (default 10, max 100)' })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Free-text search query',
+  })
+  @ApiQuery({
+    name: 'methodology',
+    required: false,
+    description: 'Filter by exact methodology',
+  })
+  @ApiQuery({
+    name: 'country',
+    required: false,
+    description: 'Filter by country / location',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    description: 'Page number (1-based, default 1)',
+  })
+  @ApiQuery({
+    name: 'pageSize',
+    required: false,
+    description: 'Results per page (default 10, max 100)',
+  })
   @Get('search')
   async search(
     @Query('q') q?: string,
@@ -47,7 +70,9 @@ export class ProjectsController {
       methodology,
       country,
       page: page ? Math.max(1, parseInt(page, 10)) : 1,
-      pageSize: pageSize ? Math.min(100, Math.max(1, parseInt(pageSize, 10))) : 10,
+      pageSize: pageSize
+        ? Math.min(100, Math.max(1, parseInt(pageSize, 10)))
+        : 10,
     });
   }
 

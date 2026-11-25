@@ -92,12 +92,8 @@ describe('VerifierInspectionComponent', () => {
   it('updates slider position on drag (mouse)', () => {
     const wrap = fixture.nativeElement.querySelector('.slider-wrap') as HTMLElement;
     // Simulate mouse events
-    wrap.dispatchEvent(
-      new MouseEvent('mousedown', { bubbles: true, clientX: 0 }),
-    );
-    wrap.dispatchEvent(
-      new MouseEvent('mousemove', { bubbles: true, clientX: 100 }),
-    );
+    wrap.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 0 }));
+    wrap.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 100 }));
     wrap.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     // Position will be updated — just verify no crash
     expect(component.sliderPct()).toBeDefined();
@@ -131,7 +127,9 @@ describe('VerifierInspectionComponent', () => {
     fixture.detectChanges();
     // Should have shown error (submitting state) but not called API
     expect(apiMock.reviewVerifierApplication).not.toHaveBeenCalledWith(
-      expect.anything(), 'rejected', expect.anything(),
+      expect.anything(),
+      'rejected',
+      expect.anything(),
     );
   });
 
@@ -139,20 +137,30 @@ describe('VerifierInspectionComponent', () => {
     const btn = fixture.nativeElement.querySelector('.btn-approve') as HTMLButtonElement;
     btn.click();
     await fixture.whenStable();
-    expect(apiMock.reviewVerifierApplication).toHaveBeenCalledWith('proj-1', 'approved', 'admin-token');
+    expect(apiMock.reviewVerifierApplication).toHaveBeenCalledWith(
+      'proj-1',
+      'approved',
+      'admin-token',
+    );
   });
 
   it('calls reviewVerifierApplication(rejected) with reason on submit', async () => {
     component.openRejectModal();
     component.rejectReason = 'Insufficient baseline data';
     await component.submitReject();
-    expect(apiMock.reviewVerifierApplication).toHaveBeenCalledWith('proj-1', 'rejected', 'admin-token');
+    expect(apiMock.reviewVerifierApplication).toHaveBeenCalledWith(
+      'proj-1',
+      'rejected',
+      'admin-token',
+    );
   });
 
   it('shows error state when project load fails', async () => {
     apiMock.getProject.mockReturnValue(throwError(() => new Error('Not found')));
     component.imagery.set(null);
-    await (component as unknown as { loadImagery(id: string): Promise<void> }).loadImagery('bad-id');
+    await (component as unknown as { loadImagery(id: string): Promise<void> }).loadImagery(
+      'bad-id',
+    );
     fixture.detectChanges();
     expect(component.loadError()).toBeTruthy();
   });

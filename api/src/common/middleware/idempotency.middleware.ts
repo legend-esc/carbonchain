@@ -20,7 +20,8 @@ interface CachedResponse {
 }
 
 function hashBody(body: unknown): string {
-  const serialised = typeof body === 'string' ? body : JSON.stringify(body ?? '');
+  const serialised =
+    typeof body === 'string' ? body : JSON.stringify(body ?? '');
   return createHash('sha256').update(serialised).digest('hex');
 }
 
@@ -46,7 +47,9 @@ export class IdempotencyMiddleware implements NestMiddleware {
       return;
     }
 
-    const idempotencyKey = req.headers[IDEMPOTENCY_HEADER] as string | undefined;
+    const idempotencyKey = req.headers[IDEMPOTENCY_HEADER] as
+      | string
+      | undefined;
     if (!idempotencyKey || idempotencyKey.trim() === '') {
       next();
       return;
@@ -56,12 +59,17 @@ export class IdempotencyMiddleware implements NestMiddleware {
     const incomingHash = hashBody(req.body);
 
     // Run async logic without making `use` async (NestJS middleware typing)
-    this.handleAsync(req, res, next, cacheKey, incomingHash, idempotencyKey).catch(
-      (err: Error) => {
-        this.logger.error(`Idempotency middleware error: ${err.message}`);
-        next(err);
-      },
-    );
+    this.handleAsync(
+      req,
+      res,
+      next,
+      cacheKey,
+      incomingHash,
+      idempotencyKey,
+    ).catch((err: Error) => {
+      this.logger.error(`Idempotency middleware error: ${err.message}`);
+      next(err);
+    });
   }
 
   private async handleAsync(
@@ -93,7 +101,8 @@ export class IdempotencyMiddleware implements NestMiddleware {
       const entry: CachedResponse = {
         statusCode: res.statusCode,
         body,
-        contentType: (res.getHeader('Content-Type') as string) || 'application/json',
+        contentType:
+          (res.getHeader('Content-Type') as string) || 'application/json',
         idempotencyKey,
         bodyHash: incomingHash,
       };
@@ -101,7 +110,9 @@ export class IdempotencyMiddleware implements NestMiddleware {
       this.cache
         .set(cacheKey, entry, CACHE_TTL_SECONDS)
         .catch((err: Error) =>
-          this.logger.warn(`Failed to cache idempotent response: ${err.message}`),
+          this.logger.warn(
+            `Failed to cache idempotent response: ${err.message}`,
+          ),
         );
       return originalJson(body);
     };

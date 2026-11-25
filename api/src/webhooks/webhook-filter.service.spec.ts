@@ -44,11 +44,15 @@ describe('WebhookFilterService', () => {
       };
 
       it('allows an event whose type is in the list', () => {
-        expect(service.shouldDeliver('credit.retired', {}, criteria)).toBe(true);
+        expect(service.shouldDeliver('credit.retired', {}, criteria)).toBe(
+          true,
+        );
       });
 
       it('blocks an event whose type is not in the list', () => {
-        expect(service.shouldDeliver('offer.cancelled', {}, criteria)).toBe(false);
+        expect(service.shouldDeliver('offer.cancelled', {}, criteria)).toBe(
+          false,
+        );
       });
     });
 
@@ -59,16 +63,22 @@ describe('WebhookFilterService', () => {
 
       it('allows an event whose methodology matches', () => {
         const payload: FilterableEventPayload = { methodology: 'VCS' };
-        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(true);
+        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(
+          true,
+        );
       });
 
       it('blocks an event whose methodology does not match', () => {
         const payload: FilterableEventPayload = { methodology: 'CDM' };
-        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(false);
+        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(
+          false,
+        );
       });
 
       it('blocks an event with no methodology field', () => {
-        expect(service.shouldDeliver('credit.retired', {}, criteria)).toBe(false);
+        expect(service.shouldDeliver('credit.retired', {}, criteria)).toBe(
+          false,
+        );
       });
     });
 
@@ -77,25 +87,41 @@ describe('WebhookFilterService', () => {
 
       it('allows an event with tonnes_retired >= min_tonnes', () => {
         expect(
-          service.shouldDeliver('credit.retired', { tonnes_retired: 150 }, criteria),
+          service.shouldDeliver(
+            'credit.retired',
+            { tonnes_retired: 150 },
+            criteria,
+          ),
         ).toBe(true);
       });
 
       it('allows exact boundary (tonnes_retired === min_tonnes)', () => {
         expect(
-          service.shouldDeliver('credit.retired', { tonnes_retired: 100 }, criteria),
+          service.shouldDeliver(
+            'credit.retired',
+            { tonnes_retired: 100 },
+            criteria,
+          ),
         ).toBe(true);
       });
 
       it('blocks an event with tonnes_retired < min_tonnes', () => {
         expect(
-          service.shouldDeliver('credit.retired', { tonnes_retired: 50 }, criteria),
+          service.shouldDeliver(
+            'credit.retired',
+            { tonnes_retired: 50 },
+            criteria,
+          ),
         ).toBe(false);
       });
 
       it('accepts string tonnes_retired (numeric coercion)', () => {
         expect(
-          service.shouldDeliver('credit.retired', { tonnes_retired: '200' }, criteria),
+          service.shouldDeliver(
+            'credit.retired',
+            { tonnes_retired: '200' },
+            criteria,
+          ),
         ).toBe(true);
       });
 
@@ -106,7 +132,9 @@ describe('WebhookFilterService', () => {
       });
 
       it('blocks when no tonnage field is present', () => {
-        expect(service.shouldDeliver('offer.created', {}, criteria)).toBe(false);
+        expect(service.shouldDeliver('offer.created', {}, criteria)).toBe(
+          false,
+        );
       });
     });
 
@@ -122,7 +150,9 @@ describe('WebhookFilterService', () => {
           methodology: 'VCS',
           tonnes_retired: 50,
         };
-        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(true);
+        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(
+          true,
+        );
       });
 
       it('blocks when event_type fails even if the rest pass', () => {
@@ -130,7 +160,9 @@ describe('WebhookFilterService', () => {
           methodology: 'VCS',
           tonnes_retired: 50,
         };
-        expect(service.shouldDeliver('offer.created', payload, criteria)).toBe(false);
+        expect(service.shouldDeliver('offer.created', payload, criteria)).toBe(
+          false,
+        );
       });
 
       it('blocks when methodology fails even if the rest pass', () => {
@@ -138,7 +170,9 @@ describe('WebhookFilterService', () => {
           methodology: 'CDM',
           tonnes_retired: 50,
         };
-        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(false);
+        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(
+          false,
+        );
       });
 
       it('blocks when min_tonnes fails even if the rest pass', () => {
@@ -146,7 +180,9 @@ describe('WebhookFilterService', () => {
           methodology: 'VCS',
           tonnes_retired: 5,
         };
-        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(false);
+        expect(service.shouldDeliver('credit.retired', payload, criteria)).toBe(
+          false,
+        );
       });
     });
   });
@@ -179,7 +215,10 @@ describe('WebhookFilterService', () => {
     it('parses a plain object (already deserialized)', () => {
       const raw = { methodologies: ['Gold Standard'], min_tonnes: 5 };
       const result = service.parseCriteria(raw);
-      expect(result).toEqual({ methodologies: ['Gold Standard'], min_tonnes: 5 });
+      expect(result).toEqual({
+        methodologies: ['Gold Standard'],
+        min_tonnes: 5,
+      });
     });
 
     it('returns null for a malformed JSON string', () => {

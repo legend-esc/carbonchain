@@ -257,7 +257,8 @@ export class FileDropzoneComponent {
     const isGeoJsonWithGenericMime =
       lowerName.endsWith('.geojson') && (mime === '' || mime === 'application/json');
 
-    const mimeValid = mime !== '' ? allowedMimes.includes(mime) || isGeoJsonWithGenericMime : hasAllowedExt;
+    const mimeValid =
+      mime !== '' ? allowedMimes.includes(mime) || isGeoJsonWithGenericMime : hasAllowedExt;
 
     if (!mimeValid) {
       return `File "${file.name}" has an unsupported format (${file.type || 'unknown'}). Allowed: PDF, GeoJSON, PNG, JPEG.`;

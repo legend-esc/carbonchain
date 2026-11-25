@@ -19,7 +19,14 @@ const { MarketplaceGateway } = require('./marketplace.gateway') as {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildMockDataSource(expiredRows: { id: string; seller: string; credit_id: string; expires_at: Date }[] = []) {
+function buildMockDataSource(
+  expiredRows: {
+    id: string;
+    seller: string;
+    credit_id: string;
+    expires_at: Date;
+  }[] = [],
+) {
   return {
     query: jest.fn().mockResolvedValue(expiredRows),
   };
@@ -39,7 +46,12 @@ describe('StaleOfferSyncTask', () => {
   let mockGateway: ReturnType<typeof buildMockGateway>;
 
   async function buildModule(
-    rows: { id: string; seller: string; credit_id: string; expires_at: Date }[] = [],
+    rows: {
+      id: string;
+      seller: string;
+      credit_id: string;
+      expires_at: Date;
+    }[] = [],
   ) {
     mockDs = buildMockDataSource(rows);
     mockGateway = buildMockGateway();
@@ -82,20 +94,43 @@ describe('StaleOfferSyncTask', () => {
   it('broadcasts offer.expired for each expired offer', async () => {
     const expiredAt = new Date();
     const rows = [
-      { id: 'offer-1', seller: 'GSELLER1', credit_id: 'cred-1', expires_at: expiredAt },
-      { id: 'offer-2', seller: 'GSELLER2', credit_id: 'cred-2', expires_at: expiredAt },
+      {
+        id: 'offer-1',
+        seller: 'GSELLER1',
+        credit_id: 'cred-1',
+        expires_at: expiredAt,
+      },
+      {
+        id: 'offer-2',
+        seller: 'GSELLER2',
+        credit_id: 'cred-2',
+        expires_at: expiredAt,
+      },
     ];
     await buildModule(rows);
     await task.syncStaleOffers();
 
     expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledTimes(2);
-    expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledWith('offer-1', 'GSELLER1');
-    expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledWith('offer-2', 'GSELLER2');
+    expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledWith(
+      'offer-1',
+      'GSELLER1',
+    );
+    expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledWith(
+      'offer-2',
+      'GSELLER2',
+    );
   });
 
   it('handles node-postgres nested-array result format ([rows[], rowCount])', async () => {
     const expiredAt = new Date();
-    const rows = [{ id: 'offer-3', seller: 'GSELLER3', credit_id: 'cred-3', expires_at: expiredAt }];
+    const rows = [
+      {
+        id: 'offer-3',
+        seller: 'GSELLER3',
+        credit_id: 'cred-3',
+        expires_at: expiredAt,
+      },
+    ];
     mockDs = buildMockDataSource();
     // Simulate the [rows[], rowCount] format from node-postgres raw queries.
     mockDs.query.mockResolvedValue([rows, 1]);
@@ -112,7 +147,10 @@ describe('StaleOfferSyncTask', () => {
 
     await task.syncStaleOffers();
 
-    expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledWith('offer-3', 'GSELLER3');
+    expect(mockGateway.broadcastOfferExpired).toHaveBeenCalledWith(
+      'offer-3',
+      'GSELLER3',
+    );
   });
 
   it('logs and does not throw when the DB query fails', async () => {

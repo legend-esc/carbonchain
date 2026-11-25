@@ -46,7 +46,9 @@ const mockConfigService = {
   get: jest.fn().mockReturnValue('CCREDITREGISTRY'),
 };
 const mockDataSource = { query: jest.fn().mockResolvedValue([]) };
-const mockWebhooksService = { triggerWebhooks: jest.fn().mockResolvedValue(undefined) };
+const mockWebhooksService = {
+  triggerWebhooks: jest.fn().mockResolvedValue(undefined),
+};
 
 let inMemoryCredits: CreditEntity[] = [];
 
@@ -168,9 +170,7 @@ describe('ReconciliationService', () => {
     it('fires a webhook alert when drift is detected', async () => {
       inMemoryCredits.push(makeCredit('aa', CreditStatus.Active));
 
-      jest
-        .spyOn(service, 'fetchChainStatus')
-        .mockResolvedValueOnce('retired');
+      jest.spyOn(service, 'fetchChainStatus').mockResolvedValueOnce('retired');
 
       await service.runNightlyReconciliation();
 
@@ -259,7 +259,12 @@ describe('ReconciliationService', () => {
     it('logs a discrepancy when an offer is returned as active=false by the contract', async () => {
       // Simulate the contract returning an offer with active=false
       mockStellarService.readContract.mockResolvedValueOnce([
-        { id: BigInt(42), active: false, seller: 'GSELLER', price_xlm: BigInt(1000000) },
+        {
+          id: BigInt(42),
+          active: false,
+          seller: 'GSELLER',
+          price_xlm: BigInt(1000000),
+        },
       ]);
       jest.spyOn(service, 'fetchChainStatus').mockResolvedValue(null);
 
@@ -283,8 +288,7 @@ describe('ReconciliationService', () => {
 
     it('returns 0 and skips gracefully when MARKETPLACE_CONTRACT_ID is not set', async () => {
       // Service constructed with empty marketplace contract id
-      const originalGet = mockConfigService.get as jest.Mock;
-      originalGet.mockImplementation((key: string) => {
+      mockConfigService.get.mockImplementation((key: string) => {
         if (key === 'CREDIT_REGISTRY_CONTRACT_ID') return 'CCREDITREGISTRY';
         if (key === 'MARKETPLACE_CONTRACT_ID') return '';
         return undefined;
@@ -295,7 +299,10 @@ describe('ReconciliationService', () => {
       const module = await Test.createTestingModule({
         providers: [
           ReconciliationService,
-          { provide: getRepositoryToken(CreditEntity), useValue: mockCreditRepo },
+          {
+            provide: getRepositoryToken(CreditEntity),
+            useValue: mockCreditRepo,
+          },
           { provide: StellarService, useValue: mockStellarService },
           { provide: ConfigService, useValue: mockConfigService },
           { provide: getDataSourceToken(), useValue: mockDataSource },

@@ -795,7 +795,9 @@ describe('WebhooksService', () => {
     it('registerWebhook sets filter_criteria to null when omitted', async () => {
       jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
-      await service.registerWebhook('https://example.com/hook', ['credit.retired']);
+      await service.registerWebhook('https://example.com/hook', [
+        'credit.retired',
+      ]);
 
       const stored = Object.values(mockDs._store.webhooks)[0];
       expect(stored.filter_criteria).toBeNull();
@@ -868,10 +870,9 @@ describe('WebhooksService', () => {
     it('triggerWebhooks enqueues when no filter_criteria is set (default-allow)', async () => {
       jest.spyOn(service, 'validateWebhookUrl').mockResolvedValue(undefined);
 
-      await service.registerWebhook(
-        'https://example.com/hook',
-        ['credit.retired'],
-      );
+      await service.registerWebhook('https://example.com/hook', [
+        'credit.retired',
+      ]);
 
       await service.triggerWebhooks('credit.retired', {
         id: 'evt-filter-4',

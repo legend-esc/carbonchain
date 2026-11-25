@@ -49,7 +49,9 @@ describe('RetireWizardComponent', () => {
 
   let creditsSignal = signal<CreditMetadata[]>([]);
   const storeMock = {
-    get credits() { return creditsSignal.asReadonly(); },
+    get credits() {
+      return creditsSignal.asReadonly();
+    },
     activeCredits: signal<CreditMetadata[]>([]).asReadonly(),
     retiredCredits: signal<CreditMetadata[]>([]).asReadonly(),
     isLoading: signal(false).asReadonly(),
@@ -103,7 +105,9 @@ describe('RetireWizardComponent', () => {
   });
 
   it('disables Next button on step 1 when no credits selected', () => {
-    const btn = fixture.nativeElement.querySelector('.step-panel .btn-primary') as HTMLButtonElement;
+    const btn = fixture.nativeElement.querySelector(
+      '.step-panel .btn-primary',
+    ) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
@@ -112,7 +116,9 @@ describe('RetireWizardComponent', () => {
     fixture.detectChanges();
     component.toggleCredit(makeCredit());
     fixture.detectChanges();
-    const btn = fixture.nativeElement.querySelector('.step-panel .btn-primary') as HTMLButtonElement;
+    const btn = fixture.nativeElement.querySelector(
+      '.step-panel .btn-primary',
+    ) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });
 

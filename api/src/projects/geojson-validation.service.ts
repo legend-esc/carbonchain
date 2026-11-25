@@ -26,20 +26,28 @@ export class GeoJsonValidationService {
 
     // Validate closed ring
     if (ring.length < 4) {
-      throw new BadRequestException('Polygon ring must have at least 4 coordinates');
+      throw new BadRequestException(
+        'Polygon ring must have at least 4 coordinates',
+      );
     }
 
     const first = ring[0];
     const last = ring[ring.length - 1];
     if (first[0] !== last[0] || first[1] !== last[1]) {
-      throw new BadRequestException('Polygon ring must be closed (first and last coordinates must match)');
+      throw new BadRequestException(
+        'Polygon ring must be closed (first and last coordinates must match)',
+      );
     }
 
     // Check for self-intersections using line segment intersection
     for (let i = 0; i < ring.length - 2; i++) {
       for (let j = i + 2; j < ring.length - 1; j++) {
-        if (this.segmentsIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])) {
-          throw new BadRequestException('Polygon has self-intersecting segments');
+        if (
+          this.segmentsIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])
+        ) {
+          throw new BadRequestException(
+            'Polygon has self-intersecting segments',
+          );
         }
       }
     }
@@ -49,11 +57,15 @@ export class GeoJsonValidationService {
     const hectares = area / 10000; // 1 hectare = 10000 m² (approximate)
 
     if (hectares < 0.01) {
-      throw new BadRequestException('Polygon area must be at least 0.01 hectares');
+      throw new BadRequestException(
+        'Polygon area must be at least 0.01 hectares',
+      );
     }
 
     if (hectares > 10000000) {
-      throw new BadRequestException('Polygon area must be less than 10,000,000 hectares');
+      throw new BadRequestException(
+        'Polygon area must be less than 10,000,000 hectares',
+      );
     }
 
     return {
@@ -110,7 +122,7 @@ export class GeoJsonValidationService {
       area -= Math.sin(lat2Rad) * Math.cos(lat1Rad) * Math.sin(dLon);
     }
 
-    area = Math.abs(area) * radius * radius / 2;
+    area = (Math.abs(area) * radius * radius) / 2;
     return area;
   }
 
@@ -121,20 +133,17 @@ export class GeoJsonValidationService {
   /**
    * Validate project coordinates are within country bounds
    */
-  validateCountryBounds(
-    coordinates: number[][][],
-    country: string,
-  ): boolean {
+  validateCountryBounds(coordinates: number[][][], country: string): boolean {
     // Simplified: check latitude bounds for major regions
     const bounds: Record<string, [number, number]> = {
-      'US': [25, 50],
-      'CA': [42, 85],
-      'BR': [-34, 5],
-      'NG': [3, 14],
-      'ID': [-11, 6],
-      'RU': [42, 82],
-      'CN': [18, 53],
-      'AU': [-44, -10],
+      US: [25, 50],
+      CA: [42, 85],
+      BR: [-34, 5],
+      NG: [3, 14],
+      ID: [-11, 6],
+      RU: [42, 82],
+      CN: [18, 53],
+      AU: [-44, -10],
     };
 
     const bounds_range = bounds[country];

@@ -13,7 +13,11 @@ import { InstallPromptComponent } from './core/components/install-prompt.compone
 import { TxStatusModalComponent } from './core/components/tx-status-modal.component';
 import { PwaInstallService } from './core/services/pwa-install.service';
 import { LiveAnnouncerService } from './a11y/live-announcer.service';
-import { StellarWalletService, type TxStatusStep, type WalletState } from './core/services/stellar-wallet.service';
+import {
+  StellarWalletService,
+  type TxStatusStep,
+  type WalletState,
+} from './core/services/stellar-wallet.service';
 import { MarketEventsStore } from './core/store/market-events.store';
 // Issue #1333
 import { OfflineBannerComponent } from './offline/offline-banner.component';
@@ -110,9 +114,7 @@ export class App implements OnInit {
               offerId: String(ev.data?.['offer_id'] ?? ev.data?.['offerId'] ?? ev.id),
               tonnes: ev.data?.['tonnes'] as string | number | undefined,
               price: (ev.data?.['price_xlm'] ?? ev.data?.['priceAmount'] ?? ev.data?.['price']) as
-                | string
-                | number
-                | undefined,
+                string | number | undefined,
               asset: (ev.data?.['price_asset_code'] ?? ev.data?.['asset'] ?? 'XLM') as string,
             });
           } else if (ev.type === 'OfferPriceChanged') {
@@ -120,7 +122,8 @@ export class App implements OnInit {
             if (price !== undefined) {
               this.liveAnnouncer.announcePriceChange({
                 projectId: ev.data?.['project_id'] as string | undefined,
-                offerId: (ev.data?.['offer_id'] ?? ev.data?.['offerId']) as string | number | undefined,
+                offerId: (ev.data?.['offer_id'] ?? ev.data?.['offerId']) as
+                  string | number | undefined,
                 price: price as string | number,
                 asset: (ev.data?.['price_asset_code'] ?? ev.data?.['asset'] ?? 'XLM') as string,
               });

@@ -484,7 +484,8 @@ impl MrvOracle {
         let (anomaly, prev_tonnes) = Self::detect_anomaly(&env, &project_id, tonnes, threshold)?;
 
         // Issue #1285: Sliding-window variance check to detect slow data tampering
-        let window_variance_exceeded = Self::check_sliding_window_variance(&env, &project_id, tonnes, threshold)?;
+        let window_variance_exceeded =
+            Self::check_sliding_window_variance(&env, &project_id, tonnes, threshold)?;
 
         let point = MrvDataPoint {
             oracle: oracle.clone(),
@@ -737,13 +738,14 @@ impl MrvOracle {
     pub fn dispute_reading(
         env: Env,
         admin: Address,
-        project_id: String,
+        _project_id: String,
         _timestamp: u64,
         _reason: String,
     ) -> Result<(), OracleError> {
         Self::require_admin(&env, &admin)?;
 
-        let mut rep: OracleReputation = env.storage()
+        let mut rep: OracleReputation = env
+            .storage()
             .persistent()
             .get(&DataKey::OracleRep(admin.clone()))
             .unwrap_or(OracleReputation {
@@ -760,7 +762,9 @@ impl MrvOracle {
             rep.deregistered = true;
         }
 
-        env.storage().persistent().set(&DataKey::OracleRep(rep.oracle.clone()), &rep);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OracleRep(rep.oracle.clone()), &rep);
         Ok(())
     }
 
@@ -868,9 +872,13 @@ impl MrvOracle {
             let mut bytes = [0u8; 32];
             code.copy_into_slice(&mut bytes[..code.len() as usize]);
             if let Ok(text) = core::str::from_utf8(&bytes[..code.len() as usize]) {
-                if let Ok(symbol) = Symbol::try_from_val(env, &text) {
-                    if let Some(threshold) = Self::get_methodology_threshold(env.clone(), symbol) {
-                        return Ok(threshold);
+                if text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                    if let Ok(symbol) = Symbol::try_from_val(env, &text) {
+                        if let Some(threshold) =
+                            Self::get_methodology_threshold(env.clone(), symbol)
+                        {
+                            return Ok(threshold);
+                        }
                     }
                 }
             }
@@ -927,10 +935,14 @@ impl MrvOracle {
         }
 
         // Get last 5 readings
-        let start = if history.len() >= 5 { history.len() - 5 } else { 0 };
+        let start = if history.len() >= 5 {
+            history.len() - 5
+        } else {
+            0
+        };
         let mut last_five: soroban_sdk::Vec<i128> = soroban_sdk::Vec::new(env);
         for i in start..history.len() {
-            last_five.push_back(history.get(i as u32).unwrap().tonnes);
+            last_five.push_back(history.get(i).unwrap().tonnes);
         }
 
         // Compute moving average
@@ -1991,8 +2003,8 @@ mod tests {
             Err(Ok(OracleError::InvalidNonce))
         );
         client.set_methodology_threshold(&admin, &methodology, &1, &nonce);
-        assert_eq!(client.get_methodology_threshold(&methodology), Some(1));
         assert_eq!(env.auths()[0].0, admin);
+        assert_eq!(client.get_methodology_threshold(&methodology), Some(1));
         assert_eq!(client.get_nonce(&admin), nonce + 1);
         assert_eq!(
             client.try_set_methodology_threshold(&admin, &methodology, &10000, &nonce),

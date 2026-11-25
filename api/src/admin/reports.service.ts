@@ -41,7 +41,10 @@ export class ReportsService {
     let hasMore = true;
 
     while (hasMore) {
-      const result = await this.retirementService.listRetirements(page, pageSize);
+      const result = await this.retirementService.listRetirements(
+        page,
+        pageSize,
+      );
 
       for (const record of result.data) {
         const row = this.recordToRow(record);
@@ -56,9 +59,7 @@ export class ReportsService {
   // ── Private helpers ───────────────────────────────────────────────────────
 
   private buildCsvHeader(): string {
-    return (
-      'Date,Serial Number,Project ID,Country,Standard,Vintage,Tonnes,Issuance Hash,Retirement Beneficiary\r\n'
-    );
+    return 'Date,Serial Number,Project ID,Country,Standard,Vintage,Tonnes,Issuance Hash,Retirement Beneficiary\r\n';
   }
 
   private recordToRow(record: {
@@ -82,9 +83,9 @@ export class ReportsService {
       Date: date,
       SerialNumber: record.id,
       ProjectID: record.credit_id,
-      Country: '',       // not stored at retirement level; left blank per spec
+      Country: '', // not stored at retirement level; left blank per spec
       Standard: 'UNFCCC',
-      Vintage: '',       // available on credit entity; not on retirement record
+      Vintage: '', // available on credit entity; not on retirement record
       Tonnes: tonnes,
       IssuanceHash: record.tx_hash ?? '',
       RetirementBeneficiary: record.buyer,

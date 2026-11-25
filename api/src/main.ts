@@ -101,7 +101,9 @@ async function bootstrap() {
       displayRequestDuration: true,
       tryItOutEnabled: !isProduction,
     },
-    customJsStr: devTestToken ? buildSwaggerPlaygroundScript(devTestToken) : undefined,
+    customJsStr: devTestToken
+      ? buildSwaggerPlaygroundScript(devTestToken)
+      : undefined,
   });
 
   await app.listen(process.env.PORT ?? 3000);

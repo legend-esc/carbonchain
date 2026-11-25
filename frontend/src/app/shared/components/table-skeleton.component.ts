@@ -17,12 +17,7 @@ export type SkeletonColWidth = 'wide' | 'normal' | 'narrow';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div
-      class="skeleton-wrapper"
-      aria-busy="true"
-      role="status"
-      [attr.aria-label]="label()"
-    >
+    <div class="skeleton-wrapper" aria-busy="true" role="status" [attr.aria-label]="label()">
       <!-- Faux header -->
       <div class="skeleton-header" aria-hidden="true">
         @for (col of columns(); track $index) {
@@ -122,7 +117,13 @@ export class TableSkeletonComponent {
   readonly rows = input<number>(6);
 
   /** Column width descriptors from left to right. */
-  readonly columns = input<readonly SkeletonColWidth[]>(['wide', 'normal', 'normal', 'narrow', 'narrow']);
+  readonly columns = input<readonly SkeletonColWidth[]>([
+    'wide',
+    'normal',
+    'normal',
+    'narrow',
+    'narrow',
+  ]);
 
   /** Accessible label for screen readers. */
   readonly label = input<string>('Loading table data…');

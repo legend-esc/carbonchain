@@ -32,6 +32,8 @@ pub struct CreditMetadata {
     pub ipfs_hash: String,
     pub status: CreditStatus,
     pub issued_at: u64,
+    pub developer_address: Option<Address>,
+    pub developer_royalty_bps: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

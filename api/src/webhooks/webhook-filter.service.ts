@@ -121,14 +121,20 @@ export class WebhookFilterService {
       try {
         parsed = JSON.parse(raw);
       } catch {
-        this.logger.warn(`Failed to parse webhook filter_criteria JSON: "${raw}"`);
+        this.logger.warn(
+          `Failed to parse webhook filter_criteria JSON: "${raw}"`,
+        );
         return null;
       }
     } else {
       parsed = raw;
     }
 
-    if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+    if (
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      parsed === null
+    ) {
       return null;
     }
 
@@ -136,8 +142,9 @@ export class WebhookFilterService {
     const criteria: WebhookFilterCriteria = {};
 
     if (Array.isArray(obj['methodologies'])) {
-      criteria.methodologies = (obj['methodologies'] as unknown[])
-        .filter((v) => typeof v === 'string') as string[];
+      criteria.methodologies = obj['methodologies'].filter(
+        (v): v is string => typeof v === 'string',
+      );
     }
 
     if (typeof obj['min_tonnes'] === 'number') {
@@ -145,8 +152,9 @@ export class WebhookFilterService {
     }
 
     if (Array.isArray(obj['event_types'])) {
-      criteria.event_types = (obj['event_types'] as unknown[])
-        .filter((v) => typeof v === 'string') as string[];
+      criteria.event_types = obj['event_types'].filter(
+        (v): v is string => typeof v === 'string',
+      );
     }
 
     return criteria;

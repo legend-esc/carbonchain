@@ -13,7 +13,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class CursorPaginationDto {
   @ApiPropertyOptional({
     description: 'Opaque cursor from previous response.next_cursor',
-    example: 'eyJ0czogIjIwMjQtMDEtMDFUMDA6MDA6MDBaIiwgImlkIjogInV1aWQtc3RyaW5nIn0=',
+    example:
+      'eyJ0czogIjIwMjQtMDEtMDFUMDA6MDA6MDBaIiwgImlkIjogInV1aWQtc3RyaW5nIn0=',
   })
   cursor?: string;
 
@@ -48,7 +49,8 @@ export class PaginatedResponseDto<T> {
 
   @ApiPropertyOptional({
     description: 'Opaque cursor for next page (null if no more records)',
-    example: 'eyJ0czogIjIwMjQtMDEtMDJUMDA6MDA6MDBaIiwgImlkIjogInV1aWQtc3RyaW5nMiJ9',
+    example:
+      'eyJ0czogIjIwMjQtMDEtMDJUMDA6MDA6MDBaIiwgImlkIjogInV1aWQtc3RyaW5nMiJ9',
   })
   next_cursor?: string;
 

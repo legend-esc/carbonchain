@@ -10,14 +10,18 @@ import { RetirementService } from './retirement.service';
 
 function buildMockResponse() {
   const headers: Record<string, string> = {};
-  let statusCode = 200;
+  const statusCode = 200;
   let body: unknown;
 
   return {
     res: {
-      setHeader: jest.fn((k: string, v: string) => { headers[k] = v; }),
+      setHeader: jest.fn((k: string, v: string) => {
+        headers[k] = v;
+      }),
       status: jest.fn().mockReturnThis(),
-      send: jest.fn((b: unknown) => { body = b; }),
+      send: jest.fn((b: unknown) => {
+        body = b;
+      }),
     } as unknown as import('express').Response,
     getStatusCode: () => statusCode,
     getBody: () => body,
@@ -40,9 +44,7 @@ describe('BadgeController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BadgeController],
-      providers: [
-        { provide: RetirementService, useValue: retirementService },
-      ],
+      providers: [{ provide: RetirementService, useValue: retirementService }],
     }).compile();
 
     controller = module.get<BadgeController>(BadgeController);
@@ -62,7 +64,10 @@ describe('BadgeController', () => {
       const { res } = buildMockResponse();
       await controller.getBadge('deadbeef01020304', undefined, res);
 
-      expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/svg+xml');
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Content-Type',
+        'image/svg+xml',
+      );
       // 200 status means status() was NOT called with 404.
       const statusMock = res.status as jest.Mock;
       if (statusMock.mock.calls.length > 0) {
@@ -101,8 +106,14 @@ describe('BadgeController', () => {
       const { res } = buildMockResponse();
       await controller.getBadge('abc', undefined, res);
 
-      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache, max-age=0');
-      expect(res.setHeader).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff');
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Cache-Control',
+        'no-cache, max-age=0',
+      );
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'X-Content-Type-Options',
+        'nosniff',
+      );
     });
 
     describe('style parameter', () => {
@@ -130,7 +141,7 @@ describe('BadgeController', () => {
         });
 
         const { res } = buildMockResponse();
-        await controller.getBadge('abc', 'neon' as unknown as string, res);
+        await controller.getBadge('abc', 'neon', res);
 
         // Should not throw and should return SVG.
         const body = (res.send as jest.Mock).mock.calls[0][0] as string;
@@ -139,7 +150,8 @@ describe('BadgeController', () => {
     });
 
     it('truncates a long buyer address in the value label', async () => {
-      const longBuyer = 'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
+      const longBuyer =
+        'GBSOK5REZRYMHX5ZJNDZUPUKLDVSAXTJ6D5OKXWOEENUTLZHOP2TWZDY';
       retirementService.getRetirement.mockResolvedValueOnce({
         buyer: longBuyer,
         tonnes_retired: '100',
