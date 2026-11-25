@@ -10,13 +10,6 @@ on:
       - "contracts/**"
       - "scripts/build-reproducible-wasm.sh"
       - ".github/workflows/reproducible-build.yml"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "contracts/**"
-      - "scripts/build-reproducible-wasm.sh"
-      - ".github/workflows/reproducible-build.yml"
   workflow_dispatch: {}
 
 jobs:

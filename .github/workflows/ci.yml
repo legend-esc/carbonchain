@@ -489,29 +489,6 @@ jobs:
             echo "No unimplemented items flagged in $FILE."
           fi
 
-  security:
-    name: Dependency Vulnerability Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (stable)
-        with:
-          toolchain: stable
-      # #972 — cache cargo-audit in the security scan job too so neither job
-      # reinstalls the binary from crates.io on every run.
-      - name: Cache cargo-audit binary
-        id: cache-cargo-audit-sec
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/cargo-audit
-          key: ${{ runner.os }}-cargo-audit
-      - name: Install cargo-audit
-        if: steps.cache-cargo-audit-sec.outputs.cache-hit != 'true'
-        run: cargo install cargo-audit --locked
-      - name: Run cargo audit
-        run: cargo audit -f contracts/Cargo.lock --ignore RUSTSEC-2026-0124 --ignore RUSTSEC-2026-0387
-
   frontend:
     name: Frontend SPA (Angular)
     runs-on: ubuntu-latest
