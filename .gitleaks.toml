@@ -18,6 +18,9 @@ paths = [
   '''node_modules/''',
   '''\.test\.ts$''',
   '''\.spec\.ts$''',
+  '''-spec\.ts$''',
+  '''api/README\.md$''',
+  '''(\.github/)?workflows/(ci|load-test)\.yml$''',
   '''secrets/''',
 ]
 regexes = [

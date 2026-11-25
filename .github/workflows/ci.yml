@@ -167,7 +167,8 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
-      # Cache cargo-llvm-cov keyed on the installed version.
+      - name: Ensure WASM artifacts present (cache restore)
+        run: cd contracts && cargo build --target wasm32v1-none --release
       - name: Cache cargo-llvm-cov binary
         id: cache-llvm-cov
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

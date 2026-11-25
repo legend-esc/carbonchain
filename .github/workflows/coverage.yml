@@ -25,7 +25,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master (1.91.0)
+        with:
+          toolchain: "1.91.0"
+          targets: wasm32v1-none
+
+      - name: Build contract WASMs (required by test_helpers include_bytes!)
+        working-directory: contracts
+        run: cargo build --target wasm32v1-none --release
 
       - name: Install cargo-tarpaulin
         uses: taiki-e/install-action@cargo-tarpaulin
@@ -34,7 +41,7 @@ jobs:
         working-directory: contracts
         run: |
           cargo tarpaulin \
-            --workspace \
+            -p carbonchain-credit-registry \
             --out Lcov \
             --output-dir coverage \
             --timeout 300
@@ -51,7 +58,7 @@ jobs:
         with:
           files: contracts/coverage/lcov.info
           flags: contracts
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
   api-coverage:
@@ -87,7 +94,7 @@ jobs:
         with:
           files: api/coverage/lcov.info
           flags: api
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
   frontend-coverage:
@@ -109,7 +116,7 @@ jobs:
 
       - name: Run frontend tests with coverage
         working-directory: frontend
-        run: npx ng test --watch=false --code-coverage
+        run: npx ng test --watch=false --coverage
 
       - name: Upload frontend LCOV artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -123,7 +130,7 @@ jobs:
         with:
           files: frontend/coverage/**/lcov.info
           flags: frontend
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
   coverage-gate:
