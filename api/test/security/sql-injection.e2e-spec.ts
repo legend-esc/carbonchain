@@ -28,6 +28,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { StellarService } from '../../src/stellar/stellar.service';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
+import { CustomThrottlerGuard } from '../../src/common/guards/custom-throttler.guard';
 
 const TEST_ACCOUNT = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
 
@@ -83,6 +84,8 @@ describe('SQL Injection prevention (e2e) — issue #545', () => {
         getContractEvents: jest.fn().mockResolvedValue([]),
       })
       .overrideGuard(JwtAuthGuard)
+      .useClass(AllowAllGuard)
+      .overrideGuard(CustomThrottlerGuard)
       .useClass(AllowAllGuard)
       .compile();
 
