@@ -85,8 +85,8 @@ describe('SQL Injection prevention (e2e) — issue #545', () => {
       })
       .overrideGuard(JwtAuthGuard)
       .useClass(AllowAllGuard)
-      .overrideGuard(CustomThrottlerGuard)
-      .useClass(AllowAllGuard)
+      .overrideProvider(CustomThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleFixture.createNestApplication();
