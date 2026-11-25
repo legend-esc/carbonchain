@@ -22,6 +22,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { StellarService } from '../../src/stellar/stellar.service';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
+import { CustomThrottlerGuard } from '../../src/common/guards/custom-throttler.guard';
 
 const TEST_ACCOUNT = 'GCRZUKNU2J5GLSYTZR4OLO7OBJJVHSMVBGG7IVUZU5FXMFHUDCLDGQJX';
 const VALID_CREDIT_ID = 'a'.repeat(64);
@@ -93,6 +94,8 @@ describe('Input sanitization & fuzz security (e2e) — issue #1382', () => {
       })
       .overrideGuard(JwtAuthGuard)
       .useClass(AllowAllGuard)
+      .overrideProvider(CustomThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleFixture.createNestApplication();

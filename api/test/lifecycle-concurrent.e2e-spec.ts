@@ -71,7 +71,7 @@ describe('Credit lifecycle + concurrency (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
-    await app.init();
+    await app.listen(0);
   });
 
   afterAll(async () => {

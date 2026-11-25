@@ -100,7 +100,8 @@ import { GraphqlModule } from './graphql/graphql.module';
     // error responses so clients receive consistent JSON error bodies.
     { provide: APP_FILTER, useClass: StructuredExceptionFilter },
     // #1302 — Apply tiered rate limiting globally (anonymous / authenticated / oracle).
-    { provide: APP_GUARD, useClass: CustomThrottlerGuard },
+    CustomThrottlerGuard,
+    { provide: APP_GUARD, useExisting: CustomThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {

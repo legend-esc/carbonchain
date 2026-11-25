@@ -9,6 +9,7 @@ import { CreditsModule } from '../credits/credits.module';
 import { VerifiersModule } from '../verifiers/verifiers.module';
 import { AuthModule } from '../auth/auth.module';
 import { RetirementModule } from '../retirement/retirement.module';
+import { StellarModule } from '../stellar/stellar.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RetirementModule } from '../retirement/retirement.module';
     VerifiersModule,
     AuthModule,
     RetirementModule,
+    StellarModule,
   ],
   controllers: [AdminController],
   providers: [AdminService, AdminGuard, ReportsService],
